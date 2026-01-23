@@ -334,7 +334,8 @@ def compute_lifecycle_median_path(
     target_fin_cash = target_total_cash - hc_cash_component
 
     # Constrained weights (no short selling in financial portfolio)
-    # Use a continuous approach: preserve relative proportions among positive weights
+    # Smart approach: group fixed income (bonds + cash) together, apply no-short
+    # at the equity vs fixed income level, then split within fixed income
     stock_weight_no_short = np.zeros(total_years)
     bond_weight_no_short = np.zeros(total_years)
     cash_weight_no_short = np.zeros(total_years)
@@ -347,23 +348,50 @@ def compute_lifecycle_median_path(
             w_b = target_fin_bonds[i] / fw
             w_c = target_fin_cash[i] / fw
 
-            # Apply no-short constraint while preserving relative proportions
-            # Step 1: Set negative weights to zero
-            w_s = max(0, w_s)
-            w_b = max(0, w_b)
-            w_c = max(0, w_c)
+            # Step 1: Aggregate to equity vs fixed income
+            equity = w_s
+            fixed_income = w_b + w_c
 
-            # Step 2: Normalize to sum to 1 (preserves relative proportions)
-            total = w_s + w_b + w_c
+            # Step 2: Apply no-short at aggregate level
+            equity = max(0, equity)
+            fixed_income = max(0, fixed_income)
+
+            # Step 3: Normalize to sum to 1
+            total = equity + fixed_income
             if total > 0:
-                w_s /= total
-                w_b /= total
-                w_c /= total
+                equity /= total
+                fixed_income /= total
             else:
-                # Fallback to target allocation if all weights are non-positive
-                w_s = params.target_stock_allocation
-                w_b = params.target_bond_allocation
-                w_c = 1.0 - params.target_stock_allocation - params.target_bond_allocation
+                # Fallback to target allocation
+                equity = params.target_stock_allocation
+                fixed_income = params.target_bond_allocation + (1.0 - params.target_stock_allocation - params.target_bond_allocation)
+
+            # Step 4: Split fixed income between bonds and cash
+            # Allocate only to positive targets, proportionally
+            if fixed_income > 0:
+                if w_b > 0 and w_c > 0:
+                    # Both positive: split proportionally
+                    fi_total = w_b + w_c
+                    w_b = fixed_income * (w_b / fi_total)
+                    w_c = fixed_income * (w_c / fi_total)
+                elif w_b > 0:
+                    # Only bonds positive: all FI to bonds
+                    w_b = fixed_income
+                    w_c = 0
+                elif w_c > 0:
+                    # Only cash positive: all FI to cash
+                    w_b = 0
+                    w_c = fixed_income
+                else:
+                    # Both non-positive but FI > 0: use target proportions
+                    target_fi = params.target_bond_allocation + (1.0 - params.target_stock_allocation - params.target_bond_allocation)
+                    w_b = fixed_income * (params.target_bond_allocation / target_fi)
+                    w_c = fixed_income * ((1.0 - params.target_stock_allocation - params.target_bond_allocation) / target_fi)
+            else:
+                w_b = 0
+                w_c = 0
+
+            w_s = equity
 
             stock_weight_no_short[i] = w_s
             bond_weight_no_short[i] = w_b
