@@ -871,18 +871,8 @@ def generate_lifecycle_pdf(
     if econ_params is None:
         econ_params = EconomicParams()
 
-    # Compute lifecycle along median path
-    result = compute_lifecycle_median_path(params, econ_params)
-
     with PdfPages(output_path) as pdf:
-        # Page 1: All 8 charts together
-        fig = create_lifecycle_figure(result, params, figsize=(20, 10), use_years=use_years)
-        fig.suptitle('Lifecycle Investment Strategy - Median Path Analysis',
-                    fontsize=14, fontweight='bold', y=1.02)
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-
-        # Page 2: Beta comparison (if enabled)
+        # Beta comparison page (if enabled)
         if include_beta_comparison:
             fig = create_beta_comparison_figure(
                 beta_values=[0.0, 0.5, 1.0],
