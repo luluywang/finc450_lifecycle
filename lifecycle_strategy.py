@@ -335,6 +335,7 @@ def compute_lifecycle_median_path(
     # Simulate wealth accumulation with consumption model
     # Consumption = subsistence + share × net_worth
     # Net worth = HC + FW - PV(future expenses)
+    # During working years: cap total consumption at earnings (no borrowing against HC)
     for i in range(total_years):
         # Compute net worth at start of period
         net_worth[i] = human_capital[i] + financial_wealth[i] - pv_expenses[i]
@@ -344,6 +345,13 @@ def compute_lifecycle_median_path(
 
         # Total consumption = subsistence + variable
         total_consumption[i] = subsistence_consumption[i] + variable_consumption[i]
+
+        # During working years, cap consumption at earnings (can't borrow against HC)
+        if earnings[i] > 0:
+            if total_consumption[i] > earnings[i]:
+                # Cap at earnings, reduce variable consumption accordingly
+                total_consumption[i] = earnings[i]
+                variable_consumption[i] = max(0, earnings[i] - subsistence_consumption[i])
 
         # Actual savings = earnings - total consumption
         savings[i] = earnings[i] - total_consumption[i]
@@ -759,9 +767,11 @@ def plot_consumption_breakdown(
     ax.plot(x, result.subsistence_consumption, color=COLORS['green'], linewidth=2,
             label='Subsistence Consumption')
     ax.plot(x, result.variable_consumption, color=COLORS['orange'], linewidth=2,
-            label='Variable Consumption (5% of Net Worth)')
+            label='Variable (5% NW, capped)')
     ax.plot(x, result.total_consumption, color=COLORS['blue'], linewidth=2,
             label='Total Consumption')
+    ax.plot(x, result.earnings, color='gray', linewidth=1, linestyle='--', alpha=0.7,
+            label='Earnings (cap)')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
