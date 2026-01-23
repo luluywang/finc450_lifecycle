@@ -17,6 +17,7 @@ from retirement_simulation import (
     EconomicParams,
     effective_duration,
     zero_coupon_price,
+    compute_full_merton_allocation_constrained,
 )
 
 
@@ -167,45 +168,57 @@ def compute_expense_profile(params: LifecycleParams) -> Tuple[np.ndarray, np.nda
 
 
 def compute_mv_optimal_allocation(
-    mu_excess: float,
-    sigma: float,
-    gamma: float,
-    bond_share_of_safe: float = 0.75
+    mu_stock: float,
+    mu_bond: float,
+    sigma_s: float,
+    sigma_r: float,
+    rho: float,
+    duration: float,
+    gamma: float
 ) -> Tuple[float, float, float]:
     """
-    Compute optimal portfolio allocation using mean-variance optimization.
+    Compute optimal portfolio allocation using full Merton solution with VCV matrix.
 
-    The Merton optimal share of risky assets in total wealth is:
-        w_stock = mu_excess / (gamma * sigma^2)
+    This implements the multi-asset Merton solution:
+        w* = (1/gamma) * Sigma^(-1) * mu
 
-    The remaining allocation goes to safe assets (bonds and cash).
-    By default, bonds receive 75% of the safe allocation and cash 25%.
+    Asset return models:
+    - Stock: R_s = r + mu_stock + sigma_s * eps_s
+    - Bond:  R_b = r + mu_bond - D * sigma_r * eps_r
+      (negative sign because rising rates hurt bond prices)
+
+    The VCV matrix is derived from:
+    - sigma_s: Stock return volatility
+    - sigma_r: Interest rate shock volatility
+    - rho: Correlation between rate shocks and stock shocks
+    - duration: Effective duration of bond portfolio
+
+    This gives:
+    - Var(R_s) = sigma_s^2
+    - Var(R_b) = (D * sigma_r)^2
+    - Cov(R_s, R_b) = -D * sigma_s * sigma_r * rho
 
     Args:
-        mu_excess: Equity risk premium (expected excess return over risk-free)
-        sigma: Standard deviation of stock returns
+        mu_stock: Stock excess return (equity risk premium)
+        mu_bond: Bond excess return (risk premium over short rate)
+        sigma_s: Standard deviation of stock returns
+        sigma_r: Interest rate shock volatility
+        rho: Correlation between rate and stock shocks
+        duration: Effective duration of bond portfolio
         gamma: Risk aversion coefficient (higher = more conservative)
-        bond_share_of_safe: Fraction of safe allocation going to bonds (vs cash)
 
     Returns:
         Tuple of (stock_weight, bond_weight, cash_weight) summing to 1.0
     """
-    if gamma <= 0:
-        raise ValueError("Risk aversion gamma must be positive for MV optimization")
-
-    # Merton optimal stock share
-    variance = sigma ** 2
-    stock_weight = mu_excess / (gamma * variance)
-
-    # Constrain to [0, 1] - no leverage, no shorting
-    stock_weight = max(0.0, min(1.0, stock_weight))
-
-    # Allocate remainder to bonds and cash
-    safe_weight = 1.0 - stock_weight
-    bond_weight = safe_weight * bond_share_of_safe
-    cash_weight = safe_weight * (1.0 - bond_share_of_safe)
-
-    return stock_weight, bond_weight, cash_weight
+    return compute_full_merton_allocation_constrained(
+        mu_stock=mu_stock,
+        mu_bond=mu_bond,
+        sigma_s=sigma_s,
+        sigma_r=sigma_r,
+        rho=rho,
+        duration=duration,
+        gamma=gamma
+    )
 
 
 def compute_present_value(
@@ -287,12 +300,15 @@ def compute_lifecycle_median_path(
 
     # Compute target allocations: either from MV optimization or use fixed targets
     if params.gamma > 0:
-        # Mean-variance optimal allocation using consistent DGP parameters
+        # Mean-variance optimal allocation using full VCV matrix
         target_stock, target_bond, target_cash = compute_mv_optimal_allocation(
-            mu_excess=econ_params.mu_excess,
-            sigma=econ_params.sigma_s,
-            gamma=params.gamma,
-            bond_share_of_safe=0.75  # 75% bonds, 25% cash in safe portion
+            mu_stock=econ_params.mu_excess,
+            mu_bond=econ_params.mu_bond,
+            sigma_s=econ_params.sigma_s,
+            sigma_r=econ_params.sigma_r,
+            rho=econ_params.rho,
+            duration=econ_params.bond_duration,
+            gamma=params.gamma
         )
     else:
         # Use fixed target allocations
@@ -1117,12 +1133,16 @@ def generate_lifecycle_pdf(
         # Compute MV optimal allocation for summary
         if params.gamma > 0:
             mv_stock, mv_bond, mv_cash = compute_mv_optimal_allocation(
-                mu_excess=econ_params.mu_excess,
-                sigma=econ_params.sigma_s,
+                mu_stock=econ_params.mu_excess,
+                mu_bond=econ_params.mu_bond,
+                sigma_s=econ_params.sigma_s,
+                sigma_r=econ_params.sigma_r,
+                rho=econ_params.rho,
+                duration=econ_params.bond_duration,
                 gamma=params.gamma
             )
-            mv_formula = f"w* = mu / (gamma * sigma^2) = {econ_params.mu_excess:.2f} / ({params.gamma:.1f} * {econ_params.sigma_s:.2f}^2) = {mv_stock:.1%}"
-            allocation_source = "Mean-Variance Optimization"
+            mv_formula = f"w* = (1/gamma) * Sigma^(-1) * mu (Full VCV Merton solution)"
+            allocation_source = "Mean-Variance Optimization (Full VCV)"
         else:
             mv_stock = params.target_stock_allocation
             mv_bond = params.target_bond_allocation
@@ -1157,13 +1177,23 @@ Human Capital Allocation:
   - Stock Beta: {params.stock_beta_human_capital:.2f}
   - Bond Duration Benchmark: {params.bond_duration_benchmark:.1f} years
 
-Mean-Variance Optimization (DGP Parameters):
+Mean-Variance Optimization (Full VCV):
   - Risk-Free Rate (r_bar): {econ_params.r_bar*100:.1f}%
-  - Equity Premium (mu): {econ_params.mu_excess*100:.1f}%
-  - Stock Volatility (sigma): {econ_params.sigma_s*100:.0f}%
+  - Stock Excess Return (mu_s): {econ_params.mu_excess*100:.1f}%
+  - Bond Excess Return (mu_b): {econ_params.mu_bond*100:.2f}%
+  - Stock Volatility (sigma_s): {econ_params.sigma_s*100:.0f}%
+  - Rate Shock Volatility (sigma_r): {econ_params.sigma_r*100:.1f}%
+  - Rate/Stock Correlation (rho): {econ_params.rho:.2f}
+  - Bond Duration (D): {econ_params.bond_duration:.1f} years
   - Risk Aversion (gamma): {params.gamma:.1f}
   - Allocation Source: {allocation_source}
   - {mv_formula}
+
+VCV-Based Asset Return Models:
+  - Stock: R_s = r + mu_s + sigma_s * eps_s
+  - Bond:  R_b = r + mu_b - D * sigma_r * eps_r
+  - Bond Vol: D * sigma_r = {econ_params.bond_duration * econ_params.sigma_r*100:.1f}%
+  - Cov(R_s,R_b): -D*sigma_s*sigma_r*rho = {-econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho*100:.3f}%
 
 Target Total Wealth Allocation (from MV):
   - Stocks: {mv_stock*100:.1f}%
@@ -1172,14 +1202,14 @@ Target Total Wealth Allocation (from MV):
 
 Key Insights:
 -------------
-1. Portfolio allocation is derived from mean-variance
-   optimization using consistent DGP parameters.
+1. Portfolio allocation is derived from full Merton
+   solution: w* = (1/gamma) * Sigma^(-1) * mu
 
-2. The Merton optimal share w* = mu / (gamma * sigma^2)
-   determines target stock allocation in total wealth.
+2. The VCV matrix accounts for bond return volatility
+   from duration and rate shock correlation with stocks.
 
-3. Changing gamma, mu, or sigma allows studying how
-   retirement trajectories respond to return assumptions.
+3. Changing gamma, mu, sigma, rho, or duration allows
+   studying how portfolios respond to assumptions.
 
 4. Human capital is treated as implicit asset holdings,
    and financial portfolio adjusts to reach total targets.
@@ -1207,7 +1237,10 @@ def main(
     bond_duration: float = 7.0,
     gamma: float = 2.0,
     mu_excess: float = 0.04,
+    mu_bond: float = 0.005,
     sigma_s: float = 0.18,
+    sigma_r: float = 0.012,
+    rho: float = -0.2,
     r_bar: float = 0.02,
     consumption_share: float = 0.05,
     use_years: bool = True,
@@ -1223,10 +1256,13 @@ def main(
         end_age: Planning horizon end
         initial_earnings: Starting annual earnings in $000s
         stock_beta_hc: Beta of human capital to stocks
-        bond_duration: Benchmark bond duration for HC allocation (years)
+        bond_duration: Bond duration for MV optimization (years)
         gamma: Risk aversion coefficient for MV optimization (0 = use fixed targets)
-        mu_excess: Equity risk premium for return assumptions
+        mu_excess: Equity risk premium (stock excess return)
+        mu_bond: Bond risk premium (excess return over short rate)
         sigma_s: Stock return volatility
+        sigma_r: Interest rate shock volatility
+        rho: Correlation between rate shocks and stock shocks
         r_bar: Long-run real risk-free rate
         consumption_share: Share of net worth consumed above subsistence
         use_years: If True, x-axis shows years from start; if False, shows age
@@ -1239,14 +1275,22 @@ def main(
     econ_params = EconomicParams(
         r_bar=r_bar,
         mu_excess=mu_excess,
+        mu_bond=mu_bond,
         sigma_s=sigma_s,
+        sigma_r=sigma_r,
+        rho=rho,
+        bond_duration=bond_duration,
     )
 
     # Compute MV optimal allocation for display
     if gamma > 0:
         opt_stock, opt_bond, opt_cash = compute_mv_optimal_allocation(
-            mu_excess=mu_excess,
-            sigma=sigma_s,
+            mu_stock=mu_excess,
+            mu_bond=mu_bond,
+            sigma_s=sigma_s,
+            sigma_r=sigma_r,
+            rho=rho,
+            duration=bond_duration,
             gamma=gamma
         )
         if verbose:
@@ -1315,14 +1359,20 @@ if __name__ == '__main__':
                        help='Initial earnings in $000s (default: 100)')
     parser.add_argument('--stock-beta', type=float, default=0.1,
                        help='Stock beta of human capital (default: 0.1)')
-    parser.add_argument('--bond-duration', type=float, default=20.0,
-                       help='Benchmark bond duration for HC allocation in years (default: 20.0)')
+    parser.add_argument('--bond-duration', type=float, default=7.0,
+                       help='Bond duration for MV optimization in years (default: 7.0)')
     parser.add_argument('--gamma', type=float, default=2.0,
                        help='Risk aversion for MV optimization (default: 2.0, 0=use fixed targets)')
     parser.add_argument('--mu-excess', type=float, default=0.04,
                        help='Equity risk premium (default: 0.04 = 4%%)')
+    parser.add_argument('--mu-bond', type=float, default=0.005,
+                       help='Bond risk premium over short rate (default: 0.005 = 0.5%%)')
     parser.add_argument('--sigma', type=float, default=0.18,
                        help='Stock return volatility (default: 0.18 = 18%%)')
+    parser.add_argument('--sigma-r', type=float, default=0.012,
+                       help='Interest rate shock volatility (default: 0.012 = 1.2%%)')
+    parser.add_argument('--rho', type=float, default=-0.2,
+                       help='Correlation between rate and stock shocks (default: -0.2)')
     parser.add_argument('--r-bar', type=float, default=0.02,
                        help='Long-run real risk-free rate (default: 0.02 = 2%%)')
     parser.add_argument('--consumption-share', type=float, default=0.05,
@@ -1344,7 +1394,10 @@ if __name__ == '__main__':
         bond_duration=args.bond_duration,
         gamma=args.gamma,
         mu_excess=args.mu_excess,
+        mu_bond=args.mu_bond,
         sigma_s=args.sigma,
+        sigma_r=args.sigma_r,
+        rho=args.rho,
         r_bar=args.r_bar,
         consumption_share=args.consumption_share,
         use_years=not args.use_age,

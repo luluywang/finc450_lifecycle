@@ -24,10 +24,12 @@ class EconomicParams:
     r_bar: float = 0.02        # Long-run mean real rate
     phi: float = 1.0           # Interest rate persistence (1.0 = random walk)
     sigma_r: float = 0.012     # Rate shock volatility
-    mu_excess: float = 0.04    # Equity risk premium
+    mu_excess: float = 0.04    # Equity risk premium (stock excess return)
+    mu_bond: float = 0.005     # Bond risk premium (excess return over short rate)
     sigma_s: float = 0.18      # Stock return volatility
     rho: float = -0.2          # Correlation between rate and stock shocks
     r_floor: float = 0.001     # Minimum interest rate (0.1%)
+    bond_duration: float = 7.0 # Duration of bond portfolio for MV optimization
 
 
 @dataclass
@@ -857,6 +859,138 @@ def get_merton_share(mkt_excess: float, sigma: float, gamma: float) -> float:
     variance = sigma ** 2
     target_share = mkt_excess / (gamma * variance)
     return target_share
+
+
+def compute_full_merton_allocation(
+    mu_stock: float,
+    mu_bond: float,
+    sigma_s: float,
+    sigma_r: float,
+    rho: float,
+    duration: float,
+    gamma: float
+) -> Tuple[float, float, float]:
+    """
+    Compute optimal portfolio allocation using full Merton solution with VCV matrix.
+
+    This implements the multi-asset Merton solution:
+        w* = (1/gamma) * Sigma^(-1) * mu
+
+    where:
+    - mu is the vector of excess returns [mu_stock, mu_bond]
+    - Sigma is the variance-covariance matrix of returns
+
+    Asset return models:
+    - Stock: R_s = r + mu_stock + sigma_s * eps_s
+    - Bond:  R_b = r + mu_bond - D * sigma_r * eps_r
+      (negative sign because rising rates hurt bond prices)
+
+    The VCV matrix is:
+    Sigma = [ sigma_s^2                   -D * sigma_s * sigma_r * rho ]
+            [ -D * sigma_s * sigma_r * rho  (D * sigma_r)^2            ]
+
+    Args:
+        mu_stock: Stock excess return (equity risk premium)
+        mu_bond: Bond excess return (risk premium over short rate)
+        sigma_s: Stock return volatility
+        sigma_r: Interest rate shock volatility
+        rho: Correlation between rate shocks and stock return shocks
+        duration: Effective duration of the bond portfolio
+        gamma: Risk aversion coefficient
+
+    Returns:
+        Tuple of (stock_weight, bond_weight, cash_weight) summing to 1.0
+    """
+    if gamma <= 0:
+        raise ValueError("Risk aversion gamma must be positive for MV optimization")
+
+    # Bond return volatility from duration and rate volatility
+    sigma_b = duration * sigma_r
+
+    # Covariance between stock and bond returns
+    # Cov(R_s, R_b) = Cov(sigma_s * eps_s, -D * sigma_r * eps_r)
+    #               = -D * sigma_s * sigma_r * rho
+    cov_sb = -duration * sigma_s * sigma_r * rho
+
+    # Build variance-covariance matrix
+    # Sigma = [[var_s, cov_sb], [cov_sb, var_b]]
+    var_s = sigma_s ** 2
+    var_b = sigma_b ** 2
+
+    # Compute determinant for matrix inversion
+    det = var_s * var_b - cov_sb ** 2
+
+    if abs(det) < 1e-12:
+        # Near-singular matrix: fall back to single-asset solution
+        stock_weight = mu_stock / (gamma * var_s)
+        bond_weight = mu_bond / (gamma * var_b) if var_b > 1e-12 else 0.0
+    else:
+        # Inverse of 2x2 matrix: [[a, b], [c, d]]^(-1) = (1/det) * [[d, -b], [-c, a]]
+        inv_00 = var_b / det
+        inv_01 = -cov_sb / det
+        inv_10 = -cov_sb / det
+        inv_11 = var_s / det
+
+        # Optimal weights: w* = (1/gamma) * Sigma^(-1) * mu
+        stock_weight = (inv_00 * mu_stock + inv_01 * mu_bond) / gamma
+        bond_weight = (inv_10 * mu_stock + inv_11 * mu_bond) / gamma
+
+    # Cash weight is the remainder
+    cash_weight = 1.0 - stock_weight - bond_weight
+
+    return stock_weight, bond_weight, cash_weight
+
+
+def compute_full_merton_allocation_constrained(
+    mu_stock: float,
+    mu_bond: float,
+    sigma_s: float,
+    sigma_r: float,
+    rho: float,
+    duration: float,
+    gamma: float
+) -> Tuple[float, float, float]:
+    """
+    Compute optimal portfolio allocation with no-short-selling constraints.
+
+    Same as compute_full_merton_allocation but applies constraints:
+    - No short selling (all weights >= 0)
+    - No leverage (all weights <= 1)
+    - Weights sum to 1
+
+    Args:
+        mu_stock: Stock excess return (equity risk premium)
+        mu_bond: Bond excess return (risk premium over short rate)
+        sigma_s: Stock return volatility
+        sigma_r: Interest rate shock volatility
+        rho: Correlation between rate shocks and stock return shocks
+        duration: Effective duration of the bond portfolio
+        gamma: Risk aversion coefficient
+
+    Returns:
+        Tuple of (stock_weight, bond_weight, cash_weight) summing to 1.0
+    """
+    # Get unconstrained solution
+    w_stock, w_bond, w_cash = compute_full_merton_allocation(
+        mu_stock, mu_bond, sigma_s, sigma_r, rho, duration, gamma
+    )
+
+    # Apply no-short constraint for each asset
+    w_stock = max(0.0, w_stock)
+    w_bond = max(0.0, w_bond)
+    w_cash = max(0.0, w_cash)
+
+    # Normalize to sum to 1.0
+    total = w_stock + w_bond + w_cash
+    if total > 0:
+        w_stock /= total
+        w_bond /= total
+        w_cash /= total
+    else:
+        # Edge case: all weights were negative, default to cash
+        w_stock, w_bond, w_cash = 0.0, 0.0, 1.0
+
+    return w_stock, w_bond, w_cash
 
 
 def solve_financial_stock_allocation(
