@@ -1,6 +1,3 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-
-# Generated output files
-*.pdf
