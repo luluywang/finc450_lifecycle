@@ -451,8 +451,8 @@ def plot_earnings_expenses_profile(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.earnings, c=COLORS['blue'], s=20, label='Wages')
-    ax.scatter(x, result.expenses, c=COLORS['green'], s=20, label='Expenses')
+    ax.plot(x, result.earnings, color=COLORS['blue'], linewidth=2, label='Wages')
+    ax.plot(x, result.expenses, color=COLORS['green'], linewidth=2, label='Expenses')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -479,8 +479,8 @@ def plot_forward_present_values(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.pv_earnings, c=COLORS['blue'], s=20, label='PV of Future Earnings')
-    ax.scatter(x, -result.pv_expenses, c=COLORS['green'], s=20, label='PV of Future Expenses')
+    ax.plot(x, result.pv_earnings, color=COLORS['blue'], linewidth=2, label='PV of Future Earnings')
+    ax.plot(x, -result.pv_expenses, color=COLORS['green'], linewidth=2, label='PV of Future Expenses')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -507,8 +507,8 @@ def plot_durations(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.duration_earnings, c=COLORS['blue'], s=20, label='Duration of Future Earnings')
-    ax.scatter(x, result.duration_expenses, c=COLORS['green'], s=20, label='Duration of Expenses')
+    ax.plot(x, result.duration_earnings, color=COLORS['blue'], linewidth=2, label='Duration of Future Earnings')
+    ax.plot(x, -result.duration_expenses, color=COLORS['green'], linewidth=2, label='Duration of Expenses (Liability)')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -535,9 +535,9 @@ def plot_human_vs_financial_wealth(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.human_capital, c=COLORS['orange'], s=20, label='Human Capital')
-    ax.scatter(x, result.financial_wealth, c=COLORS['blue'], s=20, label='Financial Wealth')
-    ax.scatter(x, result.total_wealth, c=COLORS['green'], s=20, label='Total Wealth')
+    ax.plot(x, result.human_capital, color=COLORS['orange'], linewidth=2, label='Human Capital')
+    ax.plot(x, result.financial_wealth, color=COLORS['blue'], linewidth=2, label='Financial Wealth')
+    ax.plot(x, result.total_wealth, color=COLORS['green'], linewidth=2, label='Total Wealth')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -564,9 +564,9 @@ def plot_hc_decomposition(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.hc_stock_component, c=COLORS['blue'], s=20, label='Stocks in Human Capital')
-    ax.scatter(x, result.hc_bond_component, c=COLORS['orange'], s=20, label='Bonds in Human Capital')
-    ax.scatter(x, result.hc_cash_component, c=COLORS['green'], s=20, label='Cash in Human Capital')
+    ax.plot(x, result.hc_stock_component, color=COLORS['blue'], linewidth=2, label='Stocks in Human Capital')
+    ax.plot(x, result.hc_bond_component, color=COLORS['orange'], linewidth=2, label='Bonds in Human Capital')
+    ax.plot(x, result.hc_cash_component, color=COLORS['green'], linewidth=2, label='Cash in Human Capital')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -593,9 +593,9 @@ def plot_target_financial_holdings(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.target_fin_stocks, c=COLORS['blue'], s=20, label='Target Financial Stocks')
-    ax.scatter(x, result.target_fin_bonds, c=COLORS['orange'], s=20, label='Target Financial Bonds')
-    ax.scatter(x, result.target_fin_cash, c=COLORS['green'], s=20, label='Target Financial Cash')
+    ax.plot(x, result.target_fin_stocks, color=COLORS['blue'], linewidth=2, label='Target Financial Stocks')
+    ax.plot(x, result.target_fin_bonds, color=COLORS['orange'], linewidth=2, label='Target Financial Bonds')
+    ax.plot(x, result.target_fin_cash, color=COLORS['green'], linewidth=2, label='Target Financial Cash')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -622,9 +622,9 @@ def plot_portfolio_shares(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.stock_weight_no_short, c=COLORS['blue'], s=20, label='Stock Weight - No Short')
-    ax.scatter(x, result.bond_weight_no_short, c=COLORS['orange'], s=20, label='Bond Weight - No Short')
-    ax.scatter(x, result.cash_weight_no_short, c=COLORS['green'], s=20, label='Cash Weight - No Short')
+    ax.plot(x, result.stock_weight_no_short, color=COLORS['blue'], linewidth=2, label='Stock Weight - No Short')
+    ax.plot(x, result.bond_weight_no_short, color=COLORS['orange'], linewidth=2, label='Bond Weight - No Short')
+    ax.plot(x, result.cash_weight_no_short, color=COLORS['green'], linewidth=2, label='Cash Weight - No Short')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
@@ -653,9 +653,9 @@ def plot_total_wealth_holdings(
         x = result.ages
         xlabel = 'Age'
 
-    ax.scatter(x, result.total_stocks, c=COLORS['blue'], s=20, label='Target Stock')
-    ax.scatter(x, result.total_bonds, c=COLORS['orange'], s=20, label='Target Bond')
-    ax.scatter(x, result.total_cash, c=COLORS['green'], s=20, label='Target Cash')
+    ax.plot(x, result.total_stocks, color=COLORS['blue'], linewidth=2, label='Target Stock')
+    ax.plot(x, result.total_bonds, color=COLORS['orange'], linewidth=2, label='Target Bond')
+    ax.plot(x, result.total_cash, color=COLORS['green'], linewidth=2, label='Target Cash')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
