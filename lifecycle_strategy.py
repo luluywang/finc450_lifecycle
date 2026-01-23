@@ -332,6 +332,9 @@ def compute_lifecycle_median_path(
         (1 - params.target_stock_allocation - params.target_bond_allocation) * expected_cash_return
     )
 
+    # Consumption rate = median return + 1 percentage point
+    consumption_rate = avg_return + 0.01
+
     # Simulate wealth accumulation with consumption model
     # Consumption = subsistence + share × net_worth
     # Net worth = HC + FW - PV(future expenses)
@@ -341,7 +344,7 @@ def compute_lifecycle_median_path(
         net_worth[i] = human_capital[i] + financial_wealth[i] - pv_expenses[i]
 
         # Variable consumption = share of net worth (floor at 0 if net worth negative)
-        variable_consumption[i] = max(0, params.consumption_share * net_worth[i])
+        variable_consumption[i] = max(0, consumption_rate * net_worth[i])
 
         # Total consumption = subsistence + variable
         total_consumption[i] = subsistence_consumption[i] + variable_consumption[i]
@@ -767,7 +770,7 @@ def plot_consumption_breakdown(
     ax.plot(x, result.subsistence_consumption, color=COLORS['green'], linewidth=2,
             label='Subsistence Consumption')
     ax.plot(x, result.variable_consumption, color=COLORS['orange'], linewidth=2,
-            label='Variable (5% NW, capped)')
+            label='Variable (r+1pp of NW, capped)')
     ax.plot(x, result.total_consumption, color=COLORS['blue'], linewidth=2,
             label='Total Consumption')
     ax.plot(x, result.earnings, color='gray', linewidth=1, linestyle='--', alpha=0.7,
@@ -1061,9 +1064,9 @@ Subsistence Expense Parameters:
   - Retirement Expenses: ${params.retirement_expenses:,.0f}k
 
 Consumption Model:
-  - Total Consumption = Subsistence + Share x Net Worth
+  - Total Consumption = Subsistence + Rate x Net Worth
   - Net Worth = Human Capital + Financial Wealth - PV(Future Expenses)
-  - Consumption Share: {params.consumption_share*100:.0f}%
+  - Consumption Rate = Median Return + 1pp
 
 Human Capital Allocation:
   - Stock Beta: {params.stock_beta_human_capital:.2f}
@@ -1081,7 +1084,7 @@ Economic Parameters:
 
 Key Insights:
 -------------
-1. Consumption = Subsistence + {params.consumption_share*100:.0f}% of Net Worth.
+1. Consumption = Subsistence + (Median Return + 1pp) of Net Worth.
 
 2. Net Worth accounts for human capital and future expense
    liabilities, not just financial wealth.
