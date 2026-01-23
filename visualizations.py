@@ -10,10 +10,16 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Optional, Tuple
 from retirement_simulation import (
     SimulationResult,
+    MedianPathResult,
     liability_pv_vectorized,
     liability_duration,
     EconomicParams,
     SimulationParams,
+    RandomWalkParams,
+    run_median_path_simulation,
+    STRATEGIES,
+    Strategy,
+    BondParams,
 )
 
 
@@ -414,3 +420,429 @@ def create_summary_table(results: Dict[str, SimulationResult]) -> str:
         rows.append(row)
 
     return "\n".join(rows)
+
+
+# =============================================================================
+# Random Walk and Median Path Visualizations
+# =============================================================================
+
+def plot_wealth_allocation_lifecycle(
+    median_result: MedianPathResult,
+    figsize: Tuple[int, int] = (14, 12)
+) -> plt.Figure:
+    """
+    Visualize how a consumer's financial wealth allocation changes over their lifecycle
+    when median returns are realized each period.
+
+    This creates a comprehensive 4-panel visualization showing:
+    1. Interest rate path over time
+    2. Portfolio allocation (stocks, money market, long bonds) as stacked area
+    3. Wealth trajectory and consumption
+    4. Funded ratio over time
+
+    Args:
+        median_result: Result from run_median_path_simulation
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    years = median_result.years
+
+    # Panel 1: Interest Rate Path
+    ax = axes[0, 0]
+    ax.plot(years, median_result.rates * 100, 'b-', linewidth=2, marker='o', markersize=3)
+    ax.axhline(y=3.0, color='gray', linestyle='--', alpha=0.7, label='Long-run mean (3%)')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Interest Rate Path (Median Scenario)')
+    ax.legend()
+    ax.set_xlim(0, len(years) - 1)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Portfolio Allocation (Stacked Area)
+    ax = axes[0, 1]
+    n_periods = len(median_result.stock_weight)
+    alloc_years = np.arange(n_periods)
+
+    # Create stacked area chart
+    ax.fill_between(alloc_years, 0, median_result.stock_weight * 100,
+                    alpha=0.8, label='Stocks', color='#2ca02c')
+    ax.fill_between(alloc_years, median_result.stock_weight * 100,
+                    (median_result.stock_weight + median_result.mm_weight) * 100,
+                    alpha=0.8, label='Money Market', color='#1f77b4')
+    ax.fill_between(alloc_years, (median_result.stock_weight + median_result.mm_weight) * 100,
+                    (median_result.stock_weight + median_result.mm_weight + median_result.lb_weight) * 100,
+                    alpha=0.8, label='Long Bonds', color='#ff7f0e')
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title(f'Portfolio Allocation Over Lifecycle\n({median_result.strategy_name})')
+    ax.legend(loc='upper right')
+    ax.set_xlim(0, n_periods - 1)
+    ax.set_ylim(0, 100)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Wealth and Consumption
+    ax = axes[1, 0]
+    ax.plot(years, median_result.wealth / 1e6, 'b-', linewidth=2,
+            label='Wealth', marker='o', markersize=3)
+
+    # Add consumption as bars on secondary axis
+    ax2 = ax.twinx()
+    ax2.bar(alloc_years + 0.5, median_result.consumption / 1000, alpha=0.4,
+            color='green', label='Consumption', width=0.8)
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Wealth ($M)', color='blue')
+    ax2.set_ylabel('Annual Consumption ($k)', color='green')
+    ax.set_title('Wealth Trajectory and Consumption')
+    ax.tick_params(axis='y', labelcolor='blue')
+    ax2.tick_params(axis='y', labelcolor='green')
+
+    # Combined legend
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+
+    ax.set_xlim(0, len(years) - 1)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 4: Funded Ratio
+    ax = axes[1, 1]
+    # Cap funded ratio for display purposes
+    display_funded = np.minimum(median_result.funded_ratio, 5.0)
+    ax.plot(years, display_funded, 'purple', linewidth=2, marker='o', markersize=3)
+    ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Fully Funded (100%)')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Funded Ratio')
+    ax.set_title('Funded Status (Assets / PV Liabilities)')
+    ax.legend()
+    ax.set_xlim(0, len(years) - 1)
+    ax.set_ylim(0, min(5.0, display_funded.max() * 1.1))
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f'Lifecycle Wealth Allocation Analysis\nStrategy: {median_result.strategy_name}',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    return fig
+
+
+def plot_allocation_comparison_median_path(
+    strategies: List[Strategy] = None,
+    r0: float = 0.03,
+    sim_params: SimulationParams = None,
+    bond_params: BondParams = None,
+    econ_params: EconomicParams = None,
+    use_random_walk: bool = False,
+    rw_params: RandomWalkParams = None,
+    figsize: Tuple[int, int] = (16, 12)
+) -> plt.Figure:
+    """
+    Compare wealth allocation across different strategies under median return scenario.
+
+    Args:
+        strategies: List of strategies to compare (defaults to all 4 strategies)
+        r0: Initial interest rate
+        sim_params: Simulation parameters
+        bond_params: Bond parameters
+        econ_params: Economic parameters
+        use_random_walk: Whether to use random walk interest rate model
+        rw_params: Random walk parameters
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if strategies is None:
+        strategies = STRATEGIES
+    if sim_params is None:
+        sim_params = SimulationParams()
+    if bond_params is None:
+        bond_params = BondParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if rw_params is None:
+        rw_params = RandomWalkParams()
+
+    n_strategies = len(strategies)
+    fig, axes = plt.subplots(n_strategies, 2, figsize=figsize)
+
+    model_name = "Random Walk" if use_random_walk else "Mean-Reverting"
+
+    for idx, strategy in enumerate(strategies):
+        # Run median path simulation
+        result = run_median_path_simulation(
+            strategy=strategy,
+            r0=r0,
+            sim_params=sim_params,
+            bond_params=bond_params,
+            econ_params=econ_params,
+            rw_params=rw_params,
+            use_random_walk=use_random_walk
+        )
+
+        n_periods = len(result.stock_weight)
+        alloc_years = np.arange(n_periods)
+
+        # Left panel: Portfolio allocation
+        ax = axes[idx, 0] if n_strategies > 1 else axes[0]
+        ax.fill_between(alloc_years, 0, result.stock_weight * 100,
+                        alpha=0.8, label='Stocks', color='#2ca02c')
+        ax.fill_between(alloc_years, result.stock_weight * 100,
+                        (result.stock_weight + result.mm_weight) * 100,
+                        alpha=0.8, label='Money Market', color='#1f77b4')
+        ax.fill_between(alloc_years, (result.stock_weight + result.mm_weight) * 100,
+                        (result.stock_weight + result.mm_weight + result.lb_weight) * 100,
+                        alpha=0.8, label='Long Bonds', color='#ff7f0e')
+
+        ax.set_ylabel('Allocation (%)')
+        ax.set_title(f'{result.strategy_name}')
+        if idx == 0:
+            ax.legend(loc='upper right', fontsize=8)
+        ax.set_xlim(0, n_periods - 1)
+        ax.set_ylim(0, 100)
+        ax.grid(True, alpha=0.3)
+        if idx == n_strategies - 1:
+            ax.set_xlabel('Year')
+
+        # Right panel: Wealth trajectory
+        ax = axes[idx, 1] if n_strategies > 1 else axes[1]
+        ax.plot(result.years, result.wealth / 1e6, 'b-', linewidth=2)
+        ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        ax.set_ylabel('Wealth ($M)')
+        ax.set_title(f'{result.strategy_name}')
+        ax.set_xlim(0, len(result.years) - 1)
+        ax.grid(True, alpha=0.3)
+        if idx == n_strategies - 1:
+            ax.set_xlabel('Year')
+
+        # Add final wealth annotation
+        final_w = result.wealth[-1]
+        ax.annotate(f'Final: ${final_w/1e6:.2f}M',
+                   xy=(0.98, 0.95), xycoords='axes fraction',
+                   fontsize=9, ha='right', va='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    plt.suptitle(f'Lifecycle Wealth Allocation Comparison\n{model_name} Interest Rates (r0 = {r0*100:.1f}%)',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_random_walk_vs_mean_reverting(
+    r0: float = 0.03,
+    sim_params: SimulationParams = None,
+    bond_params: BondParams = None,
+    econ_params: EconomicParams = None,
+    rw_params: RandomWalkParams = None,
+    strategy: Strategy = None,
+    figsize: Tuple[int, int] = (14, 10)
+) -> plt.Figure:
+    """
+    Compare median paths under random walk vs mean-reverting interest rate models.
+
+    This visualization helps illustrate how the interest rate model assumption
+    affects wealth allocation and outcomes.
+
+    Args:
+        r0: Initial interest rate
+        sim_params: Simulation parameters
+        bond_params: Bond parameters
+        econ_params: Economic parameters
+        rw_params: Random walk parameters
+        strategy: Strategy to compare (defaults to Duration Match + Variable)
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if sim_params is None:
+        sim_params = SimulationParams()
+    if bond_params is None:
+        bond_params = BondParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if rw_params is None:
+        rw_params = RandomWalkParams()
+    if strategy is None:
+        strategy = STRATEGIES[3]  # DurMatch + Variable
+
+    # Run both models
+    result_mr = run_median_path_simulation(
+        strategy=strategy, r0=r0, sim_params=sim_params,
+        bond_params=bond_params, econ_params=econ_params,
+        use_random_walk=False
+    )
+
+    result_rw = run_median_path_simulation(
+        strategy=strategy, r0=r0, sim_params=sim_params,
+        bond_params=bond_params, econ_params=econ_params,
+        rw_params=rw_params, use_random_walk=True
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    # Panel 1: Interest Rate Paths
+    ax = axes[0, 0]
+    ax.plot(result_mr.years, result_mr.rates * 100, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(result_rw.years, result_rw.rates * 100, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.axhline(y=econ_params.r_bar * 100, color='gray', linestyle='--', alpha=0.7,
+               label=f'Long-run mean ({econ_params.r_bar*100:.0f}%)')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Interest Rate Paths (Median Scenario)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Wealth Paths
+    ax = axes[0, 1]
+    ax.plot(result_mr.years, result_mr.wealth / 1e6, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(result_rw.years, result_rw.wealth / 1e6, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Wealth ($M)')
+    ax.set_title('Wealth Trajectory Comparison')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Long Bond Allocation
+    ax = axes[1, 0]
+    n_periods = len(result_mr.lb_weight)
+    alloc_years = np.arange(n_periods)
+    ax.plot(alloc_years, result_mr.lb_weight * 100, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(alloc_years, result_rw.lb_weight * 100, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Long Bond Allocation (%)')
+    ax.set_title('Long Bond Weight Over Lifecycle')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, max(result_mr.lb_weight.max(), result_rw.lb_weight.max()) * 100 * 1.1)
+
+    # Panel 4: Funded Ratio
+    ax = axes[1, 1]
+    display_mr = np.minimum(result_mr.funded_ratio, 5.0)
+    display_rw = np.minimum(result_rw.funded_ratio, 5.0)
+    ax.plot(result_mr.years, display_mr, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(result_rw.years, display_rw, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.axhline(y=1.0, color='gray', linestyle='--', alpha=0.7, label='Fully Funded')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Funded Ratio')
+    ax.set_title('Funded Status Comparison')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f'Random Walk vs Mean-Reverting Interest Rates\nStrategy: {strategy} | r0 = {r0*100:.1f}%',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_interest_rate_models_comparison(
+    r0: float = 0.03,
+    n_periods: int = 30,
+    n_paths: int = 100,
+    econ_params: EconomicParams = None,
+    rw_params: RandomWalkParams = None,
+    figsize: Tuple[int, int] = (14, 6)
+) -> plt.Figure:
+    """
+    Compare simulated interest rate paths under random walk vs mean-reverting models.
+
+    Shows sample paths and distribution characteristics of both models.
+
+    Args:
+        r0: Initial interest rate
+        n_periods: Number of periods
+        n_paths: Number of sample paths to show
+        econ_params: Economic parameters
+        rw_params: Random walk parameters
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    from retirement_simulation import (
+        simulate_interest_rates, simulate_interest_rates_random_walk,
+        generate_correlated_shocks
+    )
+
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if rw_params is None:
+        rw_params = RandomWalkParams()
+
+    rng = np.random.default_rng(42)
+    n_sims = 1000
+
+    # Generate shocks
+    rate_shocks, _ = generate_correlated_shocks(n_periods, n_sims, econ_params.rho, rng)
+
+    # Simulate both models
+    rates_mr = simulate_interest_rates(
+        r0, n_periods, n_sims, econ_params, rate_shocks
+    )
+    rates_rw = simulate_interest_rates_random_walk(
+        r0, n_periods, n_sims, rw_params.sigma_r, rw_params.drift,
+        rate_shocks, rw_params.r_floor
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    years = np.arange(n_periods + 1)
+
+    # Panel 1: Mean-Reverting Model
+    ax = axes[0]
+    for i in range(min(n_paths, n_sims)):
+        ax.plot(years, rates_mr[i, :] * 100, 'b-', alpha=0.1, linewidth=0.5)
+
+    median_mr = np.median(rates_mr, axis=0)
+    p10_mr = np.percentile(rates_mr, 10, axis=0)
+    p90_mr = np.percentile(rates_mr, 90, axis=0)
+
+    ax.plot(years, median_mr * 100, 'navy', linewidth=2, label='Median')
+    ax.fill_between(years, p10_mr * 100, p90_mr * 100, alpha=0.3, color='blue',
+                   label='10th-90th percentile')
+    ax.axhline(y=econ_params.r_bar * 100, color='red', linestyle='--', alpha=0.7,
+              label=f'Long-run mean ({econ_params.r_bar*100:.0f}%)')
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title(f'Mean-Reverting Model (φ = {econ_params.phi})')
+    ax.legend(loc='upper right')
+    ax.set_xlim(0, n_periods)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Random Walk Model
+    ax = axes[1]
+    for i in range(min(n_paths, n_sims)):
+        ax.plot(years, rates_rw[i, :] * 100, 'r-', alpha=0.1, linewidth=0.5)
+
+    median_rw = np.median(rates_rw, axis=0)
+    p10_rw = np.percentile(rates_rw, 10, axis=0)
+    p90_rw = np.percentile(rates_rw, 90, axis=0)
+
+    ax.plot(years, median_rw * 100, 'darkred', linewidth=2, label='Median')
+    ax.fill_between(years, p10_rw * 100, p90_rw * 100, alpha=0.3, color='red',
+                   label='10th-90th percentile')
+    ax.axhline(y=r0 * 100, color='gray', linestyle='--', alpha=0.7,
+              label=f'Initial rate ({r0*100:.0f}%)')
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Random Walk Model (No Mean Reversion)')
+    ax.legend(loc='upper right')
+    ax.set_xlim(0, n_periods)
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle('Interest Rate Model Comparison', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
