@@ -334,6 +334,7 @@ def compute_lifecycle_median_path(
     target_fin_cash = target_total_cash - hc_cash_component
 
     # Constrained weights (no short selling in financial portfolio)
+    # Use a continuous approach: preserve relative proportions among positive weights
     stock_weight_no_short = np.zeros(total_years)
     bond_weight_no_short = np.zeros(total_years)
     cash_weight_no_short = np.zeros(total_years)
@@ -341,22 +342,28 @@ def compute_lifecycle_median_path(
     for i in range(total_years):
         fw = financial_wealth[i]
         if fw > 1e-6:
-            # Compute target weights
+            # Compute target weights (can be negative or > 1)
             w_s = target_fin_stocks[i] / fw
             w_b = target_fin_bonds[i] / fw
             w_c = target_fin_cash[i] / fw
 
-            # Apply no-short constraint
-            w_s = max(0, min(1, w_s))
-            w_b = max(0, min(1, w_b))
-            w_c = max(0, min(1, w_c))
+            # Apply no-short constraint while preserving relative proportions
+            # Step 1: Set negative weights to zero
+            w_s = max(0, w_s)
+            w_b = max(0, w_b)
+            w_c = max(0, w_c)
 
-            # Renormalize to sum to 1
+            # Step 2: Normalize to sum to 1 (preserves relative proportions)
             total = w_s + w_b + w_c
             if total > 0:
                 w_s /= total
                 w_b /= total
                 w_c /= total
+            else:
+                # Fallback to target allocation if all weights are non-positive
+                w_s = params.target_stock_allocation
+                w_b = params.target_bond_allocation
+                w_c = 1.0 - params.target_stock_allocation - params.target_bond_allocation
 
             stock_weight_no_short[i] = w_s
             bond_weight_no_short[i] = w_b
@@ -637,6 +644,147 @@ def plot_total_wealth_holdings(
     ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
 
 
+def create_beta_comparison_figure(
+    beta_values: list = [0.0, 0.5, 1.0],
+    base_params: LifecycleParams = None,
+    econ_params: EconomicParams = None,
+    figsize: Tuple[int, int] = (16, 12),
+    use_years: bool = True
+) -> plt.Figure:
+    """
+    Create a figure comparing key metrics across different stock beta values.
+
+    Shows how portfolio allocation, human capital decomposition, and target
+    holdings change as stock beta varies from 0 to 1.
+    """
+    if base_params is None:
+        base_params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    # Compute results for each beta value
+    results = {}
+    for beta in beta_values:
+        params = LifecycleParams(
+            start_age=base_params.start_age,
+            retirement_age=base_params.retirement_age,
+            end_age=base_params.end_age,
+            initial_earnings=base_params.initial_earnings,
+            earnings_growth=base_params.earnings_growth,
+            earnings_hump_age=base_params.earnings_hump_age,
+            earnings_decline=base_params.earnings_decline,
+            base_expenses=base_params.base_expenses,
+            expense_growth=base_params.expense_growth,
+            retirement_expenses=base_params.retirement_expenses,
+            stock_beta_human_capital=beta,
+            bond_duration_benchmark=base_params.bond_duration_benchmark,
+            target_stock_allocation=base_params.target_stock_allocation,
+            target_bond_allocation=base_params.target_bond_allocation,
+            risk_free_rate=base_params.risk_free_rate,
+            equity_premium=base_params.equity_premium,
+            initial_wealth=base_params.initial_wealth,
+        )
+        results[beta] = compute_lifecycle_median_path(params, econ_params)
+
+    # Create figure with 2x3 layout
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+
+    # Colors for different beta values
+    beta_colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # blue, orange, green
+
+    # Get x-axis values
+    result_0 = results[beta_values[0]]
+    if use_years:
+        x = np.arange(len(result_0.ages))
+        xlabel = 'Years from Career Start'
+    else:
+        x = result_0.ages
+        xlabel = 'Age'
+
+    retirement_x = base_params.retirement_age - base_params.start_age if use_years else base_params.retirement_age
+
+    # Plot 1: Stock Weight comparison
+    ax = axes[0, 0]
+    for i, beta in enumerate(beta_values):
+        ax.plot(x, results[beta].stock_weight_no_short, color=beta_colors[i],
+                linewidth=2, label=f'Beta = {beta}')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.axhline(y=1, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Weight')
+    ax.set_title('Stock Weight by Beta')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(-0.05, 1.15)
+
+    # Plot 2: Bond Weight comparison
+    ax = axes[0, 1]
+    for i, beta in enumerate(beta_values):
+        ax.plot(x, results[beta].bond_weight_no_short, color=beta_colors[i],
+                linewidth=2, label=f'Beta = {beta}')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.axhline(y=1, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Weight')
+    ax.set_title('Bond Weight by Beta')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(-0.05, 1.15)
+
+    # Plot 3: Cash Weight comparison
+    ax = axes[0, 2]
+    for i, beta in enumerate(beta_values):
+        ax.plot(x, results[beta].cash_weight_no_short, color=beta_colors[i],
+                linewidth=2, label=f'Beta = {beta}')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.axhline(y=1, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Weight')
+    ax.set_title('Cash Weight by Beta')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(-0.05, 1.15)
+
+    # Plot 4: HC Stock Component comparison
+    ax = axes[1, 0]
+    for i, beta in enumerate(beta_values):
+        ax.plot(x, results[beta].hc_stock_component, color=beta_colors[i],
+                linewidth=2, label=f'Beta = {beta}')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Stock Component of Human Capital')
+    ax.legend(loc='upper right', fontsize=9)
+
+    # Plot 5: HC Bond Component comparison
+    ax = axes[1, 1]
+    for i, beta in enumerate(beta_values):
+        ax.plot(x, results[beta].hc_bond_component, color=beta_colors[i],
+                linewidth=2, label=f'Beta = {beta}')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Bond Component of Human Capital')
+    ax.legend(loc='upper right', fontsize=9)
+
+    # Plot 6: Target Financial Stock Holdings comparison
+    ax = axes[1, 2]
+    for i, beta in enumerate(beta_values):
+        ax.plot(x, results[beta].target_fin_stocks, color=beta_colors[i],
+                linewidth=2, label=f'Beta = {beta}')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Target Financial Stock Holdings')
+    ax.legend(loc='upper right', fontsize=9)
+
+    plt.tight_layout()
+    return fig
+
+
 def create_lifecycle_figure(
     result: LifecycleResult,
     params: LifecycleParams,
@@ -677,6 +825,7 @@ def generate_lifecycle_pdf(
     params: LifecycleParams = None,
     econ_params: EconomicParams = None,
     include_individual_pages: bool = True,
+    include_beta_comparison: bool = True,
     use_years: bool = True
 ) -> str:
     """
@@ -687,6 +836,7 @@ def generate_lifecycle_pdf(
         params: Lifecycle parameters (uses defaults if None)
         econ_params: Economic parameters (uses defaults if None)
         include_individual_pages: If True, also include each chart on its own page
+        include_beta_comparison: If True, include beta comparison visualization
         use_years: If True, x-axis shows years from career start; if False, shows age
 
     Returns:
@@ -707,6 +857,20 @@ def generate_lifecycle_pdf(
                     fontsize=14, fontweight='bold', y=1.02)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
+
+        # Page 2: Beta comparison (if enabled)
+        if include_beta_comparison:
+            fig = create_beta_comparison_figure(
+                beta_values=[0.0, 0.5, 1.0],
+                base_params=params,
+                econ_params=econ_params,
+                figsize=(16, 10),
+                use_years=use_years
+            )
+            fig.suptitle('Effect of Stock Beta on Portfolio Allocation',
+                        fontsize=14, fontweight='bold', y=1.02)
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
 
         if include_individual_pages:
             # Individual chart pages for detail
