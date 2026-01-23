@@ -49,10 +49,15 @@ class LifecycleParams:
     # Asset allocation parameters
     stock_beta_human_capital: float = 0.1    # Beta of human capital to stocks
     bond_duration_benchmark: float = 20.0    # Benchmark bond duration for HC allocation
-    target_stock_allocation: float = 0.60    # Target long-run stock allocation
-    target_bond_allocation: float = 0.30     # Target long-run bond allocation
 
-    # Economic parameters
+    # Mean-variance optimization parameters
+    # If gamma > 0, target allocations are derived from MV optimization
+    # If gamma = 0, use the fixed target allocations below
+    gamma: float = 2.0               # Risk aversion coefficient for MV optimization
+    target_stock_allocation: float = 0.60    # Target stock allocation (used if gamma=0)
+    target_bond_allocation: float = 0.30     # Target bond allocation (used if gamma=0)
+
+    # Economic parameters (consistent with EconomicParams for DGP)
     risk_free_rate: float = 0.02     # Long-run real risk-free rate
     equity_premium: float = 0.04     # Equity risk premium
 
@@ -161,6 +166,48 @@ def compute_expense_profile(params: LifecycleParams) -> Tuple[np.ndarray, np.nda
     return working_expenses, retirement_expenses
 
 
+def compute_mv_optimal_allocation(
+    mu_excess: float,
+    sigma: float,
+    gamma: float,
+    bond_share_of_safe: float = 0.75
+) -> Tuple[float, float, float]:
+    """
+    Compute optimal portfolio allocation using mean-variance optimization.
+
+    The Merton optimal share of risky assets in total wealth is:
+        w_stock = mu_excess / (gamma * sigma^2)
+
+    The remaining allocation goes to safe assets (bonds and cash).
+    By default, bonds receive 75% of the safe allocation and cash 25%.
+
+    Args:
+        mu_excess: Equity risk premium (expected excess return over risk-free)
+        sigma: Standard deviation of stock returns
+        gamma: Risk aversion coefficient (higher = more conservative)
+        bond_share_of_safe: Fraction of safe allocation going to bonds (vs cash)
+
+    Returns:
+        Tuple of (stock_weight, bond_weight, cash_weight) summing to 1.0
+    """
+    if gamma <= 0:
+        raise ValueError("Risk aversion gamma must be positive for MV optimization")
+
+    # Merton optimal stock share
+    variance = sigma ** 2
+    stock_weight = mu_excess / (gamma * variance)
+
+    # Constrain to [0, 1] - no leverage, no shorting
+    stock_weight = max(0.0, min(1.0, stock_weight))
+
+    # Allocate remainder to bonds and cash
+    safe_weight = 1.0 - stock_weight
+    bond_weight = safe_weight * bond_share_of_safe
+    cash_weight = safe_weight * (1.0 - bond_share_of_safe)
+
+    return stock_weight, bond_weight, cash_weight
+
+
 def compute_present_value(
     cashflows: np.ndarray,
     rate: float,
@@ -237,6 +284,21 @@ def compute_lifecycle_median_path(
 
     r = econ_params.r_bar  # Use long-run rate for median path
     phi = econ_params.phi
+
+    # Compute target allocations: either from MV optimization or use fixed targets
+    if params.gamma > 0:
+        # Mean-variance optimal allocation using consistent DGP parameters
+        target_stock, target_bond, target_cash = compute_mv_optimal_allocation(
+            mu_excess=econ_params.mu_excess,
+            sigma=econ_params.sigma_s,
+            gamma=params.gamma,
+            bond_share_of_safe=0.75  # 75% bonds, 25% cash in safe portion
+        )
+    else:
+        # Use fixed target allocations
+        target_stock = params.target_stock_allocation
+        target_bond = params.target_bond_allocation
+        target_cash = 1.0 - target_stock - target_bond
 
     total_years = params.end_age - params.start_age
     ages = np.arange(params.start_age, params.end_age)
@@ -327,9 +389,9 @@ def compute_lifecycle_median_path(
     expected_cash_return = r
 
     avg_return = (
-        params.target_stock_allocation * expected_stock_return +
-        params.target_bond_allocation * expected_bond_return +
-        (1 - params.target_stock_allocation - params.target_bond_allocation) * expected_cash_return
+        target_stock * expected_stock_return +
+        target_bond * expected_bond_return +
+        target_cash * expected_cash_return
     )
 
     # Consumption rate = median return + 1 percentage point
@@ -367,10 +429,10 @@ def compute_lifecycle_median_path(
     # Total wealth = financial wealth + human capital
     total_wealth = financial_wealth + human_capital
 
-    # Target total portfolio allocation
-    target_total_stocks = params.target_stock_allocation * total_wealth
-    target_total_bonds = params.target_bond_allocation * total_wealth
-    target_total_cash = (1 - params.target_stock_allocation - params.target_bond_allocation) * total_wealth
+    # Target total portfolio allocation (from MV optimization or fixed targets)
+    target_total_stocks = target_stock * total_wealth
+    target_total_bonds = target_bond * total_wealth
+    target_total_cash = target_cash * total_wealth
 
     # Target financial holdings = Total target - Human capital component
     target_fin_stocks = target_total_stocks - hc_stock_component
@@ -406,8 +468,8 @@ def compute_lifecycle_median_path(
                 fixed_income = fixed_income / total_agg
             else:
                 # Fallback to target allocation if both are non-positive
-                equity = params.target_stock_allocation
-                fixed_income = params.target_bond_allocation + (1.0 - params.target_stock_allocation - params.target_bond_allocation)
+                equity = target_stock
+                fixed_income = target_bond + target_cash
 
             # Step 4: Split FI among positive targets
             if w_bond > 0 and w_cash > 0:
@@ -425,10 +487,10 @@ def compute_lifecycle_median_path(
                 w_c = fixed_income
             else:
                 # Both non-positive: use target proportions for split
-                target_fi = params.target_bond_allocation + (1.0 - params.target_stock_allocation - params.target_bond_allocation)
+                target_fi = target_bond + target_cash
                 if target_fi > 0:
-                    w_b = fixed_income * (params.target_bond_allocation / target_fi)
-                    w_c = fixed_income * ((1.0 - params.target_stock_allocation - params.target_bond_allocation) / target_fi)
+                    w_b = fixed_income * (target_bond / target_fi)
+                    w_c = fixed_income * (target_cash / target_fi)
                 else:
                     w_b = fixed_income / 2.0
                     w_c = fixed_income / 2.0
@@ -827,6 +889,7 @@ def create_beta_comparison_figure(
             retirement_expenses=base_params.retirement_expenses,
             stock_beta_human_capital=beta,
             bond_duration_benchmark=base_params.bond_duration_benchmark,
+            gamma=base_params.gamma,
             target_stock_allocation=base_params.target_stock_allocation,
             target_bond_allocation=base_params.target_bond_allocation,
             risk_free_rate=base_params.risk_free_rate,
@@ -1031,6 +1094,7 @@ def generate_lifecycle_pdf(
                     retirement_expenses=params.retirement_expenses,
                     stock_beta_human_capital=beta,
                     bond_duration_benchmark=params.bond_duration_benchmark,
+                    gamma=params.gamma,
                     target_stock_allocation=params.target_stock_allocation,
                     target_bond_allocation=params.target_bond_allocation,
                     risk_free_rate=params.risk_free_rate,
@@ -1049,6 +1113,22 @@ def generate_lifecycle_pdf(
         # Summary page with parameters
         fig, ax = plt.subplots(figsize=(10, 8))
         ax.axis('off')
+
+        # Compute MV optimal allocation for summary
+        if params.gamma > 0:
+            mv_stock, mv_bond, mv_cash = compute_mv_optimal_allocation(
+                mu_excess=econ_params.mu_excess,
+                sigma=econ_params.sigma_s,
+                gamma=params.gamma
+            )
+            mv_formula = f"w* = mu / (gamma * sigma^2) = {econ_params.mu_excess:.2f} / ({params.gamma:.1f} * {econ_params.sigma_s:.2f}^2) = {mv_stock:.1%}"
+            allocation_source = "Mean-Variance Optimization"
+        else:
+            mv_stock = params.target_stock_allocation
+            mv_bond = params.target_bond_allocation
+            mv_cash = 1 - mv_stock - mv_bond
+            mv_formula = "Fixed target allocations (gamma=0)"
+            allocation_source = "Fixed Targets"
 
         summary_text = f"""
 Lifecycle Investment Strategy Parameters
@@ -1077,28 +1157,32 @@ Human Capital Allocation:
   - Stock Beta: {params.stock_beta_human_capital:.2f}
   - Bond Duration Benchmark: {params.bond_duration_benchmark:.1f} years
 
-Target Total Wealth Allocation:
-  - Stocks: {params.target_stock_allocation*100:.0f}%
-  - Bonds: {params.target_bond_allocation*100:.0f}%
-  - Cash: {(1-params.target_stock_allocation-params.target_bond_allocation)*100:.0f}%
+Mean-Variance Optimization (DGP Parameters):
+  - Risk-Free Rate (r_bar): {econ_params.r_bar*100:.1f}%
+  - Equity Premium (mu): {econ_params.mu_excess*100:.1f}%
+  - Stock Volatility (sigma): {econ_params.sigma_s*100:.0f}%
+  - Risk Aversion (gamma): {params.gamma:.1f}
+  - Allocation Source: {allocation_source}
+  - {mv_formula}
 
-Economic Parameters:
-  - Risk-Free Rate: {econ_params.r_bar*100:.1f}%
-  - Equity Risk Premium: {econ_params.mu_excess*100:.1f}%
-  - Rate Persistence (phi): {econ_params.phi:.2f}
+Target Total Wealth Allocation (from MV):
+  - Stocks: {mv_stock*100:.1f}%
+  - Bonds: {mv_bond*100:.1f}%
+  - Cash: {mv_cash*100:.1f}%
 
 Key Insights:
 -------------
-1. Consumption = Subsistence + (Median Return + 1pp) of Net Worth.
+1. Portfolio allocation is derived from mean-variance
+   optimization using consistent DGP parameters.
 
-2. Net Worth accounts for human capital and future expense
-   liabilities, not just financial wealth.
+2. The Merton optimal share w* = mu / (gamma * sigma^2)
+   determines target stock allocation in total wealth.
 
-3. As net worth grows, variable consumption increases,
-   allowing higher spending while preserving subsistence.
+3. Changing gamma, mu, or sigma allows studying how
+   retirement trajectories respond to return assumptions.
 
-4. The "Consumption / FW" chart shows what share of
-   financial wealth is spent each year.
+4. Human capital is treated as implicit asset holdings,
+   and financial portfolio adjusts to reach total targets.
 """
 
         ax.text(0.05, 0.95, summary_text, transform=ax.transAxes,
@@ -1121,8 +1205,10 @@ def main(
     initial_earnings: float = 100,
     stock_beta_hc: float = 0.1,
     bond_duration: float = 7.0,
-    target_stocks: float = 0.60,
-    target_bonds: float = 0.30,
+    gamma: float = 2.0,
+    mu_excess: float = 0.04,
+    sigma_s: float = 0.18,
+    r_bar: float = 0.02,
     consumption_share: float = 0.05,
     use_years: bool = True,
     verbose: bool = True
@@ -1138,14 +1224,36 @@ def main(
         initial_earnings: Starting annual earnings in $000s
         stock_beta_hc: Beta of human capital to stocks
         bond_duration: Benchmark bond duration for HC allocation (years)
-        target_stocks: Target stock allocation in total wealth
-        target_bonds: Target bond allocation in total wealth
+        gamma: Risk aversion coefficient for MV optimization (0 = use fixed targets)
+        mu_excess: Equity risk premium for return assumptions
+        sigma_s: Stock return volatility
+        r_bar: Long-run real risk-free rate
         consumption_share: Share of net worth consumed above subsistence
         use_years: If True, x-axis shows years from start; if False, shows age
         verbose: If True, print progress and statistics
     """
     if verbose:
         print("Computing lifecycle investment strategy...")
+
+    # Create economic parameters with consistent DGP
+    econ_params = EconomicParams(
+        r_bar=r_bar,
+        mu_excess=mu_excess,
+        sigma_s=sigma_s,
+    )
+
+    # Compute MV optimal allocation for display
+    if gamma > 0:
+        opt_stock, opt_bond, opt_cash = compute_mv_optimal_allocation(
+            mu_excess=mu_excess,
+            sigma=sigma_s,
+            gamma=gamma
+        )
+        if verbose:
+            print(f"MV Optimal Allocation (gamma={gamma}): "
+                  f"Stocks={opt_stock:.1%}, Bonds={opt_bond:.1%}, Cash={opt_cash:.1%}")
+    else:
+        opt_stock, opt_bond, opt_cash = 0.60, 0.30, 0.10  # fallback
 
     params = LifecycleParams(
         start_age=start_age,
@@ -1154,11 +1262,13 @@ def main(
         initial_earnings=initial_earnings,
         stock_beta_human_capital=stock_beta_hc,
         bond_duration_benchmark=bond_duration,
-        target_stock_allocation=target_stocks,
-        target_bond_allocation=target_bonds,
+        gamma=gamma,
+        target_stock_allocation=opt_stock,
+        target_bond_allocation=opt_bond,
         consumption_share=consumption_share,
+        risk_free_rate=r_bar,
+        equity_premium=mu_excess,
     )
-    econ_params = EconomicParams()
 
     output = generate_lifecycle_pdf(
         output_path=output_path,
@@ -1207,10 +1317,14 @@ if __name__ == '__main__':
                        help='Stock beta of human capital (default: 0.1)')
     parser.add_argument('--bond-duration', type=float, default=20.0,
                        help='Benchmark bond duration for HC allocation in years (default: 20.0)')
-    parser.add_argument('--target-stocks', type=float, default=0.60,
-                       help='Target stock allocation (default: 0.60)')
-    parser.add_argument('--target-bonds', type=float, default=0.30,
-                       help='Target bond allocation (default: 0.30)')
+    parser.add_argument('--gamma', type=float, default=2.0,
+                       help='Risk aversion for MV optimization (default: 2.0, 0=use fixed targets)')
+    parser.add_argument('--mu-excess', type=float, default=0.04,
+                       help='Equity risk premium (default: 0.04 = 4%%)')
+    parser.add_argument('--sigma', type=float, default=0.18,
+                       help='Stock return volatility (default: 0.18 = 18%%)')
+    parser.add_argument('--r-bar', type=float, default=0.02,
+                       help='Long-run real risk-free rate (default: 0.02 = 2%%)')
     parser.add_argument('--consumption-share', type=float, default=0.05,
                        help='Share of net worth consumed above subsistence (default: 0.05)')
     parser.add_argument('--use-age', action='store_true',
@@ -1228,8 +1342,10 @@ if __name__ == '__main__':
         initial_earnings=args.initial_earnings,
         stock_beta_hc=args.stock_beta,
         bond_duration=args.bond_duration,
-        target_stocks=args.target_stocks,
-        target_bonds=args.target_bonds,
+        gamma=args.gamma,
+        mu_excess=args.mu_excess,
+        sigma_s=args.sigma,
+        r_bar=args.r_bar,
         consumption_share=args.consumption_share,
         use_years=not args.use_age,
         verbose=not args.quiet,
