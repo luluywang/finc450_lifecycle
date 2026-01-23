@@ -766,6 +766,291 @@ def run_monte_carlo(
 
 
 # =============================================================================
+# Lifecycle Asset Allocation Model (Human Capital Framework)
+# =============================================================================
+
+@dataclass
+class LifecycleParams:
+    """Parameters for lifecycle asset allocation with Human Capital."""
+    current_age: int = 25
+    retirement_age: int = 65
+    life_expectancy: int = 90
+    current_wage: float = 250_000
+    wage_growth: float = 0.00      # Real wage growth rate
+    subsistence: float = 100_000   # Mandatory spending (inflation-adjusted)
+    beta_labor: float = 0.0        # Labor income correlation with stocks
+                                   # 0.0 = bond-like (professor, consultant)
+                                   # 1.0 = stock-like (tech founder, banker)
+    gamma: float = 2.0             # Risk aversion coefficient
+    initial_wealth: float = 10_000 # Starting financial wealth
+
+
+def calculate_human_capital(
+    age: int,
+    wage: float,
+    retirement_age: int,
+    beta_labor: float,
+    subsistence: float,
+    wage_growth: float,
+    rf: float,
+    mkt_excess: float
+) -> float:
+    """
+    Calculate the Present Value of future net labor income (Human Capital).
+
+    Human Capital is discounted at a risk-adjusted rate:
+    r_labor = rf + beta_labor * market_excess_return
+
+    If beta_labor = 0, Human Capital behaves like a bond.
+    If beta_labor = 1, Human Capital behaves like a stock.
+
+    Args:
+        age: Current age
+        wage: Current annual wage
+        retirement_age: Age at retirement
+        beta_labor: Correlation of labor income with stock market
+        subsistence: Mandatory annual spending
+        wage_growth: Real wage growth rate
+        rf: Risk-free rate
+        mkt_excess: Equity risk premium
+
+    Returns:
+        Present value of future net labor income
+    """
+    if age >= retirement_age:
+        return 0.0
+
+    # Risk-adjusted discount rate for Human Capital
+    r_labor = rf + beta_labor * mkt_excess
+
+    # Sum discounted future net income
+    pv_wages = 0.0
+    years_to_work = retirement_age - age
+
+    for t in range(1, years_to_work + 1):
+        # Projected net income (wage - subsistence)
+        net_income = (wage - subsistence) * ((1 + wage_growth) ** (t - 1))
+
+        # Discount back to today
+        pv_wages += net_income / ((1 + r_labor) ** t)
+
+    return max(pv_wages, 0.0)
+
+
+def get_merton_share(mkt_excess: float, sigma: float, gamma: float) -> float:
+    """
+    Calculate the Merton optimal share of risky assets in TOTAL wealth.
+
+    The Merton share is: (mu - rf) / (gamma * sigma^2)
+
+    This represents the theoretically optimal fraction of total wealth
+    (Human Capital + Financial Wealth) to hold in risky assets.
+
+    Args:
+        mkt_excess: Equity risk premium (expected excess return)
+        sigma: Standard deviation of stock returns
+        gamma: Risk aversion coefficient
+
+    Returns:
+        Optimal fraction of total wealth in stocks
+    """
+    variance = sigma ** 2
+    target_share = mkt_excess / (gamma * variance)
+    return target_share
+
+
+def solve_financial_stock_allocation(
+    fin_wealth: float,
+    human_capital: float,
+    beta_labor: float,
+    target_total_share: float
+) -> float:
+    """
+    Solve for the optimal stock allocation in the financial portfolio.
+
+    Given:
+    - Total Wealth = Financial Wealth + Human Capital
+    - Target Stock Dollars = Total Wealth * Merton Share
+    - Implicit Stock in HC = Human Capital * beta_labor
+
+    The financial portfolio must fill the gap:
+    Required Financial Stock = Target Stock - Implicit Stock in HC
+
+    Constraints: No leverage (cap at 100%), no shorting (floor at 0%)
+
+    Args:
+        fin_wealth: Current financial wealth
+        human_capital: Current human capital value
+        beta_labor: Labor income beta (stock-likeness of HC)
+        target_total_share: Merton share (target % of total wealth in stocks)
+
+    Returns:
+        Optimal stock allocation for financial portfolio (0 to 1)
+    """
+    total_wealth = fin_wealth + human_capital
+
+    if total_wealth <= 0:
+        return 0.5  # Default allocation if no wealth
+
+    # Target stock dollars across entire balance sheet
+    target_stock_dollars = total_wealth * target_total_share
+
+    # Implicit stock exposure from Human Capital
+    # If beta=0, HC is bond-like (no implicit stock)
+    # If beta=1, HC is stock-like (all implicit stock)
+    implicit_stock_in_hc = human_capital * beta_labor
+
+    # Required stock purchase in financial portfolio
+    required_financial_stock = target_stock_dollars - implicit_stock_in_hc
+
+    # Calculate weight in financial portfolio
+    if fin_wealth <= 0:
+        return 1.0  # If broke, theoretical 100% stocks
+
+    optimal_weight = required_financial_stock / fin_wealth
+
+    # Apply leverage constraints (no borrowing, no shorting)
+    constrained_weight = np.clip(optimal_weight, 0.0, 1.0)
+
+    return constrained_weight
+
+
+@dataclass
+class LifecycleResult:
+    """Results from lifecycle simulation."""
+    ages: np.ndarray                    # Age at each period
+    human_capital: np.ndarray           # Human Capital over time
+    financial_wealth: np.ndarray        # Financial wealth over time
+    total_wealth: np.ndarray            # Total wealth (HC + FW)
+    stock_allocation: np.ndarray        # Stock % in financial portfolio
+    bond_allocation: np.ndarray         # Bond % in financial portfolio
+    consumption: np.ndarray             # Consumption each period
+    savings: np.ndarray                 # Savings each period
+    merton_share: float                 # Target total wealth stock share
+
+
+def run_lifecycle_simulation(
+    lifecycle_params: LifecycleParams,
+    econ_params: EconomicParams,
+    use_random_walk: bool = False,
+    rw_params: 'RandomWalkParams' = None
+) -> LifecycleResult:
+    """
+    Run a deterministic lifecycle simulation showing the glide path.
+
+    This implements the Total Wealth framework where:
+    - Human Capital is valued as PV of future net labor income
+    - Financial portfolio allocation adjusts to achieve target total wealth risk
+    - Creates the characteristic "hump-shaped" or "flat-then-falling" equity path
+
+    Args:
+        lifecycle_params: Lifecycle model parameters
+        econ_params: Economic environment parameters
+        use_random_walk: Whether to use random walk for rate evolution
+        rw_params: Random walk parameters (if use_random_walk=True)
+
+    Returns:
+        LifecycleResult with allocation path over lifecycle
+    """
+    lp = lifecycle_params
+    ep = econ_params
+
+    # Use current rate as risk-free rate
+    rf = ep.r_bar
+    mkt_excess = ep.mu_excess
+    sigma = ep.sigma_s
+
+    # Calculate Merton share (target for total wealth)
+    merton_share = get_merton_share(mkt_excess, sigma, lp.gamma)
+
+    # Initialize arrays
+    n_periods = lp.life_expectancy - lp.current_age + 1
+    ages = np.arange(lp.current_age, lp.life_expectancy + 1)
+    human_capital = np.zeros(n_periods)
+    financial_wealth = np.zeros(n_periods)
+    total_wealth = np.zeros(n_periods)
+    stock_allocation = np.zeros(n_periods)
+    bond_allocation = np.zeros(n_periods)
+    consumption = np.zeros(n_periods)
+    savings = np.zeros(n_periods)
+
+    # Initial conditions
+    fin_wealth = lp.initial_wealth
+
+    for i, age in enumerate(ages):
+        # Calculate Human Capital
+        hc = calculate_human_capital(
+            age=age,
+            wage=lp.current_wage if age < lp.retirement_age else 0,
+            retirement_age=lp.retirement_age,
+            beta_labor=lp.beta_labor,
+            subsistence=lp.subsistence,
+            wage_growth=lp.wage_growth,
+            rf=rf,
+            mkt_excess=mkt_excess
+        )
+
+        # Solve for optimal stock allocation in financial portfolio
+        stock_pct = solve_financial_stock_allocation(
+            fin_wealth=fin_wealth,
+            human_capital=hc,
+            beta_labor=lp.beta_labor,
+            target_total_share=merton_share
+        )
+
+        # Store data
+        human_capital[i] = hc
+        financial_wealth[i] = fin_wealth
+        total_wealth[i] = hc + fin_wealth
+        stock_allocation[i] = stock_pct
+        bond_allocation[i] = 1.0 - stock_pct
+
+        # Determine consumption and savings
+        if age < lp.retirement_age:
+            # Working years: earn wage, spend subsistence, save the rest
+            annual_consumption = lp.subsistence
+            annual_savings = lp.current_wage - lp.subsistence
+        else:
+            # Retirement: consume from wealth
+            years_remaining = lp.life_expectancy - age
+            if years_remaining > 0:
+                # Simple consumption rule: spend proportion of wealth
+                annual_consumption = fin_wealth / (years_remaining + 5)
+            else:
+                annual_consumption = fin_wealth
+            annual_savings = -annual_consumption  # Negative savings = spending down
+
+        consumption[i] = annual_consumption
+        savings[i] = annual_savings
+
+        # Simulate next year's wealth (deterministic: use expected returns)
+        if i < n_periods - 1:
+            # Portfolio return = rf + stock_pct * excess return
+            port_return = rf + stock_pct * mkt_excess
+
+            if age < lp.retirement_age:
+                # Accumulation: wealth grows + savings
+                fin_wealth = fin_wealth * (1 + port_return) + annual_savings
+            else:
+                # Decumulation: wealth grows - consumption
+                fin_wealth = fin_wealth * (1 + port_return) - annual_consumption
+
+            fin_wealth = max(fin_wealth, 0)
+
+    return LifecycleResult(
+        ages=ages,
+        human_capital=human_capital,
+        financial_wealth=financial_wealth,
+        total_wealth=total_wealth,
+        stock_allocation=stock_allocation,
+        bond_allocation=bond_allocation,
+        consumption=consumption,
+        savings=savings,
+        merton_share=merton_share
+    )
+
+
+# =============================================================================
 # Random Walk Benchmark Simulation
 # =============================================================================
 
