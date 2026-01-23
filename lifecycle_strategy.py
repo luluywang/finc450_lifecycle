@@ -57,7 +57,7 @@ class LifecycleParams:
     equity_premium: float = 0.04     # Equity risk premium
 
     # Initial financial wealth
-    initial_wealth: float = 50       # Starting financial wealth ($50k)
+    initial_wealth: float = 1        # Starting financial wealth ($1k)
 
 
 @dataclass
