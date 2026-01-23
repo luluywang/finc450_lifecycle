@@ -45,7 +45,7 @@ class LifecycleParams:
 
     # Asset allocation parameters
     stock_beta_human_capital: float = 0.5    # Beta of human capital to stocks
-    bond_beta_human_capital: float = 0.3     # Beta of human capital to bonds
+    bond_duration_benchmark: float = 7.0     # Benchmark bond duration for HC allocation
     target_stock_allocation: float = 0.60    # Target long-run stock allocation
     target_bond_allocation: float = 0.30     # Target long-run bond allocation
 
@@ -275,14 +275,29 @@ def compute_lifecycle_median_path(
     # For the image style, human capital = PV of future earnings
     human_capital = pv_earnings.copy()
 
-    # Decompose human capital into stock/bond/cash components based on betas
-    # Total beta should sum to 1 for full decomposition
-    remaining_beta = 1.0 - params.stock_beta_human_capital - params.bond_beta_human_capital
-    cash_beta = max(0, remaining_beta)
-
+    # Decompose human capital into stock/bond/cash components
+    # Stock component: based on stock beta (correlation with equity market)
+    # Fixed income (bond/cash): based on duration of human capital
     hc_stock_component = human_capital * params.stock_beta_human_capital
-    hc_bond_component = human_capital * params.bond_beta_human_capital
-    hc_cash_component = human_capital * cash_beta
+
+    # Non-stock portion of human capital
+    non_stock_hc = human_capital * (1.0 - params.stock_beta_human_capital)
+
+    # Allocate non-stock portion between bonds and cash based on duration
+    # Higher duration = more bond-like (interest rate sensitive)
+    # Lower duration (near retirement) = more cash-like
+    hc_bond_component = np.zeros(total_years)
+    hc_cash_component = np.zeros(total_years)
+
+    for i in range(total_years):
+        if params.bond_duration_benchmark > 0 and non_stock_hc[i] > 0:
+            # Bond fraction based on duration ratio (capped at 1.0)
+            bond_fraction = min(1.0, duration_earnings[i] / params.bond_duration_benchmark)
+            hc_bond_component[i] = non_stock_hc[i] * bond_fraction
+            hc_cash_component[i] = non_stock_hc[i] * (1.0 - bond_fraction)
+        else:
+            # If no benchmark duration or no HC, treat as cash
+            hc_cash_component[i] = non_stock_hc[i]
 
     # Financial wealth accumulation along median path
     financial_wealth = np.zeros(total_years)
@@ -735,10 +750,10 @@ Expense Parameters:
   - Base Expenses: ${params.base_expenses:,.0f}k
   - Retirement Expenses: ${params.retirement_expenses:,.0f}k
 
-Human Capital Betas:
+Human Capital Allocation:
   - Stock Beta: {params.stock_beta_human_capital:.2f}
-  - Bond Beta: {params.bond_beta_human_capital:.2f}
-  - Cash Beta: {1 - params.stock_beta_human_capital - params.bond_beta_human_capital:.2f}
+  - Bond Duration Benchmark: {params.bond_duration_benchmark:.1f} years
+  - Non-stock portion allocated to bonds/cash based on HC duration
 
 Target Total Wealth Allocation:
   - Stocks: {params.target_stock_allocation*100:.0f}%
@@ -752,17 +767,19 @@ Economic Parameters:
 
 Key Insights:
 -------------
-1. Human capital dominates early in life, making total wealth
-   equity-like even with conservative financial portfolio.
+1. Human capital is decomposed using stock beta for equity
+   exposure and duration for fixed income allocation.
 
-2. Financial portfolio should start with HIGH stock allocation
-   (even 100%) to offset bond-like human capital.
+2. Stock component = HC * stock_beta (market correlation).
 
-3. As human capital depletes near retirement, financial
-   portfolio naturally shifts toward target allocation.
+3. Non-stock portion allocated between bonds/cash based on
+   duration: higher duration = more bond-like exposure.
 
-4. Duration matching becomes critical in retirement when
-   human capital is exhausted.
+4. As HC duration shortens near retirement, more of the
+   non-stock portion shifts from bonds to cash.
+
+5. This approach captures both market risk (via beta) and
+   interest rate risk (via duration) in human capital.
 """
 
         ax.text(0.05, 0.95, summary_text, transform=ax.transAxes,
@@ -784,7 +801,7 @@ def main(
     end_age: int = 85,
     initial_earnings: float = 100,
     stock_beta_hc: float = 0.5,
-    bond_beta_hc: float = 0.3,
+    bond_duration: float = 7.0,
     target_stocks: float = 0.60,
     target_bonds: float = 0.30,
     use_years: bool = True,
@@ -800,7 +817,7 @@ def main(
         end_age: Planning horizon end
         initial_earnings: Starting annual earnings in $000s
         stock_beta_hc: Beta of human capital to stocks
-        bond_beta_hc: Beta of human capital to bonds
+        bond_duration: Benchmark bond duration for HC allocation (years)
         target_stocks: Target stock allocation in total wealth
         target_bonds: Target bond allocation in total wealth
         use_years: If True, x-axis shows years from start; if False, shows age
@@ -815,7 +832,7 @@ def main(
         end_age=end_age,
         initial_earnings=initial_earnings,
         stock_beta_human_capital=stock_beta_hc,
-        bond_beta_human_capital=bond_beta_hc,
+        bond_duration_benchmark=bond_duration,
         target_stock_allocation=target_stocks,
         target_bond_allocation=target_bonds,
     )
@@ -866,8 +883,8 @@ if __name__ == '__main__':
                        help='Initial earnings in $000s (default: 100)')
     parser.add_argument('--stock-beta', type=float, default=0.5,
                        help='Stock beta of human capital (default: 0.5)')
-    parser.add_argument('--bond-beta', type=float, default=0.3,
-                       help='Bond beta of human capital (default: 0.3)')
+    parser.add_argument('--bond-duration', type=float, default=7.0,
+                       help='Benchmark bond duration for HC allocation in years (default: 7.0)')
     parser.add_argument('--target-stocks', type=float, default=0.60,
                        help='Target stock allocation (default: 0.60)')
     parser.add_argument('--target-bonds', type=float, default=0.30,
@@ -886,7 +903,7 @@ if __name__ == '__main__':
         end_age=args.end_age,
         initial_earnings=args.initial_earnings,
         stock_beta_hc=args.stock_beta,
-        bond_beta_hc=args.bond_beta,
+        bond_duration=args.bond_duration,
         target_stocks=args.target_stocks,
         target_bonds=args.target_bonds,
         use_years=not args.use_age,

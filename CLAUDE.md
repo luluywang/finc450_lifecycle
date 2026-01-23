@@ -25,7 +25,7 @@ This creates `lifecycle_strategy.pdf` with the full lifecycle investment analysi
 ### Custom Parameters
 
 ```bash
-python3 lifecycle_strategy.py -o custom.pdf --initial-earnings 120 --stock-beta 0.4
+python3 lifecycle_strategy.py -o custom.pdf --initial-earnings 120 --stock-beta 0.4 --bond-duration 5.0
 ```
 
 Run `python3 lifecycle_strategy.py --help` for all available options.
