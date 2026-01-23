@@ -45,12 +45,12 @@ class LifecycleParams:
 
     # Asset allocation parameters
     stock_beta_human_capital: float = 0.5    # Beta of human capital to stocks
-    bond_duration_benchmark: float = 7.0     # Benchmark bond duration for HC allocation
+    bond_duration_benchmark: float = 20.0    # Benchmark bond duration for HC allocation
     target_stock_allocation: float = 0.60    # Target long-run stock allocation
     target_bond_allocation: float = 0.30     # Target long-run bond allocation
 
     # Economic parameters
-    risk_free_rate: float = 0.03     # Long-run real risk-free rate
+    risk_free_rate: float = 0.02     # Long-run real risk-free rate
     equity_premium: float = 0.04     # Equity risk premium
 
     # Initial financial wealth
@@ -883,8 +883,8 @@ if __name__ == '__main__':
                        help='Initial earnings in $000s (default: 100)')
     parser.add_argument('--stock-beta', type=float, default=0.5,
                        help='Stock beta of human capital (default: 0.5)')
-    parser.add_argument('--bond-duration', type=float, default=7.0,
-                       help='Benchmark bond duration for HC allocation in years (default: 7.0)')
+    parser.add_argument('--bond-duration', type=float, default=20.0,
+                       help='Benchmark bond duration for HC allocation in years (default: 20.0)')
     parser.add_argument('--target-stocks', type=float, default=0.60,
                        help='Target stock allocation (default: 0.60)')
     parser.add_argument('--target-bonds', type=float, default=0.30,
