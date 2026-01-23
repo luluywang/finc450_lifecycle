@@ -32,9 +32,9 @@ class EconomicParams:
 
 @dataclass
 class BondParams:
-    """Parameters for bond instruments."""
-    D_mm: float = 0.25         # Money market duration
-    D_lb: float = 15.0         # Long bond duration
+    """Parameters for bond instruments (maturity in years)."""
+    D_mm: float = 0.25         # Money market maturity (≈ 3 months)
+    D_lb: float = 15.0         # Long bond maturity (15-year zero)
 
 
 @dataclass
@@ -146,64 +146,196 @@ def simulate_stock_returns(
 
 
 # =============================================================================
-# Bond Returns
+# Zero-Coupon Bond Pricing Under Mean Reversion
 # =============================================================================
 
-def compute_bond_returns(
+def effective_duration(tau: float, phi: float) -> float:
+    """
+    Effective duration of a zero-coupon bond under mean-reverting rates.
+
+    For the AR(1) process r_{t+1} = r̄ + φ(r_t - r̄) + ε, the sensitivity
+    of a τ-year zero-coupon bond price to the current short rate is:
+
+        B(τ) = (1 - φ^τ) / (1 - φ)
+
+    This is LESS than τ because mean reversion anchors long-term rates.
+
+    As τ → ∞, B(τ) → 1/(1-φ). With φ=0.85, max duration ≈ 6.67 years.
+
+    Args:
+        tau: Time to maturity in years
+        phi: Mean reversion parameter (persistence)
+
+    Returns:
+        Effective duration (sensitivity to short rate changes)
+    """
+    if tau <= 0:
+        return 0.0
+    if abs(phi - 1.0) < 1e-10:
+        return tau  # No mean reversion case
+    return (1 - phi**tau) / (1 - phi)
+
+
+def effective_duration_vectorized(tau: np.ndarray, phi: float) -> np.ndarray:
+    """Vectorized version of effective_duration."""
+    if abs(phi - 1.0) < 1e-10:
+        return tau.copy()
+    return (1 - phi**tau) / (1 - phi)
+
+
+def zero_coupon_price(r: float, tau: float, r_bar: float, phi: float) -> float:
+    """
+    Price of a zero-coupon bond under the discrete-time Vasicek model.
+
+    Under the expectations hypothesis, the τ-period spot rate is the average
+    of expected future short rates. Given:
+        E_t[r_{t+k}] = r̄ + φ^k(r_t - r̄)
+
+    The price is:
+        P(τ) = exp(-τ·r̄ - B(τ)·(r - r̄))
+
+    where B(τ) = (1 - φ^τ)/(1 - φ) is the effective duration.
+
+    Args:
+        r: Current short rate
+        tau: Time to maturity
+        r_bar: Long-run mean rate
+        phi: Mean reversion parameter
+
+    Returns:
+        Bond price (between 0 and 1)
+    """
+    if tau <= 0:
+        return 1.0
+    B = effective_duration(tau, phi)
+    return np.exp(-tau * r_bar - B * (r - r_bar))
+
+
+def zero_coupon_price_vectorized(
+    r: np.ndarray,
+    tau: float,
+    r_bar: float,
+    phi: float
+) -> np.ndarray:
+    """Vectorized version of zero_coupon_price for arrays of rates."""
+    if tau <= 0:
+        return np.ones_like(r)
+    B = effective_duration(tau, phi)
+    return np.exp(-tau * r_bar - B * (r - r_bar))
+
+
+def spot_rate(r: float, tau: float, r_bar: float, phi: float) -> float:
+    """
+    Spot rate (yield) for a τ-year zero-coupon bond.
+
+    y(τ) = r̄ + (r - r̄) · B(τ)/τ
+
+    As τ → ∞, y → r̄ (long rates converge to long-run mean)
+    As τ → 0, y → r (short rates equal current rate)
+    """
+    if tau <= 0:
+        return r
+    B = effective_duration(tau, phi)
+    return r_bar + (r - r_bar) * B / tau
+
+
+def compute_zero_coupon_returns(
     rates: np.ndarray,
-    duration: float
+    tau: float,
+    econ_params: EconomicParams
 ) -> np.ndarray:
     """
-    Compute bond returns: R_bond = r_t - D * delta_r
+    Compute returns on a zero-coupon bond strategy (constant maturity).
+
+    At each period:
+    - Buy a τ-year zero at time t
+    - Sell a (τ-1)-year zero at time t+1
+    - Return = P(t+1, τ-1) / P(t, τ) - 1
+
+    For a rolling strategy with constant maturity τ, we assume rebalancing
+    to maintain maturity τ each period.
 
     Args:
         rates: Interest rate paths of shape (n_sims, n_periods + 1)
-        duration: Modified duration of the bond
+        tau: Target maturity of the zero-coupon bond
+        econ_params: Economic parameters (r_bar, phi)
 
     Returns:
         Array of shape (n_sims, n_periods) with bond returns
     """
-    # Change in rates
-    delta_r = np.diff(rates, axis=1)
+    r_bar = econ_params.r_bar
+    phi = econ_params.phi
 
-    # Bond return = current rate - duration * rate change
-    bond_returns = rates[:, :-1] - duration * delta_r
+    n_sims, n_periods_plus_1 = rates.shape
+    n_periods = n_periods_plus_1 - 1
 
-    return bond_returns
+    # Price at start of each period (maturity = tau)
+    P_start = zero_coupon_price_vectorized(rates[:, :-1], tau, r_bar, phi)
+
+    # Price at end of each period (maturity = tau - 1, rate = r_{t+1})
+    P_end = zero_coupon_price_vectorized(rates[:, 1:], tau - 1, r_bar, phi)
+
+    # Return = P_end / P_start - 1
+    returns = P_end / P_start - 1
+
+    return returns
 
 
 # =============================================================================
-# Liability Calculations
+# Liability Calculations (Consistent with Mean-Reverting Term Structure)
 # =============================================================================
 
 def liability_pv(
     consumption: float,
     rate: float,
-    years_remaining: int
+    years_remaining: int,
+    r_bar: float = None,
+    phi: float = None
 ) -> float:
     """
     Calculate present value of liability stream.
 
-    PV = C * [1 - (1+r)^(-T)] / r
+    If r_bar and phi are provided, uses the mean-reverting term structure:
+        PV = Σ C × P(t) where P(t) = exp(-t·r̄ - B(t)·(r - r̄))
+
+    Otherwise falls back to flat discount rate:
+        PV = C × [1 - (1+r)^(-T)] / r
     """
     if years_remaining <= 0:
         return 0.0
+
+    # Use mean-reverting term structure if parameters provided
+    if r_bar is not None and phi is not None:
+        pv = 0.0
+        for t in range(1, years_remaining + 1):
+            pv += consumption * zero_coupon_price(rate, t, r_bar, phi)
+        return pv
+
+    # Fallback to flat rate discounting
     if rate < 1e-10:
         return consumption * years_remaining
-
     return consumption * (1 - (1 + rate) ** (-years_remaining)) / rate
 
 
 def liability_pv_vectorized(
     consumption: float,
     rates: np.ndarray,
-    years_remaining: int
+    years_remaining: int,
+    r_bar: float = None,
+    phi: float = None
 ) -> np.ndarray:
     """Vectorized version of liability_pv for arrays of rates."""
     if years_remaining <= 0:
         return np.zeros_like(rates)
 
-    # Handle very small rates
+    # Use mean-reverting term structure if parameters provided
+    if r_bar is not None and phi is not None:
+        pv = np.zeros_like(rates)
+        for t in range(1, years_remaining + 1):
+            pv += consumption * zero_coupon_price_vectorized(rates, t, r_bar, phi)
+        return pv
+
+    # Fallback to flat rate discounting
     result = np.where(
         rates < 1e-10,
         consumption * years_remaining,
@@ -215,21 +347,43 @@ def liability_pv_vectorized(
 def liability_duration(
     consumption: float,
     rate: float,
-    years_remaining: int
+    years_remaining: int,
+    r_bar: float = None,
+    phi: float = None
 ) -> float:
     """
-    Calculate modified duration of liability stream.
+    Calculate duration of liability stream.
 
-    D = (1/PV) * sum_{t=1}^{T} [t * C / (1+r)^{t+1}]
+    If r_bar and phi provided, returns EFFECTIVE duration (sensitivity to
+    short rate) under mean reversion:
+        D_eff = (1/PV) × Σ C × P(t) × B(t)
+
+    where B(t) = (1 - φ^t)/(1 - φ) is the effective duration of a t-year zero.
+
+    Otherwise returns traditional modified duration.
     """
     if years_remaining <= 0:
         return 0.0
 
+    # Use effective duration under mean reversion
+    if r_bar is not None and phi is not None:
+        pv = liability_pv(consumption, rate, years_remaining, r_bar, phi)
+        if pv < 1e-10:
+            return 0.0
+
+        weighted_sum = 0.0
+        for t in range(1, years_remaining + 1):
+            P_t = zero_coupon_price(rate, t, r_bar, phi)
+            B_t = effective_duration(t, phi)
+            weighted_sum += consumption * P_t * B_t
+
+        return weighted_sum / pv
+
+    # Fallback to traditional modified duration
     pv = liability_pv(consumption, rate, years_remaining)
     if pv < 1e-10:
         return 0.0
 
-    # Sum of weighted present values
     weighted_sum = 0.0
     for t in range(1, years_remaining + 1):
         weighted_sum += t * consumption / ((1 + rate) ** (t + 1))
@@ -240,22 +394,34 @@ def liability_duration(
 def liability_duration_vectorized(
     consumption: float,
     rates: np.ndarray,
-    years_remaining: int
+    years_remaining: int,
+    r_bar: float = None,
+    phi: float = None
 ) -> np.ndarray:
     """Vectorized version of liability_duration."""
     if years_remaining <= 0:
         return np.zeros_like(rates)
 
+    # Use effective duration under mean reversion
+    if r_bar is not None and phi is not None:
+        pv = liability_pv_vectorized(consumption, rates, years_remaining, r_bar, phi)
+
+        weighted_sums = np.zeros_like(rates)
+        for t in range(1, years_remaining + 1):
+            P_t = zero_coupon_price_vectorized(rates, t, r_bar, phi)
+            B_t = effective_duration(t, phi)
+            weighted_sums += consumption * P_t * B_t
+
+        return np.where(pv > 1e-10, weighted_sums / pv, 0.0)
+
+    # Fallback to traditional modified duration
     pv = liability_pv_vectorized(consumption, rates, years_remaining)
 
-    # Compute weighted sum for each rate
     weighted_sums = np.zeros_like(rates)
     for t in range(1, years_remaining + 1):
         weighted_sums += t * consumption / ((1 + rates) ** (t + 1))
 
-    # Avoid division by zero
-    result = np.where(pv > 1e-10, weighted_sums / pv, 0.0)
-    return result
+    return np.where(pv > 1e-10, weighted_sums / pv, 0.0)
 
 
 # =============================================================================
@@ -264,16 +430,19 @@ def liability_duration_vectorized(
 
 def compute_bond_weights(
     stock_weight: float,
-    liability_duration: float,
+    liability_eff_duration: float,
     bond_params: BondParams,
-    strategy: BondStrategy
+    strategy: BondStrategy,
+    phi: float = 0.85
 ) -> Tuple[float, float]:
     """
     Compute money market and long bond weights.
 
-    For duration matching:
-        w_lb = min(D_liab / D_lb, 1) * (1 - w_s)
-        w_mm = (1 - w_s) - w_lb
+    For duration matching under mean reversion:
+        - liability_eff_duration: effective duration of liabilities (sensitivity to short rate)
+        - Long bond effective duration: B(τ_lb) = (1 - φ^τ)/(1 - φ)
+
+    We match: w_lb × B(τ_lb) = liability_eff_duration
 
     Returns:
         Tuple of (w_mm, w_lb)
@@ -283,10 +452,12 @@ def compute_bond_weights(
     if strategy == BondStrategy.MONEY_MARKET:
         return bond_allocation, 0.0
 
-    # Duration matching
-    # We need: w_lb * D_lb = D_liab (for the bond portion)
-    # But D_liab is for the full liability, so we match bond portfolio duration
-    target_lb_weight = min(liability_duration / bond_params.D_lb, 1.0)
+    # Duration matching using EFFECTIVE durations
+    # The long bond's effective duration (sensitivity to short rate) under mean reversion
+    lb_eff_duration = effective_duration(bond_params.D_lb, phi)
+
+    # We need: w_lb × lb_eff_duration = liability_eff_duration (for the bond portion)
+    target_lb_weight = min(liability_eff_duration / lb_eff_duration, 1.0)
     w_lb = target_lb_weight * bond_allocation
     w_mm = bond_allocation - w_lb
 
@@ -387,7 +558,8 @@ def run_single_simulation(
     mm_returns: np.ndarray,
     lb_returns: np.ndarray,
     sim_params: SimulationParams,
-    bond_params: BondParams
+    bond_params: BondParams,
+    econ_params: EconomicParams
 ) -> SimulationResult:
     """
     Run simulation for a single strategy across all paths.
@@ -400,6 +572,7 @@ def run_single_simulation(
         lb_returns: Long bond returns (n_sims, n_periods)
         sim_params: Simulation parameters
         bond_params: Bond parameters
+        econ_params: Economic parameters (for consistent term structure)
 
     Returns:
         SimulationResult with all paths and metrics
@@ -421,21 +594,25 @@ def run_single_simulation(
         current_wealth = wealth_paths[:, t]
         current_rate = rates[:, t]
 
-        # Compute liability duration for this period
+        # Compute liability EFFECTIVE duration for this period
+        # (sensitivity to short rate under mean reversion)
         liab_dur = liability_duration_vectorized(
             sim_params.annual_consumption,
             current_rate,
-            years_remaining
+            years_remaining,
+            r_bar=econ_params.r_bar,
+            phi=econ_params.phi
         )
 
-        # Compute portfolio weights (can vary by simulation due to rate-dependent duration)
+        # Compute portfolio weights using effective durations
         # For simplicity, use mean liability duration across sims
         mean_liab_dur = np.mean(liab_dur)
         w_mm, w_lb = compute_bond_weights(
             sim_params.stock_weight,
             mean_liab_dur,
             bond_params,
-            strategy.bond_strategy
+            strategy.bond_strategy,
+            phi=econ_params.phi
         )
         w_s = sim_params.stock_weight
 
@@ -531,16 +708,17 @@ def run_monte_carlo(
     # Simulate stock returns
     stock_returns = simulate_stock_returns(rates, econ_params, stock_shocks)
 
-    # Compute bond returns
-    mm_returns = compute_bond_returns(rates, bond_params.D_mm)
-    lb_returns = compute_bond_returns(rates, bond_params.D_lb)
+    # Compute bond returns using consistent zero-coupon pricing
+    # Returns reflect that long rates don't move 1-for-1 with short rates under mean reversion
+    mm_returns = compute_zero_coupon_returns(rates, bond_params.D_mm, econ_params)
+    lb_returns = compute_zero_coupon_returns(rates, bond_params.D_lb, econ_params)
 
     # Run each strategy
     results = {}
     for strategy in strategies:
         result = run_single_simulation(
             strategy, rates, stock_returns, mm_returns, lb_returns,
-            sim_params, bond_params
+            sim_params, bond_params, econ_params
         )
         results[str(strategy)] = result
 
@@ -574,11 +752,17 @@ def compute_funded_ratio(
     wealth: np.ndarray,
     rates: np.ndarray,
     consumption_target: float,
-    years_remaining: int
+    years_remaining: int,
+    r_bar: float = None,
+    phi: float = None
 ) -> np.ndarray:
     """
     Compute funded ratio = Assets / PV(Liabilities)
+
+    If r_bar and phi provided, uses mean-reverting term structure for liability PV.
     """
-    liab_pv = liability_pv_vectorized(consumption_target, rates, years_remaining)
+    liab_pv = liability_pv_vectorized(
+        consumption_target, rates, years_remaining, r_bar=r_bar, phi=phi
+    )
     # Avoid division by zero
     return np.where(liab_pv > 0, wealth / liab_pv, np.inf)
