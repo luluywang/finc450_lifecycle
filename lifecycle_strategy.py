@@ -38,10 +38,13 @@ class LifecycleParams:
     earnings_hump_age: int = 50      # Age at peak earnings
     earnings_decline: float = 0.01   # Decline rate after peak
 
-    # Expense parameters
-    base_expenses: float = 60        # Base annual expenses ($60k)
+    # Expense parameters (subsistence/baseline)
+    base_expenses: float = 60        # Base annual subsistence expenses ($60k)
     expense_growth: float = 0.01     # Real expense growth rate
-    retirement_expenses: float = 80  # Retirement annual expenses ($80k)
+    retirement_expenses: float = 80  # Retirement subsistence expenses ($80k)
+
+    # Consumption parameters
+    consumption_share: float = 0.05  # Share of net worth consumed above subsistence
 
     # Asset allocation parameters
     stock_beta_human_capital: float = 0.1    # Beta of human capital to stocks
@@ -54,7 +57,7 @@ class LifecycleParams:
     equity_premium: float = 0.04     # Equity risk premium
 
     # Initial financial wealth
-    initial_wealth: float = 50       # Starting financial wealth ($50k)
+    initial_wealth: float = 1        # Starting financial wealth ($1k)
 
 
 @dataclass
@@ -99,6 +102,13 @@ class LifecycleResult:
     total_stocks: np.ndarray
     total_bonds: np.ndarray
     total_cash: np.ndarray
+
+    # Consumption model
+    net_worth: np.ndarray              # HC + FW - PV(future expenses)
+    subsistence_consumption: np.ndarray # Baseline/floor consumption
+    variable_consumption: np.ndarray    # Share of net worth consumed
+    total_consumption: np.ndarray       # Subsistence + variable
+    consumption_share_of_fw: np.ndarray # Total consumption / financial wealth
 
 
 # =============================================================================
@@ -246,8 +256,9 @@ def compute_lifecycle_median_path(
     expenses[:working_years] = working_exp
     expenses[working_years:] = retirement_exp
 
-    # Savings rate
-    savings = earnings - expenses
+    # Base savings (earnings - subsistence expenses)
+    # Note: Actual savings will be computed below after consumption model
+    base_savings = earnings - expenses
 
     # Forward-looking present values at each age
     pv_earnings = np.zeros(total_years)
@@ -299,9 +310,16 @@ def compute_lifecycle_median_path(
             # If no benchmark duration or no HC, treat as cash
             hc_cash_component[i] = non_stock_hc[i]
 
-    # Financial wealth accumulation along median path
+    # Financial wealth accumulation along median path with consumption model
     financial_wealth = np.zeros(total_years)
     financial_wealth[0] = params.initial_wealth
+
+    # Consumption model arrays
+    net_worth = np.zeros(total_years)
+    subsistence_consumption = expenses.copy()  # Baseline consumption = subsistence expenses
+    variable_consumption = np.zeros(total_years)
+    total_consumption = np.zeros(total_years)
+    savings = np.zeros(total_years)
 
     # Expected return on financial portfolio (assume target allocation)
     expected_stock_return = r + econ_params.mu_excess
@@ -314,11 +332,34 @@ def compute_lifecycle_median_path(
         (1 - params.target_stock_allocation - params.target_bond_allocation) * expected_cash_return
     )
 
-    # Simulate wealth accumulation
-    for i in range(1, total_years):
-        # Wealth grows by return, then add savings
-        financial_wealth[i] = financial_wealth[i-1] * (1 + avg_return) + savings[i-1]
-        financial_wealth[i] = max(0, financial_wealth[i])  # Floor at zero
+    # Simulate wealth accumulation with consumption model
+    # Consumption = subsistence + share × net_worth
+    # Net worth = HC + FW - PV(future expenses)
+    # During working years: cap total consumption at earnings (no borrowing against HC)
+    for i in range(total_years):
+        # Compute net worth at start of period
+        net_worth[i] = human_capital[i] + financial_wealth[i] - pv_expenses[i]
+
+        # Variable consumption = share of net worth (floor at 0 if net worth negative)
+        variable_consumption[i] = max(0, params.consumption_share * net_worth[i])
+
+        # Total consumption = subsistence + variable
+        total_consumption[i] = subsistence_consumption[i] + variable_consumption[i]
+
+        # During working years, cap consumption at earnings (can't borrow against HC)
+        if earnings[i] > 0:
+            if total_consumption[i] > earnings[i]:
+                # Cap at earnings, reduce variable consumption accordingly
+                total_consumption[i] = earnings[i]
+                variable_consumption[i] = max(0, earnings[i] - subsistence_consumption[i])
+
+        # Actual savings = earnings - total consumption
+        savings[i] = earnings[i] - total_consumption[i]
+
+        # Accumulate wealth for next period
+        if i < total_years - 1:
+            financial_wealth[i+1] = financial_wealth[i] * (1 + avg_return) + savings[i]
+            financial_wealth[i+1] = max(0, financial_wealth[i+1])  # Floor at zero
 
     # Total wealth = financial wealth + human capital
     total_wealth = financial_wealth + human_capital
@@ -398,6 +439,14 @@ def compute_lifecycle_median_path(
     total_bonds = bond_weight_no_short * financial_wealth + hc_bond_component
     total_cash = cash_weight_no_short * financial_wealth + hc_cash_component
 
+    # Consumption as share of financial wealth
+    consumption_share_of_fw = np.zeros(total_years)
+    for i in range(total_years):
+        if financial_wealth[i] > 1e-6:
+            consumption_share_of_fw[i] = total_consumption[i] / financial_wealth[i]
+        else:
+            consumption_share_of_fw[i] = np.nan  # Undefined when no financial wealth
+
     return LifecycleResult(
         ages=ages,
         earnings=earnings,
@@ -422,6 +471,11 @@ def compute_lifecycle_median_path(
         total_stocks=total_stocks,
         total_bonds=total_bonds,
         total_cash=total_cash,
+        net_worth=net_worth,
+        subsistence_consumption=subsistence_consumption,
+        variable_consumption=variable_consumption,
+        total_consumption=total_consumption,
+        consumption_share_of_fw=consumption_share_of_fw,
     )
 
 
@@ -668,6 +722,68 @@ def plot_total_wealth_holdings(
     ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
 
 
+def plot_consumption_share_of_fw(
+    result: LifecycleResult,
+    params: LifecycleParams,
+    ax: plt.Axes,
+    use_years: bool = True
+) -> None:
+    """Plot 9: Consumption as Share of Financial Wealth."""
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+    else:
+        x = result.ages
+        xlabel = 'Age'
+
+    ax.plot(x, result.consumption_share_of_fw, color=COLORS['blue'], linewidth=2,
+            label='Consumption / Financial Wealth')
+
+    retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Share')
+    ax.set_title('Consumption as Share of Financial Wealth')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
+
+
+def plot_consumption_breakdown(
+    result: LifecycleResult,
+    params: LifecycleParams,
+    ax: plt.Axes,
+    use_years: bool = True
+) -> None:
+    """Plot: Consumption breakdown (subsistence vs variable)."""
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+    else:
+        x = result.ages
+        xlabel = 'Age'
+
+    ax.plot(x, result.subsistence_consumption, color=COLORS['green'], linewidth=2,
+            label='Subsistence Consumption')
+    ax.plot(x, result.variable_consumption, color=COLORS['orange'], linewidth=2,
+            label='Variable (5% NW, capped)')
+    ax.plot(x, result.total_consumption, color=COLORS['blue'], linewidth=2,
+            label='Total Consumption')
+    ax.plot(x, result.earnings, color='gray', linewidth=1, linestyle='--', alpha=0.7,
+            label='Earnings (cap)')
+
+    retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Consumption Breakdown')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
+
+
 def create_beta_comparison_figure(
     beta_values: list = [0.0, 0.5, 1.0],
     base_params: LifecycleParams = None,
@@ -812,13 +928,13 @@ def create_beta_comparison_figure(
 def create_lifecycle_figure(
     result: LifecycleResult,
     params: LifecycleParams,
-    figsize: Tuple[int, int] = (20, 10),
+    figsize: Tuple[int, int] = (25, 15),
     use_years: bool = True
 ) -> plt.Figure:
     """
-    Create a single figure with all 8 lifecycle strategy charts.
+    Create a single figure with all lifecycle strategy charts including consumption.
 
-    Layout: 2 rows x 4 columns
+    Layout: 2 rows x 5 columns
 
     Args:
         result: Lifecycle calculation results
@@ -826,19 +942,21 @@ def create_lifecycle_figure(
         figsize: Figure size tuple
         use_years: If True, x-axis shows years from career start; if False, shows age
     """
-    fig, axes = plt.subplots(2, 4, figsize=figsize)
+    fig, axes = plt.subplots(2, 5, figsize=figsize)
 
     # Row 1
     plot_earnings_expenses_profile(result, params, axes[0, 0], use_years)
     plot_forward_present_values(result, params, axes[0, 1], use_years)
     plot_durations(result, params, axes[0, 2], use_years)
     plot_human_vs_financial_wealth(result, params, axes[0, 3], use_years)
+    plot_consumption_breakdown(result, params, axes[0, 4], use_years)
 
     # Row 2
     plot_hc_decomposition(result, params, axes[1, 0], use_years)
     plot_target_financial_holdings(result, params, axes[1, 1], use_years)
     plot_portfolio_shares(result, params, axes[1, 2], use_years)
     plot_total_wealth_holdings(result, params, axes[1, 3], use_years)
+    plot_consumption_share_of_fw(result, params, axes[1, 4], use_years)
 
     plt.tight_layout()
     return fig
@@ -913,8 +1031,8 @@ def generate_lifecycle_pdf(
                 )
                 beta_result = compute_lifecycle_median_path(beta_params, econ_params)
 
-                # Page with all 8 charts for this beta
-                fig = create_lifecycle_figure(beta_result, beta_params, figsize=(20, 10), use_years=use_years)
+                # Page with all charts for this beta
+                fig = create_lifecycle_figure(beta_result, beta_params, figsize=(25, 10), use_years=use_years)
                 fig.suptitle(f'Lifecycle Investment Strategy - Beta = {beta}',
                             fontsize=14, fontweight='bold', y=1.02)
                 pdf.savefig(fig, bbox_inches='tight')
@@ -938,14 +1056,18 @@ Income Parameters:
   - Earnings Growth: {params.earnings_growth*100:.1f}%
   - Peak Earnings Age: {params.earnings_hump_age}
 
-Expense Parameters:
+Subsistence Expense Parameters:
   - Base Expenses: ${params.base_expenses:,.0f}k
   - Retirement Expenses: ${params.retirement_expenses:,.0f}k
+
+Consumption Model:
+  - Total Consumption = Subsistence + Share x Net Worth
+  - Net Worth = Human Capital + Financial Wealth - PV(Future Expenses)
+  - Consumption Share: {params.consumption_share*100:.0f}%
 
 Human Capital Allocation:
   - Stock Beta: {params.stock_beta_human_capital:.2f}
   - Bond Duration Benchmark: {params.bond_duration_benchmark:.1f} years
-  - Non-stock portion allocated to bonds/cash based on HC duration
 
 Target Total Wealth Allocation:
   - Stocks: {params.target_stock_allocation*100:.0f}%
@@ -959,19 +1081,16 @@ Economic Parameters:
 
 Key Insights:
 -------------
-1. Human capital is decomposed using stock beta for equity
-   exposure and duration for fixed income allocation.
+1. Consumption = Subsistence + {params.consumption_share*100:.0f}% of Net Worth.
 
-2. Stock component = HC * stock_beta (market correlation).
+2. Net Worth accounts for human capital and future expense
+   liabilities, not just financial wealth.
 
-3. Non-stock portion allocated between bonds/cash based on
-   duration: higher duration = more bond-like exposure.
+3. As net worth grows, variable consumption increases,
+   allowing higher spending while preserving subsistence.
 
-4. As HC duration shortens near retirement, more of the
-   non-stock portion shifts from bonds to cash.
-
-5. This approach captures both market risk (via beta) and
-   interest rate risk (via duration) in human capital.
+4. The "Consumption / FW" chart shows what share of
+   financial wealth is spent each year.
 """
 
         ax.text(0.05, 0.95, summary_text, transform=ax.transAxes,
@@ -996,6 +1115,7 @@ def main(
     bond_duration: float = 7.0,
     target_stocks: float = 0.60,
     target_bonds: float = 0.30,
+    consumption_share: float = 0.05,
     use_years: bool = True,
     verbose: bool = True
 ):
@@ -1012,6 +1132,7 @@ def main(
         bond_duration: Benchmark bond duration for HC allocation (years)
         target_stocks: Target stock allocation in total wealth
         target_bonds: Target bond allocation in total wealth
+        consumption_share: Share of net worth consumed above subsistence
         use_years: If True, x-axis shows years from start; if False, shows age
         verbose: If True, print progress and statistics
     """
@@ -1027,6 +1148,7 @@ def main(
         bond_duration_benchmark=bond_duration,
         target_stock_allocation=target_stocks,
         target_bond_allocation=target_bonds,
+        consumption_share=consumption_share,
     )
     econ_params = EconomicParams()
 
@@ -1081,6 +1203,8 @@ if __name__ == '__main__':
                        help='Target stock allocation (default: 0.60)')
     parser.add_argument('--target-bonds', type=float, default=0.30,
                        help='Target bond allocation (default: 0.30)')
+    parser.add_argument('--consumption-share', type=float, default=0.05,
+                       help='Share of net worth consumed above subsistence (default: 0.05)')
     parser.add_argument('--use-age', action='store_true',
                        help='Use age instead of years from start on x-axis')
     parser.add_argument('-q', '--quiet', action='store_true',
@@ -1098,6 +1222,7 @@ if __name__ == '__main__':
         bond_duration=args.bond_duration,
         target_stocks=args.target_stocks,
         target_bonds=args.target_bonds,
+        consumption_share=args.consumption_share,
         use_years=not args.use_age,
         verbose=not args.quiet,
     )
