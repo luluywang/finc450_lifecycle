@@ -10,10 +10,19 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Optional, Tuple
 from retirement_simulation import (
     SimulationResult,
+    MedianPathResult,
+    LifecycleResult,
+    LifecycleParams,
     liability_pv_vectorized,
     liability_duration,
     EconomicParams,
     SimulationParams,
+    RandomWalkParams,
+    run_median_path_simulation,
+    run_lifecycle_simulation,
+    STRATEGIES,
+    Strategy,
+    BondParams,
 )
 
 
@@ -414,3 +423,748 @@ def create_summary_table(results: Dict[str, SimulationResult]) -> str:
         rows.append(row)
 
     return "\n".join(rows)
+
+
+# =============================================================================
+# Random Walk and Median Path Visualizations
+# =============================================================================
+
+def plot_wealth_allocation_lifecycle(
+    median_result: MedianPathResult,
+    figsize: Tuple[int, int] = (14, 12)
+) -> plt.Figure:
+    """
+    Visualize how a consumer's financial wealth allocation changes over their lifecycle
+    when median returns are realized each period.
+
+    This creates a comprehensive 4-panel visualization showing:
+    1. Interest rate path over time
+    2. Portfolio allocation (stocks, money market, long bonds) as stacked area
+    3. Wealth trajectory and consumption
+    4. Funded ratio over time
+
+    Args:
+        median_result: Result from run_median_path_simulation
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    years = median_result.years
+
+    # Panel 1: Interest Rate Path
+    ax = axes[0, 0]
+    ax.plot(years, median_result.rates * 100, 'b-', linewidth=2, marker='o', markersize=3)
+    ax.axhline(y=3.0, color='gray', linestyle='--', alpha=0.7, label='Long-run mean (3%)')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Interest Rate Path (Median Scenario)')
+    ax.legend()
+    ax.set_xlim(0, len(years) - 1)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Portfolio Allocation (Stacked Area)
+    ax = axes[0, 1]
+    n_periods = len(median_result.stock_weight)
+    alloc_years = np.arange(n_periods)
+
+    # Create stacked area chart
+    ax.fill_between(alloc_years, 0, median_result.stock_weight * 100,
+                    alpha=0.8, label='Stocks', color='#2ca02c')
+    ax.fill_between(alloc_years, median_result.stock_weight * 100,
+                    (median_result.stock_weight + median_result.mm_weight) * 100,
+                    alpha=0.8, label='Money Market', color='#1f77b4')
+    ax.fill_between(alloc_years, (median_result.stock_weight + median_result.mm_weight) * 100,
+                    (median_result.stock_weight + median_result.mm_weight + median_result.lb_weight) * 100,
+                    alpha=0.8, label='Long Bonds', color='#ff7f0e')
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title(f'Portfolio Allocation Over Lifecycle\n({median_result.strategy_name})')
+    ax.legend(loc='upper right')
+    ax.set_xlim(0, n_periods - 1)
+    ax.set_ylim(0, 100)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Wealth and Consumption
+    ax = axes[1, 0]
+    ax.plot(years, median_result.wealth / 1e6, 'b-', linewidth=2,
+            label='Wealth', marker='o', markersize=3)
+
+    # Add consumption as bars on secondary axis
+    ax2 = ax.twinx()
+    ax2.bar(alloc_years + 0.5, median_result.consumption / 1000, alpha=0.4,
+            color='green', label='Consumption', width=0.8)
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Wealth ($M)', color='blue')
+    ax2.set_ylabel('Annual Consumption ($k)', color='green')
+    ax.set_title('Wealth Trajectory and Consumption')
+    ax.tick_params(axis='y', labelcolor='blue')
+    ax2.tick_params(axis='y', labelcolor='green')
+
+    # Combined legend
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+
+    ax.set_xlim(0, len(years) - 1)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 4: Funded Ratio
+    ax = axes[1, 1]
+    # Cap funded ratio for display purposes
+    display_funded = np.minimum(median_result.funded_ratio, 5.0)
+    ax.plot(years, display_funded, 'purple', linewidth=2, marker='o', markersize=3)
+    ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Fully Funded (100%)')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Funded Ratio')
+    ax.set_title('Funded Status (Assets / PV Liabilities)')
+    ax.legend()
+    ax.set_xlim(0, len(years) - 1)
+    ax.set_ylim(0, min(5.0, display_funded.max() * 1.1))
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f'Lifecycle Wealth Allocation Analysis\nStrategy: {median_result.strategy_name}',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    return fig
+
+
+def plot_allocation_comparison_median_path(
+    strategies: List[Strategy] = None,
+    r0: float = 0.03,
+    sim_params: SimulationParams = None,
+    bond_params: BondParams = None,
+    econ_params: EconomicParams = None,
+    use_random_walk: bool = False,
+    rw_params: RandomWalkParams = None,
+    figsize: Tuple[int, int] = (16, 12)
+) -> plt.Figure:
+    """
+    Compare wealth allocation across different strategies under median return scenario.
+
+    Args:
+        strategies: List of strategies to compare (defaults to all 4 strategies)
+        r0: Initial interest rate
+        sim_params: Simulation parameters
+        bond_params: Bond parameters
+        econ_params: Economic parameters
+        use_random_walk: Whether to use random walk interest rate model
+        rw_params: Random walk parameters
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if strategies is None:
+        strategies = STRATEGIES
+    if sim_params is None:
+        sim_params = SimulationParams()
+    if bond_params is None:
+        bond_params = BondParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if rw_params is None:
+        rw_params = RandomWalkParams()
+
+    n_strategies = len(strategies)
+    fig, axes = plt.subplots(n_strategies, 2, figsize=figsize)
+
+    model_name = "Random Walk" if use_random_walk else "Mean-Reverting"
+
+    for idx, strategy in enumerate(strategies):
+        # Run median path simulation
+        result = run_median_path_simulation(
+            strategy=strategy,
+            r0=r0,
+            sim_params=sim_params,
+            bond_params=bond_params,
+            econ_params=econ_params,
+            rw_params=rw_params,
+            use_random_walk=use_random_walk
+        )
+
+        n_periods = len(result.stock_weight)
+        alloc_years = np.arange(n_periods)
+
+        # Left panel: Portfolio allocation
+        ax = axes[idx, 0] if n_strategies > 1 else axes[0]
+        ax.fill_between(alloc_years, 0, result.stock_weight * 100,
+                        alpha=0.8, label='Stocks', color='#2ca02c')
+        ax.fill_between(alloc_years, result.stock_weight * 100,
+                        (result.stock_weight + result.mm_weight) * 100,
+                        alpha=0.8, label='Money Market', color='#1f77b4')
+        ax.fill_between(alloc_years, (result.stock_weight + result.mm_weight) * 100,
+                        (result.stock_weight + result.mm_weight + result.lb_weight) * 100,
+                        alpha=0.8, label='Long Bonds', color='#ff7f0e')
+
+        ax.set_ylabel('Allocation (%)')
+        ax.set_title(f'{result.strategy_name}')
+        if idx == 0:
+            ax.legend(loc='upper right', fontsize=8)
+        ax.set_xlim(0, n_periods - 1)
+        ax.set_ylim(0, 100)
+        ax.grid(True, alpha=0.3)
+        if idx == n_strategies - 1:
+            ax.set_xlabel('Year')
+
+        # Right panel: Wealth trajectory
+        ax = axes[idx, 1] if n_strategies > 1 else axes[1]
+        ax.plot(result.years, result.wealth / 1e6, 'b-', linewidth=2)
+        ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        ax.set_ylabel('Wealth ($M)')
+        ax.set_title(f'{result.strategy_name}')
+        ax.set_xlim(0, len(result.years) - 1)
+        ax.grid(True, alpha=0.3)
+        if idx == n_strategies - 1:
+            ax.set_xlabel('Year')
+
+        # Add final wealth annotation
+        final_w = result.wealth[-1]
+        ax.annotate(f'Final: ${final_w/1e6:.2f}M',
+                   xy=(0.98, 0.95), xycoords='axes fraction',
+                   fontsize=9, ha='right', va='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    plt.suptitle(f'Lifecycle Wealth Allocation Comparison\n{model_name} Interest Rates (r0 = {r0*100:.1f}%)',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_random_walk_vs_mean_reverting(
+    r0: float = 0.03,
+    sim_params: SimulationParams = None,
+    bond_params: BondParams = None,
+    econ_params: EconomicParams = None,
+    rw_params: RandomWalkParams = None,
+    strategy: Strategy = None,
+    figsize: Tuple[int, int] = (14, 10)
+) -> plt.Figure:
+    """
+    Compare median paths under random walk vs mean-reverting interest rate models.
+
+    This visualization helps illustrate how the interest rate model assumption
+    affects wealth allocation and outcomes.
+
+    Args:
+        r0: Initial interest rate
+        sim_params: Simulation parameters
+        bond_params: Bond parameters
+        econ_params: Economic parameters
+        rw_params: Random walk parameters
+        strategy: Strategy to compare (defaults to Duration Match + Variable)
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if sim_params is None:
+        sim_params = SimulationParams()
+    if bond_params is None:
+        bond_params = BondParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if rw_params is None:
+        rw_params = RandomWalkParams()
+    if strategy is None:
+        strategy = STRATEGIES[3]  # DurMatch + Variable
+
+    # Run both models
+    result_mr = run_median_path_simulation(
+        strategy=strategy, r0=r0, sim_params=sim_params,
+        bond_params=bond_params, econ_params=econ_params,
+        use_random_walk=False
+    )
+
+    result_rw = run_median_path_simulation(
+        strategy=strategy, r0=r0, sim_params=sim_params,
+        bond_params=bond_params, econ_params=econ_params,
+        rw_params=rw_params, use_random_walk=True
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    # Panel 1: Interest Rate Paths
+    ax = axes[0, 0]
+    ax.plot(result_mr.years, result_mr.rates * 100, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(result_rw.years, result_rw.rates * 100, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.axhline(y=econ_params.r_bar * 100, color='gray', linestyle='--', alpha=0.7,
+               label=f'Long-run mean ({econ_params.r_bar*100:.0f}%)')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Interest Rate Paths (Median Scenario)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Wealth Paths
+    ax = axes[0, 1]
+    ax.plot(result_mr.years, result_mr.wealth / 1e6, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(result_rw.years, result_rw.wealth / 1e6, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Wealth ($M)')
+    ax.set_title('Wealth Trajectory Comparison')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Long Bond Allocation
+    ax = axes[1, 0]
+    n_periods = len(result_mr.lb_weight)
+    alloc_years = np.arange(n_periods)
+    ax.plot(alloc_years, result_mr.lb_weight * 100, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(alloc_years, result_rw.lb_weight * 100, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Long Bond Allocation (%)')
+    ax.set_title('Long Bond Weight Over Lifecycle')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, max(result_mr.lb_weight.max(), result_rw.lb_weight.max()) * 100 * 1.1)
+
+    # Panel 4: Funded Ratio
+    ax = axes[1, 1]
+    display_mr = np.minimum(result_mr.funded_ratio, 5.0)
+    display_rw = np.minimum(result_rw.funded_ratio, 5.0)
+    ax.plot(result_mr.years, display_mr, 'b-', linewidth=2,
+            label='Mean-Reverting', marker='o', markersize=3)
+    ax.plot(result_rw.years, display_rw, 'r-', linewidth=2,
+            label='Random Walk', marker='s', markersize=3)
+    ax.axhline(y=1.0, color='gray', linestyle='--', alpha=0.7, label='Fully Funded')
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Funded Ratio')
+    ax.set_title('Funded Status Comparison')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f'Random Walk vs Mean-Reverting Interest Rates\nStrategy: {strategy} | r0 = {r0*100:.1f}%',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_interest_rate_models_comparison(
+    r0: float = 0.03,
+    n_periods: int = 30,
+    n_paths: int = 100,
+    econ_params: EconomicParams = None,
+    rw_params: RandomWalkParams = None,
+    figsize: Tuple[int, int] = (14, 6)
+) -> plt.Figure:
+    """
+    Compare simulated interest rate paths under random walk vs mean-reverting models.
+
+    Shows sample paths and distribution characteristics of both models.
+
+    Args:
+        r0: Initial interest rate
+        n_periods: Number of periods
+        n_paths: Number of sample paths to show
+        econ_params: Economic parameters
+        rw_params: Random walk parameters
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    from retirement_simulation import (
+        simulate_interest_rates, simulate_interest_rates_random_walk,
+        generate_correlated_shocks
+    )
+
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if rw_params is None:
+        rw_params = RandomWalkParams()
+
+    rng = np.random.default_rng(42)
+    n_sims = 1000
+
+    # Generate shocks
+    rate_shocks, _ = generate_correlated_shocks(n_periods, n_sims, econ_params.rho, rng)
+
+    # Simulate both models
+    rates_mr = simulate_interest_rates(
+        r0, n_periods, n_sims, econ_params, rate_shocks
+    )
+    rates_rw = simulate_interest_rates_random_walk(
+        r0, n_periods, n_sims, rw_params.sigma_r, rw_params.drift,
+        rate_shocks, rw_params.r_floor
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    years = np.arange(n_periods + 1)
+
+    # Panel 1: Mean-Reverting Model
+    ax = axes[0]
+    for i in range(min(n_paths, n_sims)):
+        ax.plot(years, rates_mr[i, :] * 100, 'b-', alpha=0.1, linewidth=0.5)
+
+    median_mr = np.median(rates_mr, axis=0)
+    p10_mr = np.percentile(rates_mr, 10, axis=0)
+    p90_mr = np.percentile(rates_mr, 90, axis=0)
+
+    ax.plot(years, median_mr * 100, 'navy', linewidth=2, label='Median')
+    ax.fill_between(years, p10_mr * 100, p90_mr * 100, alpha=0.3, color='blue',
+                   label='10th-90th percentile')
+    ax.axhline(y=econ_params.r_bar * 100, color='red', linestyle='--', alpha=0.7,
+              label=f'Long-run mean ({econ_params.r_bar*100:.0f}%)')
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title(f'Mean-Reverting Model (φ = {econ_params.phi})')
+    ax.legend(loc='upper right')
+    ax.set_xlim(0, n_periods)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Random Walk Model
+    ax = axes[1]
+    for i in range(min(n_paths, n_sims)):
+        ax.plot(years, rates_rw[i, :] * 100, 'r-', alpha=0.1, linewidth=0.5)
+
+    median_rw = np.median(rates_rw, axis=0)
+    p10_rw = np.percentile(rates_rw, 10, axis=0)
+    p90_rw = np.percentile(rates_rw, 90, axis=0)
+
+    ax.plot(years, median_rw * 100, 'darkred', linewidth=2, label='Median')
+    ax.fill_between(years, p10_rw * 100, p90_rw * 100, alpha=0.3, color='red',
+                   label='10th-90th percentile')
+    ax.axhline(y=r0 * 100, color='gray', linestyle='--', alpha=0.7,
+              label=f'Initial rate ({r0*100:.0f}%)')
+
+    ax.set_xlabel('Year')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Random Walk Model (No Mean Reversion)')
+    ax.legend(loc='upper right')
+    ax.set_xlim(0, n_periods)
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle('Interest Rate Model Comparison', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+# =============================================================================
+# Lifecycle Asset Allocation Visualizations (Human Capital Framework)
+# =============================================================================
+
+def plot_lifecycle_allocation(
+    result: LifecycleResult,
+    lifecycle_params: LifecycleParams = None,
+    figsize: Tuple[int, int] = (16, 12)
+) -> plt.Figure:
+    """
+    Visualize the lifecycle asset allocation with Human Capital.
+
+    This creates a comprehensive 4-panel visualization showing:
+    1. Total Wealth breakdown (Human Capital + Financial Wealth)
+    2. Stock allocation in financial portfolio (the "hump" or "glide path")
+    3. Financial portfolio composition over time
+    4. Consumption and savings over the lifecycle
+
+    Args:
+        result: LifecycleResult from run_lifecycle_simulation
+        lifecycle_params: Optional lifecycle parameters for annotations
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if lifecycle_params is None:
+        lifecycle_params = LifecycleParams()
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    ages = result.ages
+
+    # Panel 1: Total Wealth Breakdown (Stacked Area)
+    ax = axes[0, 0]
+    ax.fill_between(ages, 0, result.human_capital / 1e6,
+                    alpha=0.7, label='Human Capital', color='#2ca02c')
+    ax.fill_between(ages, result.human_capital / 1e6,
+                    result.total_wealth / 1e6,
+                    alpha=0.7, label='Financial Wealth', color='#1f77b4')
+    ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
+               alpha=0.7, label=f'Retirement (Age {lifecycle_params.retirement_age})')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Wealth ($M)')
+    ax.set_title('Total Wealth = Human Capital + Financial Wealth')
+    ax.legend(loc='upper right')
+    ax.set_xlim(ages[0], ages[-1])
+    ax.set_ylim(0, None)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Stock Allocation in Financial Portfolio (The Glide Path)
+    ax = axes[0, 1]
+    ax.plot(ages, result.stock_allocation * 100, 'b-', linewidth=2.5,
+            label='Stock Allocation')
+    ax.axhline(y=result.merton_share * 100, color='green', linestyle='--',
+               alpha=0.7, label=f'Merton Share ({result.merton_share*100:.1f}%)')
+    ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
+               alpha=0.7, label='Retirement')
+    ax.fill_between(ages, 0, result.stock_allocation * 100, alpha=0.3, color='blue')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Stock Allocation (%)')
+    ax.set_title('Equity Glide Path in Financial Portfolio')
+    ax.legend(loc='upper right')
+    ax.set_xlim(ages[0], ages[-1])
+    ax.set_ylim(0, 105)
+    ax.grid(True, alpha=0.3)
+
+    # Add annotations for key phases
+    working_years = ages[ages < lifecycle_params.retirement_age]
+    if len(working_years) > 5:
+        mid_career = working_years[len(working_years) // 2]
+        ax.annotate('Accumulation\n(100% stocks)',
+                   xy=(mid_career, 95), fontsize=9, ha='center',
+                   bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.5))
+
+    retirement_years = ages[ages >= lifecycle_params.retirement_age]
+    if len(retirement_years) > 5:
+        mid_retirement = retirement_years[len(retirement_years) // 2]
+        stock_at_mid = result.stock_allocation[ages == mid_retirement][0] * 100
+        ax.annotate(f'Decumulation\n(~{stock_at_mid:.0f}% stocks)',
+                   xy=(mid_retirement, stock_at_mid + 10), fontsize=9, ha='center',
+                   bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+
+    # Panel 3: Portfolio Composition (Stacked Area)
+    ax = axes[1, 0]
+    ax.fill_between(ages, 0, result.stock_allocation * 100,
+                    alpha=0.8, label='Stocks', color='#2ca02c')
+    ax.fill_between(ages, result.stock_allocation * 100, 100,
+                    alpha=0.8, label='Bonds', color='#1f77b4')
+    ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
+               alpha=0.7, label='Retirement')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title('Financial Portfolio Composition Over Lifecycle')
+    ax.legend(loc='upper right')
+    ax.set_xlim(ages[0], ages[-1])
+    ax.set_ylim(0, 100)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 4: Financial Wealth and Consumption
+    ax = axes[1, 1]
+    ax.plot(ages, result.financial_wealth / 1e6, 'b-', linewidth=2,
+            label='Financial Wealth')
+
+    # Add consumption on secondary axis
+    ax2 = ax.twinx()
+    ax2.bar(ages, result.consumption / 1000, alpha=0.4, color='orange',
+            label='Consumption', width=0.8)
+
+    ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
+               alpha=0.7, label='Retirement')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Financial Wealth ($M)', color='blue')
+    ax2.set_ylabel('Annual Consumption ($k)', color='orange')
+    ax.set_title('Financial Wealth and Consumption')
+    ax.tick_params(axis='y', labelcolor='blue')
+    ax2.tick_params(axis='y', labelcolor='orange')
+
+    # Combined legend
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+    ax.set_xlim(ages[0], ages[-1])
+    ax.grid(True, alpha=0.3)
+
+    beta_str = "Bond-like" if lifecycle_params.beta_labor == 0 else f"β={lifecycle_params.beta_labor:.1f}"
+    plt.suptitle(f'Lifecycle Asset Allocation (Human Capital Framework)\n'
+                 f'Labor Income: {beta_str} | Risk Aversion γ={lifecycle_params.gamma}',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_lifecycle_comparison_beta(
+    econ_params: EconomicParams = None,
+    betas: List[float] = None,
+    figsize: Tuple[int, int] = (14, 10)
+) -> plt.Figure:
+    """
+    Compare lifecycle equity allocation for different labor income betas.
+
+    Shows how the equity glide path changes when:
+    - beta=0: Labor is bond-like (professor, consultant) → 100% stocks early
+    - beta=0.5: Labor is mixed → Lower stocks early
+    - beta=1.0: Labor is stock-like (tech founder) → Much lower stocks early
+
+    Args:
+        econ_params: Economic parameters
+        betas: List of beta values to compare
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if betas is None:
+        betas = [0.0, 0.3, 0.6, 1.0]
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    colors = plt.cm.viridis(np.linspace(0, 0.8, len(betas)))
+
+    # Panel 1: Stock Allocation Comparison
+    ax = axes[0, 0]
+    for i, beta in enumerate(betas):
+        lp = LifecycleParams(beta_labor=beta)
+        result = run_lifecycle_simulation(lp, econ_params)
+
+        label = f'β={beta:.1f}'
+        if beta == 0:
+            label += ' (Bond-like HC)'
+        elif beta == 1.0:
+            label += ' (Stock-like HC)'
+
+        ax.plot(result.ages, result.stock_allocation * 100,
+                linewidth=2, color=colors[i], label=label)
+
+    ax.axhline(y=result.merton_share * 100, color='gray', linestyle='--',
+               alpha=0.7, label=f'Merton Share ({result.merton_share*100:.1f}%)')
+    ax.axvline(x=65, color='red', linestyle=':', alpha=0.5)
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Stock Allocation (%)')
+    ax.set_title('Equity Glide Path by Labor Income Beta')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_xlim(25, 90)
+    ax.set_ylim(0, 105)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Human Capital by Beta
+    ax = axes[0, 1]
+    for i, beta in enumerate(betas):
+        lp = LifecycleParams(beta_labor=beta)
+        result = run_lifecycle_simulation(lp, econ_params)
+        ax.plot(result.ages, result.human_capital / 1e6,
+                linewidth=2, color=colors[i], label=f'β={beta:.1f}')
+
+    ax.axvline(x=65, color='red', linestyle=':', alpha=0.5, label='Retirement')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Human Capital ($M)')
+    ax.set_title('Human Capital Value by Labor Beta')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_xlim(25, 90)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Financial Wealth Accumulation
+    ax = axes[1, 0]
+    for i, beta in enumerate(betas):
+        lp = LifecycleParams(beta_labor=beta)
+        result = run_lifecycle_simulation(lp, econ_params)
+        ax.plot(result.ages, result.financial_wealth / 1e6,
+                linewidth=2, color=colors[i], label=f'β={beta:.1f}')
+
+    ax.axvline(x=65, color='red', linestyle=':', alpha=0.5, label='Retirement')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Financial Wealth ($M)')
+    ax.set_title('Financial Wealth Accumulation by Labor Beta')
+    ax.legend(loc='upper left', fontsize=9)
+    ax.set_xlim(25, 90)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 4: Total Wealth
+    ax = axes[1, 1]
+    for i, beta in enumerate(betas):
+        lp = LifecycleParams(beta_labor=beta)
+        result = run_lifecycle_simulation(lp, econ_params)
+        ax.plot(result.ages, result.total_wealth / 1e6,
+                linewidth=2, color=colors[i], label=f'β={beta:.1f}')
+
+    ax.axvline(x=65, color='red', linestyle=':', alpha=0.5, label='Retirement')
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Total Wealth ($M)')
+    ax.set_title('Total Wealth (HC + FW) by Labor Beta')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_xlim(25, 90)
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle('Impact of Labor Income Risk on Lifecycle Allocation\n'
+                 'Higher β = More stock-like Human Capital = Lower financial stock allocation',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_lifecycle_sensitivity_gamma(
+    econ_params: EconomicParams = None,
+    gammas: List[float] = None,
+    figsize: Tuple[int, int] = (14, 6)
+) -> plt.Figure:
+    """
+    Compare lifecycle equity allocation for different risk aversion levels.
+
+    Shows how γ (risk aversion) affects:
+    - The Merton share (target total wealth in stocks)
+    - The financial portfolio glide path
+
+    Args:
+        econ_params: Economic parameters
+        gammas: List of gamma values to compare
+        figsize: Figure size
+
+    Returns:
+        matplotlib Figure object
+    """
+    if econ_params is None:
+        econ_params = EconomicParams()
+    if gammas is None:
+        gammas = [1.0, 2.0, 4.0, 8.0]
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(gammas)))
+
+    # Panel 1: Stock Allocation Comparison
+    ax = axes[0]
+    for i, gamma in enumerate(gammas):
+        lp = LifecycleParams(gamma=gamma, beta_labor=0.0)
+        result = run_lifecycle_simulation(lp, econ_params)
+
+        merton = result.merton_share * 100
+        ax.plot(result.ages, result.stock_allocation * 100,
+                linewidth=2, color=colors[i],
+                label=f'γ={gamma:.1f} (Merton={merton:.0f}%)')
+
+    ax.axvline(x=65, color='red', linestyle=':', alpha=0.5)
+    ax.set_xlabel('Age')
+    ax.set_ylabel('Stock Allocation (%)')
+    ax.set_title('Equity Glide Path by Risk Aversion (γ)')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_xlim(25, 90)
+    ax.set_ylim(0, 105)
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Final Financial Wealth
+    ax = axes[1]
+    final_wealths = []
+    for i, gamma in enumerate(gammas):
+        lp = LifecycleParams(gamma=gamma, beta_labor=0.0)
+        result = run_lifecycle_simulation(lp, econ_params)
+        final_wealths.append(result.financial_wealth[-1] / 1e6)
+
+    bars = ax.bar(range(len(gammas)), final_wealths, color=colors)
+    ax.set_xticks(range(len(gammas)))
+    ax.set_xticklabels([f'γ={g:.1f}' for g in gammas])
+    ax.set_ylabel('Final Financial Wealth at Age 90 ($M)')
+    ax.set_title('Terminal Wealth by Risk Aversion')
+    ax.grid(True, alpha=0.3, axis='y')
+
+    for bar, w in zip(bars, final_wealths):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                f'${w:.1f}M', ha='center', fontsize=10)
+
+    plt.suptitle('Impact of Risk Aversion on Lifecycle Allocation\n'
+                 'Lower γ = More aggressive = Higher stocks = Higher expected terminal wealth',
+                 fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    return fig
