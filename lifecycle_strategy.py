@@ -44,7 +44,7 @@ class LifecycleParams:
     retirement_expenses: float = 80  # Retirement annual expenses ($80k)
 
     # Asset allocation parameters
-    stock_beta_human_capital: float = 0.5    # Beta of human capital to stocks
+    stock_beta_human_capital: float = 0.1    # Beta of human capital to stocks
     bond_duration_benchmark: float = 20.0    # Benchmark bond duration for HC allocation
     target_stock_allocation: float = 0.60    # Target long-run stock allocation
     target_bond_allocation: float = 0.30     # Target long-run bond allocation
@@ -800,7 +800,7 @@ def main(
     retirement_age: int = 65,
     end_age: int = 85,
     initial_earnings: float = 100,
-    stock_beta_hc: float = 0.5,
+    stock_beta_hc: float = 0.1,
     bond_duration: float = 7.0,
     target_stocks: float = 0.60,
     target_bonds: float = 0.30,
@@ -881,8 +881,8 @@ if __name__ == '__main__':
                        help='Planning horizon end (default: 85)')
     parser.add_argument('--initial-earnings', type=float, default=100,
                        help='Initial earnings in $000s (default: 100)')
-    parser.add_argument('--stock-beta', type=float, default=0.5,
-                       help='Stock beta of human capital (default: 0.5)')
+    parser.add_argument('--stock-beta', type=float, default=0.1,
+                       help='Stock beta of human capital (default: 0.1)')
     parser.add_argument('--bond-duration', type=float, default=20.0,
                        help='Benchmark bond duration for HC allocation in years (default: 20.0)')
     parser.add_argument('--target-stocks', type=float, default=0.60,
