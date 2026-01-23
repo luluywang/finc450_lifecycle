@@ -722,13 +722,13 @@ def plot_total_wealth_holdings(
     ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
 
 
-def plot_consumption_share_of_fw(
+def plot_consumption_dollars(
     result: LifecycleResult,
     params: LifecycleParams,
     ax: plt.Axes,
     use_years: bool = True
 ) -> None:
-    """Plot 9: Consumption as Share of Financial Wealth."""
+    """Plot 9: Total Consumption in Dollar Terms."""
     if use_years:
         x = np.arange(len(result.ages))
         xlabel = 'Years from Career Start'
@@ -736,16 +736,16 @@ def plot_consumption_share_of_fw(
         x = result.ages
         xlabel = 'Age'
 
-    ax.plot(x, result.consumption_share_of_fw, color=COLORS['blue'], linewidth=2,
-            label='Consumption / Financial Wealth')
+    ax.plot(x, result.total_consumption, color=COLORS['blue'], linewidth=2,
+            label='Total Consumption')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
 
     ax.set_xlabel(xlabel)
-    ax.set_ylabel('Share')
-    ax.set_title('Consumption as Share of Financial Wealth')
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Total Consumption')
     ax.legend(loc='upper right', fontsize=8)
     ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
 
@@ -956,7 +956,7 @@ def create_lifecycle_figure(
     plot_target_financial_holdings(result, params, axes[1, 1], use_years)
     plot_portfolio_shares(result, params, axes[1, 2], use_years)
     plot_total_wealth_holdings(result, params, axes[1, 3], use_years)
-    plot_consumption_share_of_fw(result, params, axes[1, 4], use_years)
+    plot_consumption_dollars(result, params, axes[1, 4], use_years)
 
     plt.tight_layout()
     return fig
