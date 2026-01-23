@@ -21,8 +21,8 @@ from enum import Enum
 @dataclass
 class EconomicParams:
     """Parameters for the economic environment (VAR structure)."""
-    r_bar: float = 0.03        # Long-run mean real rate
-    phi: float = 0.85          # Interest rate persistence
+    r_bar: float = 0.02        # Long-run mean real rate
+    phi: float = 1.0           # Interest rate persistence (1.0 = random walk)
     sigma_r: float = 0.012     # Rate shock volatility
     mu_excess: float = 0.04    # Equity risk premium
     sigma_s: float = 0.18      # Stock return volatility
