@@ -793,16 +793,16 @@ def create_beta_comparison_figure(
     ax.set_title('Bond Component of Human Capital')
     ax.legend(loc='upper right', fontsize=9)
 
-    # Plot 6: Target Financial Stock Holdings comparison
+    # Plot 6: HC Cash Component comparison
     ax = axes[1, 2]
     for i, beta in enumerate(beta_values):
-        ax.plot(x, results[beta].target_fin_stocks, color=beta_colors[i],
+        ax.plot(x, results[beta].hc_cash_component, color=beta_colors[i],
                 linewidth=2, label=f'Beta = {beta}')
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
-    ax.set_title('Target Financial Stock Holdings')
+    ax.set_title('Cash Component of Human Capital')
     ax.legend(loc='upper right', fontsize=9)
 
     plt.tight_layout()
@@ -871,18 +871,8 @@ def generate_lifecycle_pdf(
     if econ_params is None:
         econ_params = EconomicParams()
 
-    # Compute lifecycle along median path
-    result = compute_lifecycle_median_path(params, econ_params)
-
     with PdfPages(output_path) as pdf:
-        # Page 1: All 8 charts together
-        fig = create_lifecycle_figure(result, params, figsize=(20, 10), use_years=use_years)
-        fig.suptitle('Lifecycle Investment Strategy - Median Path Analysis',
-                    fontsize=14, fontweight='bold', y=1.02)
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-
-        # Page 2: Beta comparison (if enabled)
+        # Beta comparison page (if enabled)
         if include_beta_comparison:
             fig = create_beta_comparison_figure(
                 beta_values=[0.0, 0.5, 1.0],
@@ -897,22 +887,36 @@ def generate_lifecycle_pdf(
             plt.close(fig)
 
         if include_individual_pages:
-            # Individual chart pages for detail
-            plot_functions = [
-                ('Earnings and Expenses Profile', plot_earnings_expenses_profile),
-                ('Forward Looking Present Values', plot_forward_present_values),
-                ('Durations of Assets', plot_durations),
-                ('Human Capital vs Financial Wealth', plot_human_vs_financial_wealth),
-                ('Portfolio Decomposition of Human Capital', plot_hc_decomposition),
-                ('Target Financial Holdings', plot_target_financial_holdings),
-                ('Target Financial Portfolio Shares', plot_portfolio_shares),
-                ('Target Total Wealth Holdings', plot_total_wealth_holdings),
-            ]
+            # Beta-separated sections: all charts for each beta value
+            beta_values = [0.0, 0.5, 1.0]
 
-            for title, plot_func in plot_functions:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                plot_func(result, params, ax, use_years=use_years)
-                fig.suptitle(title, fontsize=12, fontweight='bold')
+            for beta in beta_values:
+                # Create params for this beta
+                beta_params = LifecycleParams(
+                    start_age=params.start_age,
+                    retirement_age=params.retirement_age,
+                    end_age=params.end_age,
+                    initial_earnings=params.initial_earnings,
+                    earnings_growth=params.earnings_growth,
+                    earnings_hump_age=params.earnings_hump_age,
+                    earnings_decline=params.earnings_decline,
+                    base_expenses=params.base_expenses,
+                    expense_growth=params.expense_growth,
+                    retirement_expenses=params.retirement_expenses,
+                    stock_beta_human_capital=beta,
+                    bond_duration_benchmark=params.bond_duration_benchmark,
+                    target_stock_allocation=params.target_stock_allocation,
+                    target_bond_allocation=params.target_bond_allocation,
+                    risk_free_rate=params.risk_free_rate,
+                    equity_premium=params.equity_premium,
+                    initial_wealth=params.initial_wealth,
+                )
+                beta_result = compute_lifecycle_median_path(beta_params, econ_params)
+
+                # Page with all 8 charts for this beta
+                fig = create_lifecycle_figure(beta_result, beta_params, figsize=(20, 10), use_years=use_years)
+                fig.suptitle(f'Lifecycle Investment Strategy - Beta = {beta}',
+                            fontsize=14, fontweight='bold', y=1.02)
                 pdf.savefig(fig, bbox_inches='tight')
                 plt.close(fig)
 
