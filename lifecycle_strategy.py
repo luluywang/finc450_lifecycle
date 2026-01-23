@@ -751,6 +751,9 @@ def plot_consumption_dollars(
     ax.set_title('Total Consumption')
     ax.legend(loc='upper right', fontsize=8)
     ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
+    # Set y-axis to show data with some padding
+    y_max = max(result.total_consumption) * 1.1
+    ax.set_ylim(0, y_max)
 
 
 def plot_consumption_breakdown(
@@ -785,6 +788,9 @@ def plot_consumption_breakdown(
     ax.set_title('Consumption Breakdown')
     ax.legend(loc='upper right', fontsize=8)
     ax.set_xlim(-2, len(result.ages) + 2 if use_years else params.end_age + 2)
+    # Set y-axis to show all data series with padding
+    y_max = max(max(result.total_consumption), max(result.earnings)) * 1.1
+    ax.set_ylim(0, y_max)
 
 
 def create_beta_comparison_figure(
@@ -931,13 +937,14 @@ def create_beta_comparison_figure(
 def create_lifecycle_figure(
     result: LifecycleResult,
     params: LifecycleParams,
-    figsize: Tuple[int, int] = (25, 15),
+    figsize: Tuple[int, int] = (20, 10),
     use_years: bool = True
 ) -> plt.Figure:
     """
-    Create a single figure with all lifecycle strategy charts including consumption.
+    Create a single figure with lifecycle strategy charts.
 
-    Layout: 2 rows x 5 columns
+    Layout: 2 rows x 4 columns
+    (Portfolio shares and HC decomposition are shown in the beta comparison page)
 
     Args:
         result: Lifecycle calculation results
@@ -945,21 +952,19 @@ def create_lifecycle_figure(
         figsize: Figure size tuple
         use_years: If True, x-axis shows years from career start; if False, shows age
     """
-    fig, axes = plt.subplots(2, 5, figsize=figsize)
+    fig, axes = plt.subplots(2, 4, figsize=figsize)
 
     # Row 1
     plot_earnings_expenses_profile(result, params, axes[0, 0], use_years)
     plot_forward_present_values(result, params, axes[0, 1], use_years)
     plot_durations(result, params, axes[0, 2], use_years)
     plot_human_vs_financial_wealth(result, params, axes[0, 3], use_years)
-    plot_consumption_breakdown(result, params, axes[0, 4], use_years)
 
     # Row 2
-    plot_hc_decomposition(result, params, axes[1, 0], use_years)
-    plot_target_financial_holdings(result, params, axes[1, 1], use_years)
-    plot_portfolio_shares(result, params, axes[1, 2], use_years)
-    plot_total_wealth_holdings(result, params, axes[1, 3], use_years)
-    plot_consumption_dollars(result, params, axes[1, 4], use_years)
+    plot_target_financial_holdings(result, params, axes[1, 0], use_years)
+    plot_total_wealth_holdings(result, params, axes[1, 1], use_years)
+    plot_consumption_breakdown(result, params, axes[1, 2], use_years)
+    plot_consumption_dollars(result, params, axes[1, 3], use_years)
 
     plt.tight_layout()
     return fig
@@ -1035,7 +1040,7 @@ def generate_lifecycle_pdf(
                 beta_result = compute_lifecycle_median_path(beta_params, econ_params)
 
                 # Page with all charts for this beta
-                fig = create_lifecycle_figure(beta_result, beta_params, figsize=(25, 10), use_years=use_years)
+                fig = create_lifecycle_figure(beta_result, beta_params, figsize=(20, 10), use_years=use_years)
                 fig.suptitle(f'Lifecycle Investment Strategy - Beta = {beta}',
                             fontsize=14, fontweight='bold', y=1.02)
                 pdf.savefig(fig, bbox_inches='tight')
