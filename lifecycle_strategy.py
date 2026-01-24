@@ -608,10 +608,12 @@ def compute_lifecycle_median_path(
     target_total_bonds = target_bond * total_wealth
     target_total_cash = target_cash * total_wealth
 
-    # Target financial holdings = Total target - Human capital component
+    # Target financial holdings = Total target - Human capital component + Expense liability hedge
+    # HC is an implicit asset -> subtract its components
+    # Expense liability is an implicit short -> add bonds/cash to hedge it
     target_fin_stocks = target_total_stocks - hc_stock_component
-    target_fin_bonds = target_total_bonds - hc_bond_component
-    target_fin_cash = target_total_cash - hc_cash_component
+    target_fin_bonds = target_total_bonds - hc_bond_component + exp_bond_component
+    target_fin_cash = target_total_cash - hc_cash_component + exp_cash_component
 
     # Constrained weights (no short selling in financial portfolio)
     # Apply no-short at aggregate level (equity vs fixed income), then split FI
@@ -901,9 +903,11 @@ def compute_lifecycle_fixed_consumption(
     total_wealth = financial_wealth + human_capital
 
     # Target financial holdings and weights (same logic as optimal)
+    # HC is an implicit asset -> subtract its components
+    # Expense liability is an implicit short -> add bonds/cash to hedge it
     target_fin_stocks = target_stock * total_wealth - hc_stock_component
-    target_fin_bonds = target_bond * total_wealth - hc_bond_component
-    target_fin_cash = target_cash * total_wealth - hc_cash_component
+    target_fin_bonds = target_bond * total_wealth - hc_bond_component + exp_bond_component
+    target_fin_cash = target_cash * total_wealth - hc_cash_component + exp_cash_component
 
     stock_weight_no_short = np.zeros(total_years)
     bond_weight_no_short = np.zeros(total_years)
@@ -3226,6 +3230,19 @@ def create_beta_comparison_figure(
     ax.legend(loc='upper right', fontsize=9)
     ax.set_ylim(-0.05, 1.15)
 
+    # Compute shared y-axis range for bottom row (HC decomposition charts)
+    hc_min = float('inf')
+    hc_max = float('-inf')
+    for beta in beta_values:
+        for component in [results[beta].hc_stock_component,
+                          results[beta].hc_bond_component,
+                          results[beta].hc_cash_component]:
+            hc_min = min(hc_min, np.min(component))
+            hc_max = max(hc_max, np.max(component))
+    # Add 5% padding
+    hc_range = hc_max - hc_min
+    hc_ylim = (hc_min - 0.05 * hc_range, hc_max + 0.05 * hc_range)
+
     # Plot 4: HC Stock Component comparison
     ax = axes[1, 0]
     for i, beta in enumerate(beta_values):
@@ -3237,6 +3254,7 @@ def create_beta_comparison_figure(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Stock Component of Human Capital')
     ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(hc_ylim)
 
     # Plot 5: HC Bond Component comparison
     ax = axes[1, 1]
@@ -3249,6 +3267,7 @@ def create_beta_comparison_figure(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Bond Component of Human Capital')
     ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(hc_ylim)
 
     # Plot 6: HC Cash Component comparison
     ax = axes[1, 2]
@@ -3261,6 +3280,7 @@ def create_beta_comparison_figure(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Cash Component of Human Capital')
     ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(hc_ylim)
 
     plt.tight_layout()
     return fig
@@ -4753,6 +4773,7 @@ def generate_lifecycle_pdf(
     - Page 1: BASE CASE (Deterministic Median Path) - 4 sections, 10 charts
     - Page 2: MONTE CARLO (50 Runs) - 6 chart panels with percentile bands
     - Pages 3a-c: TEACHING SCENARIOS - Normal, Sequence Risk, Rate Shock
+    - Page 4: BETA COMPARISON - Portfolio allocation & HC decomposition by beta
 
     Args:
         output_path: Path for output PDF file
@@ -4854,23 +4875,26 @@ def generate_lifecycle_pdf(
         plt.close(fig)
 
         # ====================================================================
+        # PAGE 4: BETA COMPARISON (Portfolio Allocation & HC Decomposition)
+        # ====================================================================
+        print("Generating Page 4: Beta Comparison...")
+        fig = create_beta_comparison_figure(
+            beta_values=[0.0, 0.5, 1.0],
+            base_params=params,
+            econ_params=econ_params,
+            figsize=(16, 10),
+            use_years=use_years
+        )
+        fig.suptitle('Effect of Stock Beta on Portfolio Allocation & Human Capital',
+                    fontsize=14, fontweight='bold', y=1.02)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+        # ====================================================================
         # LEGACY PAGES (optional - for parameter sensitivity analysis)
         # ====================================================================
         if include_legacy_pages:
             print("Generating legacy comparison pages...")
-
-            # Beta comparison page
-            fig = create_beta_comparison_figure(
-                beta_values=[0.0, 0.5, 1.0],
-                base_params=params,
-                econ_params=econ_params,
-                figsize=(16, 10),
-                use_years=use_years
-            )
-            fig.suptitle('Effect of Stock Beta on Portfolio Allocation',
-                        fontsize=14, fontweight='bold', y=1.02)
-            pdf.savefig(fig, bbox_inches='tight')
-            plt.close(fig)
 
             # Gamma (Risk Aversion) comparison
             fig = create_gamma_comparison_figure(
