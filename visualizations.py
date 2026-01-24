@@ -904,8 +904,8 @@ def plot_lifecycle_allocation(
     ax = axes[0, 1]
     ax.plot(ages, result.stock_allocation * 100, 'b-', linewidth=2.5,
             label='Stock Allocation')
-    ax.axhline(y=result.merton_share * 100, color='green', linestyle='--',
-               alpha=0.7, label=f'Merton Share ({result.merton_share*100:.1f}%)')
+    ax.axhline(y=result.target_stock * 100, color='green', linestyle='--',
+               alpha=0.7, label=f'Target Stock ({result.target_stock*100:.1f}%)')
     ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
                alpha=0.7, label='Retirement')
     ax.fill_between(ages, 0, result.stock_allocation * 100, alpha=0.3, color='blue')
@@ -933,12 +933,17 @@ def plot_lifecycle_allocation(
                    xy=(mid_retirement, stock_at_mid + 10), fontsize=9, ha='center',
                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
 
-    # Panel 3: Portfolio Composition (Stacked Area)
+    # Panel 3: Portfolio Composition (Stacked Area - 3 assets)
     ax = axes[1, 0]
-    ax.fill_between(ages, 0, result.stock_allocation * 100,
+    stock_pct = result.stock_allocation * 100
+    bond_pct = result.bond_allocation * 100
+    cash_pct = result.cash_allocation * 100
+    ax.fill_between(ages, 0, stock_pct,
                     alpha=0.8, label='Stocks', color='#2ca02c')
-    ax.fill_between(ages, result.stock_allocation * 100, 100,
+    ax.fill_between(ages, stock_pct, stock_pct + bond_pct,
                     alpha=0.8, label='Bonds', color='#1f77b4')
+    ax.fill_between(ages, stock_pct + bond_pct, stock_pct + bond_pct + cash_pct,
+                    alpha=0.8, label='Cash', color='#ff7f0e')
     ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
                alpha=0.7, label='Retirement')
     ax.set_xlabel('Age')
@@ -1029,8 +1034,8 @@ def plot_lifecycle_comparison_beta(
         ax.plot(result.ages, result.stock_allocation * 100,
                 linewidth=2, color=colors[i], label=label)
 
-    ax.axhline(y=result.merton_share * 100, color='gray', linestyle='--',
-               alpha=0.7, label=f'Merton Share ({result.merton_share*100:.1f}%)')
+    ax.axhline(y=result.target_stock * 100, color='gray', linestyle='--',
+               alpha=0.7, label=f'Target Stock ({result.target_stock*100:.1f}%)')
     ax.axvline(x=65, color='red', linestyle=':', alpha=0.5)
     ax.set_xlabel('Age')
     ax.set_ylabel('Stock Allocation (%)')
@@ -1130,10 +1135,10 @@ def plot_lifecycle_sensitivity_gamma(
         lp = LifecycleParams(gamma=gamma, beta_labor=0.0)
         result = run_lifecycle_simulation(lp, econ_params)
 
-        merton = result.merton_share * 100
+        target = result.target_stock * 100
         ax.plot(result.ages, result.stock_allocation * 100,
                 linewidth=2, color=colors[i],
-                label=f'γ={gamma:.1f} (Merton={merton:.0f}%)')
+                label=f'γ={gamma:.1f} (Target={target:.0f}%)')
 
     ax.axvline(x=65, color='red', linestyle=':', alpha=0.5)
     ax.set_xlabel('Age')
