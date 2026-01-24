@@ -558,13 +558,22 @@ const COLORS = {
   variable: '#f39c12',
 };
 
+// Number formatters
+const formatDollar = (value: number) => Math.round(value).toLocaleString();
+const formatPercent = (value: number) => Math.round(value);
+const formatYears = (value: number) => value.toFixed(1);
+
+const dollarTooltipFormatter = (value: number) => `$${formatDollar(value)}k`;
+const percentTooltipFormatter = (value: number) => `${formatPercent(value)}%`;
+const yearsTooltipFormatter = (value: number) => `${formatYears(value)} yrs`;
+
 function ChartSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: '24px' }}>
       <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px', color: '#2c3e50' }}>
         {title}
       </h3>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '16px' }}>
         {children}
       </div>
     </div>
@@ -578,6 +587,7 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
       border: '1px solid #e0e0e0',
       borderRadius: '8px',
       padding: '12px',
+      minHeight: '320px',
     }}>
       <div style={{ fontSize: '12px', fontWeight: '500', marginBottom: '8px', color: '#555' }}>
         {title}
@@ -705,7 +715,7 @@ export default function LifecycleVisualizer() {
             label="Bond duration"
             value={params.bondDuration}
             onChange={(v) => updateParam('bondDuration', v)}
-            min={1} max={15} step={1} suffix="yrs" decimals={0}
+            min={1} max={30} step={1} suffix="yrs" decimals={0}
           />
         </ParamGroup>
 
@@ -736,6 +746,12 @@ export default function LifecycleVisualizer() {
             value={params.baseExpenses}
             onChange={(v) => updateParam('baseExpenses', v)}
             min={30} max={100} step={5} suffix="$k" decimals={0}
+          />
+          <StepperInput
+            label="Expense growth"
+            value={params.expenseGrowth * 100}
+            onChange={(v) => updateParam('expenseGrowth', v / 100)}
+            min={0} max={3} step={0.5} suffix="%" decimals={1}
           />
           <StepperInput
             label="Retirement expenses"
@@ -774,16 +790,16 @@ export default function LifecycleVisualizer() {
           fontSize: '11px',
         }}>
           <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>MV Target Allocation:</div>
-          <div>Stocks: {(result.targetStock * 100).toFixed(1)}%</div>
-          <div>Bonds: {(result.targetBond * 100).toFixed(1)}%</div>
-          <div>Cash: {(result.targetCash * 100).toFixed(1)}%</div>
+          <div>Stocks: {Math.round(result.targetStock * 100)}%</div>
+          <div>Bonds: {Math.round(result.targetBond * 100)}%</div>
+          <div>Cash: {Math.round(result.targetCash * 100)}%</div>
         </div>
       </div>
 
       {/* Main Content - Charts */}
       <div style={{
         flex: 1,
-        padding: '16px',
+        padding: '24px',
         overflowY: 'auto',
         background: '#f5f5f5',
       }}>
@@ -794,24 +810,24 @@ export default function LifecycleVisualizer() {
         {/* Section 1: Assumptions */}
         <ChartSection title="Section 1: Assumptions">
           <ChartCard title="Earnings Profile ($k)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
                 <Line type="monotone" dataKey="earnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Earnings" />
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard title="Expense Profile ($k)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
                 <Line type="monotone" dataKey="expenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Expenses" />
               </LineChart>
             </ResponsiveContainer>
@@ -821,12 +837,12 @@ export default function LifecycleVisualizer() {
         {/* Section 2: Forward-Looking Values */}
         <ChartSection title="Section 2: Forward-Looking Values">
           <ChartCard title="Present Values ($k)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Line type="monotone" dataKey="pvEarnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="PV Earnings" />
                 <Line type="monotone" dataKey="pvExpenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="PV Expenses" />
@@ -835,12 +851,12 @@ export default function LifecycleVisualizer() {
           </ChartCard>
 
           <ChartCard title="Durations (years)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatYears} />
+                <Tooltip formatter={yearsTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Line type="monotone" dataKey="durationEarnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Duration (Earnings)" />
                 <Line type="monotone" dataKey="durationExpenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Duration (Expenses)" />
@@ -852,12 +868,12 @@ export default function LifecycleVisualizer() {
         {/* Section 3: Wealth */}
         <ChartSection title="Section 3: Wealth">
           <ChartCard title="Human Capital vs Financial Wealth ($k)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Area type="monotone" dataKey="financialWealth" stackId="1" stroke={COLORS.fw} fill={COLORS.fw} name="Financial Wealth" />
                 <Area type="monotone" dataKey="humanCapital" stackId="1" stroke={COLORS.hc} fill={COLORS.hc} name="Human Capital" />
@@ -866,12 +882,12 @@ export default function LifecycleVisualizer() {
           </ChartCard>
 
           <ChartCard title="Human Capital Decomposition ($k)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Area type="monotone" dataKey="hcCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="HC Cash" />
                 <Area type="monotone" dataKey="hcBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="HC Bond" />
@@ -884,12 +900,12 @@ export default function LifecycleVisualizer() {
         {/* Section 4: Choices */}
         <ChartSection title="Section 4: Choices (Optimal Decisions)">
           <ChartCard title="Consumption Path ($k)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} />
-                <Tooltip />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Area type="monotone" dataKey="subsistence" stackId="1" stroke={COLORS.subsistence} fill={COLORS.subsistence} name="Subsistence" />
                 <Area type="monotone" dataKey="variable" stackId="1" stroke={COLORS.variable} fill={COLORS.variable} name="Variable" />
@@ -898,12 +914,12 @@ export default function LifecycleVisualizer() {
           </ChartCard>
 
           <ChartCard title="Portfolio Allocation (%)">
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} domain={[0, 100]} />
-                <Tooltip />
+                <YAxis fontSize={10} domain={[0, 100]} tickFormatter={formatPercent} />
+                <Tooltip formatter={percentTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Area type="monotone" dataKey="cashWeight" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Cash" />
                 <Area type="monotone" dataKey="bondWeight" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Bonds" />
