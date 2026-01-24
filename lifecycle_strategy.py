@@ -53,7 +53,6 @@ class LifecycleParams:
 
     # Asset allocation parameters
     stock_beta_human_capital: float = 0.1    # Beta of human capital to stocks
-    bond_duration_benchmark: float = 20.0    # Benchmark bond duration for HC allocation
 
     # Mean-variance optimization parameters
     # If gamma > 0, target allocations are derived from MV optimization
@@ -510,9 +509,9 @@ def compute_lifecycle_median_path(
     hc_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
-        if params.bond_duration_benchmark > 0 and non_stock_hc[i] > 0:
+        if econ_params.bond_duration > 0 and non_stock_hc[i] > 0:
             # Bond fraction based on duration ratio (capped at 1.0)
-            bond_fraction = min(1.0, duration_earnings[i] / params.bond_duration_benchmark)
+            bond_fraction = min(1.0, duration_earnings[i] / econ_params.bond_duration)
             hc_bond_component[i] = non_stock_hc[i] * bond_fraction
             hc_cash_component[i] = non_stock_hc[i] * (1.0 - bond_fraction)
         else:
@@ -525,9 +524,9 @@ def compute_lifecycle_median_path(
     exp_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
-        if params.bond_duration_benchmark > 0 and pv_expenses[i] > 0:
+        if econ_params.bond_duration > 0 and pv_expenses[i] > 0:
             # Bond fraction based on expense duration ratio (capped at 1.0)
-            bond_fraction = min(1.0, duration_expenses[i] / params.bond_duration_benchmark)
+            bond_fraction = min(1.0, duration_expenses[i] / econ_params.bond_duration)
             exp_bond_component[i] = pv_expenses[i] * bond_fraction
             exp_cash_component[i] = pv_expenses[i] * (1.0 - bond_fraction)
         else:
@@ -810,8 +809,8 @@ def compute_lifecycle_fixed_consumption(
     hc_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
-        if params.bond_duration_benchmark > 0 and non_stock_hc[i] > 0:
-            bond_fraction = min(1.0, duration_earnings[i] / params.bond_duration_benchmark)
+        if econ_params.bond_duration > 0 and non_stock_hc[i] > 0:
+            bond_fraction = min(1.0, duration_earnings[i] / econ_params.bond_duration)
             hc_bond_component[i] = non_stock_hc[i] * bond_fraction
             hc_cash_component[i] = non_stock_hc[i] * (1.0 - bond_fraction)
         else:
@@ -822,8 +821,8 @@ def compute_lifecycle_fixed_consumption(
     exp_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
-        if params.bond_duration_benchmark > 0 and pv_expenses[i] > 0:
-            bond_fraction = min(1.0, duration_expenses[i] / params.bond_duration_benchmark)
+        if econ_params.bond_duration > 0 and pv_expenses[i] > 0:
+            bond_fraction = min(1.0, duration_expenses[i] / econ_params.bond_duration)
             exp_bond_component[i] = pv_expenses[i] * bond_fraction
             exp_cash_component[i] = pv_expenses[i] * (1.0 - bond_fraction)
         else:
@@ -3159,8 +3158,7 @@ def create_beta_comparison_figure(
             expense_growth=base_params.expense_growth,
             retirement_expenses=base_params.retirement_expenses,
             stock_beta_human_capital=beta,
-            bond_duration_benchmark=base_params.bond_duration_benchmark,
-            gamma=base_params.gamma,
+                        gamma=base_params.gamma,
             target_stock_allocation=base_params.target_stock_allocation,
             target_bond_allocation=base_params.target_bond_allocation,
             risk_free_rate=base_params.risk_free_rate,
@@ -3300,8 +3298,7 @@ def create_gamma_comparison_figure(
             expense_growth=base_params.expense_growth,
             retirement_expenses=base_params.retirement_expenses,
             stock_beta_human_capital=base_params.stock_beta_human_capital,
-            bond_duration_benchmark=base_params.bond_duration_benchmark,
-            gamma=gamma,
+                        gamma=gamma,
             consumption_boost=base_params.consumption_boost,
             initial_wealth=base_params.initial_wealth,
         )
@@ -3436,8 +3433,7 @@ def create_initial_wealth_comparison_figure(
             expense_growth=base_params.expense_growth,
             retirement_expenses=base_params.retirement_expenses,
             stock_beta_human_capital=base_params.stock_beta_human_capital,
-            bond_duration_benchmark=base_params.bond_duration_benchmark,
-            gamma=base_params.gamma,
+                        gamma=base_params.gamma,
             consumption_boost=base_params.consumption_boost,
             initial_wealth=wealth,
         )
@@ -3576,8 +3572,7 @@ def create_consumption_boost_comparison_figure(
             expense_growth=base_params.expense_growth,
             retirement_expenses=base_params.retirement_expenses,
             stock_beta_human_capital=base_params.stock_beta_human_capital,
-            bond_duration_benchmark=base_params.bond_duration_benchmark,
-            gamma=base_params.gamma,
+                        gamma=base_params.gamma,
             consumption_boost=boost,
             initial_wealth=base_params.initial_wealth,
         )
@@ -3832,8 +3827,7 @@ def create_income_comparison_figure(
             expense_growth=base_params.expense_growth,
             retirement_expenses=base_params.retirement_expenses,
             stock_beta_human_capital=base_params.stock_beta_human_capital,
-            bond_duration_benchmark=base_params.bond_duration_benchmark,
-            gamma=base_params.gamma,
+                        gamma=base_params.gamma,
             consumption_boost=base_params.consumption_boost,
             initial_wealth=base_params.initial_wealth,
         )
@@ -4967,7 +4961,6 @@ def generate_lifecycle_pdf(
                     expense_growth=params.expense_growth,
                     retirement_expenses=params.retirement_expenses,
                     stock_beta_human_capital=beta,
-                    bond_duration_benchmark=params.bond_duration_benchmark,
                     gamma=params.gamma,
                     target_stock_allocation=params.target_stock_allocation,
                     target_bond_allocation=params.target_bond_allocation,
@@ -5036,7 +5029,7 @@ Consumption Model:
 
 Human Capital Allocation:
   - Stock Beta: {params.stock_beta_human_capital:.2f}
-  - Bond Duration Benchmark: {params.bond_duration_benchmark:.1f} years
+  - Bond Duration: {econ_params.bond_duration:.1f} years (used for HC decomposition and MV optimization)
 
 Mean-Variance Optimization (Full VCV):
   - Risk-Free Rate (r_bar): {econ_params.r_bar*100:.1f}%
@@ -5045,7 +5038,6 @@ Mean-Variance Optimization (Full VCV):
   - Stock Volatility (sigma_s): {econ_params.sigma_s*100:.0f}%
   - Rate Shock Volatility (sigma_r): {econ_params.sigma_r*100:.1f}%
   - Rate/Stock Correlation (rho): {econ_params.rho:.2f}
-  - Bond Duration (D): {econ_params.bond_duration:.1f} years
   - Risk Aversion (gamma): {params.gamma:.1f}
   - Allocation Source: {allocation_source}
   - {mv_formula}
@@ -5172,7 +5164,6 @@ def main(
         end_age=end_age,
         initial_earnings=initial_earnings,
         stock_beta_human_capital=stock_beta_hc,
-        bond_duration_benchmark=bond_duration,
         gamma=gamma,
         target_stock_allocation=opt_stock,
         target_bond_allocation=opt_bond,
