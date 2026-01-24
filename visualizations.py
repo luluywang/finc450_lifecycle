@@ -933,17 +933,12 @@ def plot_lifecycle_allocation(
                    xy=(mid_retirement, stock_at_mid + 10), fontsize=9, ha='center',
                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
 
-    # Panel 3: Portfolio Composition (Stacked Area - 3 assets)
+    # Panel 3: Portfolio Composition (Stacked Area)
     ax = axes[1, 0]
-    stock_pct = result.stock_allocation * 100
-    bond_pct = result.bond_allocation * 100
-    cash_pct = result.cash_allocation * 100
-    ax.fill_between(ages, 0, stock_pct,
+    ax.fill_between(ages, 0, result.stock_allocation * 100,
                     alpha=0.8, label='Stocks', color='#2ca02c')
-    ax.fill_between(ages, stock_pct, stock_pct + bond_pct,
-                    alpha=0.8, label='Bonds', color='#1f77b4')
-    ax.fill_between(ages, stock_pct + bond_pct, stock_pct + bond_pct + cash_pct,
-                    alpha=0.8, label='Cash', color='#ff7f0e')
+    ax.fill_between(ages, result.stock_allocation * 100, 100,
+                    alpha=0.8, label='Bonds/Cash', color='#1f77b4')
     ax.axvline(x=lifecycle_params.retirement_age, color='red', linestyle='--',
                alpha=0.7, label='Retirement')
     ax.set_xlabel('Age')
