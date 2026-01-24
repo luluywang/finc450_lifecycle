@@ -417,6 +417,7 @@ def compute_lifecycle_median_path(
     # Consumption = subsistence + share × net_worth
     # Net worth = HC + FW - PV(future expenses)
     # During working years: cap total consumption at earnings (no borrowing against HC)
+    # During retirement: cap consumption at financial wealth (can't consume more than you have)
     for i in range(total_years):
         # Compute net worth at start of period
         net_worth[i] = human_capital[i] + financial_wealth[i] - pv_expenses[i]
@@ -433,6 +434,18 @@ def compute_lifecycle_median_path(
                 # Cap at earnings, reduce variable consumption accordingly
                 total_consumption[i] = earnings[i]
                 variable_consumption[i] = max(0, earnings[i] - subsistence_consumption[i])
+        else:
+            # Retirement: cap consumption at financial wealth
+            fw = financial_wealth[i]
+            if subsistence_consumption[i] > fw:
+                # Bankruptcy: can't even meet subsistence, consume whatever remains
+                total_consumption[i] = fw
+                subsistence_consumption[i] = fw
+                variable_consumption[i] = 0
+            elif total_consumption[i] > fw:
+                # Can meet subsistence but not variable consumption
+                total_consumption[i] = fw
+                variable_consumption[i] = fw - subsistence_consumption[i]
 
         # Actual savings = earnings - total consumption
         savings[i] = earnings[i] - total_consumption[i]

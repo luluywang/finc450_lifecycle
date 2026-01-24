@@ -333,10 +333,23 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap at earnings during working years
     if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
+      // Working years: cap consumption at earnings (can't borrow against HC)
       totalConsumption[i] = earnings[i];
       variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+    } else if (earnings[i] === 0) {
+      // Retirement: cap consumption at financial wealth
+      const fw = financialWealth[i];
+      if (subsistenceConsumption[i] > fw) {
+        // Bankruptcy: can't even meet subsistence, consume whatever remains
+        totalConsumption[i] = fw;
+        subsistenceConsumption[i] = fw;
+        variableConsumption[i] = 0;
+      } else if (totalConsumption[i] > fw) {
+        // Can meet subsistence but not variable consumption
+        totalConsumption[i] = fw;
+        variableConsumption[i] = fw - subsistenceConsumption[i];
+      }
     }
 
     const savings = earnings[i] - totalConsumption[i];
