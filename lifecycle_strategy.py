@@ -5087,7 +5087,7 @@ def main(
     end_age: int = 85,
     initial_earnings: float = 100,
     stock_beta_hc: float = 0.1,
-    bond_duration: float = 7.0,
+    bond_duration: float = 20.0,
     gamma: float = 2.0,
     mu_excess: float = 0.04,
     mu_bond: float = 0.005,
@@ -5220,7 +5220,7 @@ if __name__ == '__main__':
                        help='Initial earnings in $000s (default: 100)')
     parser.add_argument('--stock-beta', type=float, default=0.1,
                        help='Stock beta of human capital (default: 0.1)')
-    parser.add_argument('--bond-duration', type=float, default=7.0,
+    parser.add_argument('--bond-duration', type=float, default=20.0,
                        help='Bond duration for MV optimization in years (default: 7.0)')
     parser.add_argument('--gamma', type=float, default=2.0,
                        help='Risk aversion for MV optimization (default: 2.0, 0=use fixed targets)')

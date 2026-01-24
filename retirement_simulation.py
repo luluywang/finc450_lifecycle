@@ -29,7 +29,7 @@ class EconomicParams:
     sigma_s: float = 0.18      # Stock return volatility
     rho: float = -0.2          # Correlation between rate and stock shocks
     r_floor: float = 0.001     # Minimum interest rate (0.1%)
-    bond_duration: float = 7.0 # Duration of bond portfolio for MV optimization
+    bond_duration: float = 20.0 # Duration for HC decomposition and MV optimization
 
 
 @dataclass
