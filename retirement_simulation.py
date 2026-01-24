@@ -839,28 +839,6 @@ def calculate_human_capital(
     return max(pv_wages, 0.0)
 
 
-def get_merton_share(mkt_excess: float, sigma: float, gamma: float) -> float:
-    """
-    Calculate the Merton optimal share of risky assets in TOTAL wealth.
-
-    The Merton share is: (mu - rf) / (gamma * sigma^2)
-
-    This represents the theoretically optimal fraction of total wealth
-    (Human Capital + Financial Wealth) to hold in risky assets.
-
-    Args:
-        mkt_excess: Equity risk premium (expected excess return)
-        sigma: Standard deviation of stock returns
-        gamma: Risk aversion coefficient
-
-    Returns:
-        Optimal fraction of total wealth in stocks
-    """
-    variance = sigma ** 2
-    target_share = mkt_excess / (gamma * variance)
-    return target_share
-
-
 def compute_full_merton_allocation(
     mu_stock: float,
     mu_bond: float,
@@ -993,62 +971,6 @@ def compute_full_merton_allocation_constrained(
     return w_stock, w_bond, w_cash
 
 
-def solve_financial_stock_allocation(
-    fin_wealth: float,
-    human_capital: float,
-    beta_labor: float,
-    target_total_share: float
-) -> float:
-    """
-    Solve for the optimal stock allocation in the financial portfolio.
-
-    Given:
-    - Total Wealth = Financial Wealth + Human Capital
-    - Target Stock Dollars = Total Wealth * Merton Share
-    - Implicit Stock in HC = Human Capital * beta_labor
-
-    The financial portfolio must fill the gap:
-    Required Financial Stock = Target Stock - Implicit Stock in HC
-
-    Constraints: No leverage (cap at 100%), no shorting (floor at 0%)
-
-    Args:
-        fin_wealth: Current financial wealth
-        human_capital: Current human capital value
-        beta_labor: Labor income beta (stock-likeness of HC)
-        target_total_share: Merton share (target % of total wealth in stocks)
-
-    Returns:
-        Optimal stock allocation for financial portfolio (0 to 1)
-    """
-    total_wealth = fin_wealth + human_capital
-
-    if total_wealth <= 0:
-        return 0.5  # Default allocation if no wealth
-
-    # Target stock dollars across entire balance sheet
-    target_stock_dollars = total_wealth * target_total_share
-
-    # Implicit stock exposure from Human Capital
-    # If beta=0, HC is bond-like (no implicit stock)
-    # If beta=1, HC is stock-like (all implicit stock)
-    implicit_stock_in_hc = human_capital * beta_labor
-
-    # Required stock purchase in financial portfolio
-    required_financial_stock = target_stock_dollars - implicit_stock_in_hc
-
-    # Calculate weight in financial portfolio
-    if fin_wealth <= 0:
-        return 1.0  # If broke, theoretical 100% stocks
-
-    optimal_weight = required_financial_stock / fin_wealth
-
-    # Apply leverage constraints (no borrowing, no shorting)
-    constrained_weight = np.clip(optimal_weight, 0.0, 1.0)
-
-    return constrained_weight
-
-
 @dataclass
 class LifecycleResult:
     """Results from lifecycle simulation."""
@@ -1058,9 +980,12 @@ class LifecycleResult:
     total_wealth: np.ndarray            # Total wealth (HC + FW)
     stock_allocation: np.ndarray        # Stock % in financial portfolio
     bond_allocation: np.ndarray         # Bond % in financial portfolio
+    cash_allocation: np.ndarray         # Cash % in financial portfolio
     consumption: np.ndarray             # Consumption each period
     savings: np.ndarray                 # Savings each period
-    merton_share: float                 # Target total wealth stock share
+    target_stock: float                 # Target stock weight from MV optimization
+    target_bond: float                  # Target bond weight from MV optimization
+    target_cash: float                  # Target cash weight from MV optimization
 
 
 def run_lifecycle_simulation(
@@ -1075,6 +1000,7 @@ def run_lifecycle_simulation(
     This implements the Total Wealth framework where:
     - Human Capital is valued as PV of future net labor income
     - Financial portfolio allocation adjusts to achieve target total wealth risk
+    - Uses 3-asset allocation: stocks, bonds, and cash
     - Creates the characteristic "hump-shaped" or "flat-then-falling" equity path
 
     Args:
@@ -1091,11 +1017,17 @@ def run_lifecycle_simulation(
 
     # Use current rate as risk-free rate
     rf = ep.r_bar
-    mkt_excess = ep.mu_excess
-    sigma = ep.sigma_s
 
-    # Calculate Merton share (target for total wealth)
-    merton_share = get_merton_share(mkt_excess, sigma, lp.gamma)
+    # Calculate target allocation using full Merton VCV solution
+    target_stock, target_bond, target_cash = compute_full_merton_allocation_constrained(
+        mu_stock=ep.mu_excess,
+        mu_bond=ep.mu_bond,
+        sigma_s=ep.sigma_s,
+        sigma_r=ep.sigma_r,
+        rho=ep.rho,
+        duration=ep.bond_duration,
+        gamma=lp.gamma
+    )
 
     # Initialize arrays
     n_periods = lp.life_expectancy - lp.current_age + 1
@@ -1105,11 +1037,15 @@ def run_lifecycle_simulation(
     total_wealth = np.zeros(n_periods)
     stock_allocation = np.zeros(n_periods)
     bond_allocation = np.zeros(n_periods)
+    cash_allocation = np.zeros(n_periods)
     consumption = np.zeros(n_periods)
     savings = np.zeros(n_periods)
 
     # Initial conditions
     fin_wealth = lp.initial_wealth
+
+    # Duration benchmark for splitting HC fixed income between bonds and cash
+    duration_benchmark = ep.bond_duration
 
     for i, age in enumerate(ages):
         # Calculate Human Capital
@@ -1121,23 +1057,97 @@ def run_lifecycle_simulation(
             subsistence=lp.subsistence,
             wage_growth=lp.wage_growth,
             rf=rf,
-            mkt_excess=mkt_excess
+            mkt_excess=ep.mu_excess
         )
 
-        # Solve for optimal stock allocation in financial portfolio
-        stock_pct = solve_financial_stock_allocation(
-            fin_wealth=fin_wealth,
-            human_capital=hc,
-            beta_labor=lp.beta_labor,
-            target_total_share=merton_share
-        )
+        # Decompose human capital into stock/bond/cash components
+        hc_stock = hc * lp.beta_labor
+        hc_non_stock = hc * (1.0 - lp.beta_labor)
+
+        # Duration of human capital (approximate: years to retirement / 2)
+        years_to_retire = max(0, lp.retirement_age - age)
+        hc_duration = years_to_retire / 2.0 if years_to_retire > 0 else 0.0
+
+        # Split non-stock HC between bonds and cash based on duration
+        if duration_benchmark > 0 and hc_non_stock > 0:
+            bond_fraction = min(1.0, hc_duration / duration_benchmark)
+            hc_bond = hc_non_stock * bond_fraction
+            hc_cash = hc_non_stock * (1.0 - bond_fraction)
+        else:
+            hc_bond = 0.0
+            hc_cash = hc_non_stock
+
+        # Total wealth
+        tw = hc + fin_wealth
+
+        # Target total holdings
+        target_total_stocks = target_stock * tw
+        target_total_bonds = target_bond * tw
+        target_total_cash = target_cash * tw
+
+        # Target financial holdings = Total target - Human capital component
+        target_fin_stocks = target_total_stocks - hc_stock
+        target_fin_bonds = target_total_bonds - hc_bond
+        target_fin_cash = target_total_cash - hc_cash
+
+        # Compute financial portfolio weights with no-short constraint
+        if fin_wealth > 1e-6:
+            w_stock = target_fin_stocks / fin_wealth
+            w_bond = target_fin_bonds / fin_wealth
+            w_cash = target_fin_cash / fin_wealth
+
+            # Aggregate into equity and fixed income
+            equity = w_stock
+            fixed_income = w_bond + w_cash
+
+            # No-short at aggregate level
+            equity = max(0, equity)
+            fixed_income = max(0, fixed_income)
+
+            # Normalize
+            total_agg = equity + fixed_income
+            if total_agg > 0:
+                equity = equity / total_agg
+                fixed_income = fixed_income / total_agg
+            else:
+                equity = target_stock
+                fixed_income = target_bond + target_cash
+
+            # Split fixed income between bonds and cash
+            if w_bond > 0 and w_cash > 0:
+                fi_total = w_bond + w_cash
+                w_b = fixed_income * (w_bond / fi_total)
+                w_c = fixed_income * (w_cash / fi_total)
+            elif w_bond > 0:
+                w_b = fixed_income
+                w_c = 0.0
+            elif w_cash > 0:
+                w_b = 0.0
+                w_c = fixed_income
+            else:
+                target_fi = target_bond + target_cash
+                if target_fi > 0:
+                    w_b = fixed_income * (target_bond / target_fi)
+                    w_c = fixed_income * (target_cash / target_fi)
+                else:
+                    w_b = fixed_income / 2.0
+                    w_c = fixed_income / 2.0
+
+            stock_pct = equity
+            bond_pct = w_b
+            cash_pct = w_c
+        else:
+            stock_pct = target_stock
+            bond_pct = target_bond
+            cash_pct = target_cash
 
         # Store data
         human_capital[i] = hc
         financial_wealth[i] = fin_wealth
-        total_wealth[i] = hc + fin_wealth
+        total_wealth[i] = tw
         stock_allocation[i] = stock_pct
-        bond_allocation[i] = 1.0 - stock_pct
+        bond_allocation[i] = bond_pct
+        cash_allocation[i] = cash_pct
 
         # Determine consumption and savings
         if age < lp.retirement_age:
@@ -1159,8 +1169,13 @@ def run_lifecycle_simulation(
 
         # Simulate next year's wealth (deterministic: use expected returns)
         if i < n_periods - 1:
-            # Portfolio return = rf + stock_pct * excess return
-            port_return = rf + stock_pct * mkt_excess
+            # Portfolio return using 3-asset model
+            stock_return = rf + ep.mu_excess
+            bond_return = rf + ep.mu_bond
+            cash_return = rf
+            port_return = (stock_pct * stock_return +
+                          bond_pct * bond_return +
+                          cash_pct * cash_return)
 
             if age < lp.retirement_age:
                 # Accumulation: wealth grows + savings
@@ -1178,9 +1193,12 @@ def run_lifecycle_simulation(
         total_wealth=total_wealth,
         stock_allocation=stock_allocation,
         bond_allocation=bond_allocation,
+        cash_allocation=cash_allocation,
         consumption=consumption,
         savings=savings,
-        merton_share=merton_share
+        target_stock=target_stock,
+        target_bond=target_bond,
+        target_cash=target_cash
     )
 
 
