@@ -1,0 +1,129 @@
+"""
+Core module for lifecycle investment strategy.
+
+This module provides the foundational components for lifecycle investment analysis:
+- Parameter dataclasses (params.py)
+- Economic primitives: bond pricing, PV calculations, MV optimization (economics.py)
+- Simulation engines: Monte Carlo, strategy comparison (simulation.py)
+"""
+
+# Parameter dataclasses
+from .params import (
+    EconomicParams,
+    BondParams,
+    RandomWalkParams,
+    LifecycleParams,
+    MonteCarloParams,
+    BondStrategy,
+    ConsumptionRule,
+    Strategy,
+    SimulationParams,
+    STRATEGIES,
+    # Result dataclasses
+    LifecycleResult,
+    MonteCarloResult,
+    RuleOfThumbResult,
+    StrategyComparisonResult,
+    MedianPathComparisonResult,
+    SimulationResult,
+    MedianPathResult,
+)
+
+# Economic primitives
+from .economics import (
+    # Bond pricing
+    effective_duration,
+    effective_duration_vectorized,
+    zero_coupon_price,
+    zero_coupon_price_vectorized,
+    spot_rate,
+    compute_zero_coupon_returns,
+    # Present value and duration
+    compute_present_value,
+    compute_pv_consumption,
+    compute_duration,
+    liability_pv,
+    liability_pv_vectorized,
+    liability_duration,
+    liability_duration_vectorized,
+    # Mean-variance optimization
+    compute_full_merton_allocation,
+    compute_full_merton_allocation_constrained,
+    compute_mv_optimal_allocation,
+    # Portfolio allocation
+    compute_bond_weights,
+    compute_portfolio_return,
+    # Shock generation and simulation
+    generate_correlated_shocks,
+    simulate_interest_rates,
+    simulate_interest_rates_random_walk,
+    simulate_stock_returns,
+    compute_funded_ratio,
+)
+
+# Simulation engines
+from .simulation import (
+    compute_earnings_profile,
+    compute_expense_profile,
+    compute_lifecycle_median_path,
+    compute_lifecycle_fixed_consumption,
+    compute_rule_of_thumb_strategy,
+    compute_median_path_comparison,
+    run_lifecycle_monte_carlo,
+    run_strategy_comparison,
+)
+
+__all__ = [
+    # Params
+    'EconomicParams',
+    'BondParams',
+    'RandomWalkParams',
+    'LifecycleParams',
+    'MonteCarloParams',
+    'BondStrategy',
+    'ConsumptionRule',
+    'Strategy',
+    'SimulationParams',
+    'STRATEGIES',
+    # Results
+    'LifecycleResult',
+    'MonteCarloResult',
+    'RuleOfThumbResult',
+    'StrategyComparisonResult',
+    'MedianPathComparisonResult',
+    'SimulationResult',
+    'MedianPathResult',
+    # Economics
+    'effective_duration',
+    'effective_duration_vectorized',
+    'zero_coupon_price',
+    'zero_coupon_price_vectorized',
+    'spot_rate',
+    'compute_zero_coupon_returns',
+    'compute_present_value',
+    'compute_pv_consumption',
+    'compute_duration',
+    'liability_pv',
+    'liability_pv_vectorized',
+    'liability_duration',
+    'liability_duration_vectorized',
+    'compute_full_merton_allocation',
+    'compute_full_merton_allocation_constrained',
+    'compute_mv_optimal_allocation',
+    'compute_bond_weights',
+    'compute_portfolio_return',
+    'generate_correlated_shocks',
+    'simulate_interest_rates',
+    'simulate_interest_rates_random_walk',
+    'simulate_stock_returns',
+    'compute_funded_ratio',
+    # Simulation
+    'compute_earnings_profile',
+    'compute_expense_profile',
+    'compute_lifecycle_median_path',
+    'compute_lifecycle_fixed_consumption',
+    'compute_rule_of_thumb_strategy',
+    'compute_median_path_comparison',
+    'run_lifecycle_monte_carlo',
+    'run_strategy_comparison',
+]
