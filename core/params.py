@@ -28,7 +28,6 @@ class EconomicParams:
     bond_sharpe: float = 0.037  # Bond Sharpe ratio (replaces fixed mu_bond)
     sigma_s: float = 0.18      # Stock return volatility
     rho: float = 0.0           # Correlation between rate and stock shocks (was -0.2)
-    r_floor: float = 0.001     # Minimum interest rate (0.1%)
     bond_duration: float = 20.0 # Duration for HC decomposition and MV optimization
 
     @property
@@ -49,7 +48,6 @@ class RandomWalkParams:
     """Parameters for random walk interest rate model."""
     sigma_r: float = 0.012     # Rate shock volatility
     drift: float = 0.0         # Expected rate change per period (0 = pure random walk)
-    r_floor: float = 0.001     # Minimum interest rate
 
 
 # =============================================================================

@@ -681,8 +681,6 @@ def simulate_interest_rates(
             + params.phi * (rates[:, t] - params.r_bar)
             + params.sigma_r * rate_shocks[:, t]
         )
-        # Floor rates at minimum
-        rates[:, t + 1] = np.maximum(rates[:, t + 1], params.r_floor)
 
     return rates
 
@@ -694,7 +692,6 @@ def simulate_interest_rates_random_walk(
     sigma_r: float,
     drift: float,
     rate_shocks: np.ndarray,
-    r_floor: float = 0.001
 ) -> np.ndarray:
     """
     Simulate interest rates following a random walk process.
@@ -710,7 +707,6 @@ def simulate_interest_rates_random_walk(
         sigma_r: Volatility of rate shocks
         drift: Drift term (expected change per period)
         rate_shocks: Standard normal shocks of shape (n_sims, n_periods)
-        r_floor: Minimum interest rate floor
 
     Returns:
         Array of shape (n_sims, n_periods + 1) with rate paths
@@ -720,8 +716,6 @@ def simulate_interest_rates_random_walk(
 
     for t in range(n_periods):
         rates[:, t + 1] = rates[:, t] + drift + sigma_r * rate_shocks[:, t]
-        # Floor rates at minimum
-        rates[:, t + 1] = np.maximum(rates[:, t + 1], r_floor)
 
     return rates
 
