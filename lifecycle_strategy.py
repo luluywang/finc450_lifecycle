@@ -34,10 +34,10 @@ class LifecycleParams:
     # Age parameters
     start_age: int = 25          # Age at career start
     retirement_age: int = 65     # Age at retirement
-    end_age: int = 85            # Planning horizon (death or planning end)
+    end_age: int = 95            # Planning horizon (death or planning end)
 
     # Income parameters (in $000s for cleaner numbers)
-    initial_earnings: float = 250    # Starting annual earnings ($250k)
+    initial_earnings: float = 150    # Starting annual earnings ($150k)
     earnings_growth: float = 0.0     # Real earnings growth rate (flat)
     earnings_hump_age: int = 65      # Age at peak earnings (at retirement = flat)
     earnings_decline: float = 0.0    # Decline rate after peak
@@ -49,7 +49,7 @@ class LifecycleParams:
 
     # Consumption parameters
     consumption_share: float = 0.05  # Share of net worth consumed above subsistence
-    consumption_boost: float = 0.01  # Boost above median return for consumption rate
+    consumption_boost: float = 0.0  # Boost above median return for consumption rate
 
     # Asset allocation parameters
     stock_beta_human_capital: float = 0.0    # Beta of human capital to stocks
@@ -183,8 +183,11 @@ class RuleOfThumbResult:
     cash_weight: np.ndarray
     defaulted: bool
     default_age: Optional[int]
-    savings_rate: float  # 0.20
+    savings_rate: float  # 0.15
     withdrawal_rate: float  # 0.04
+    target_duration: float = 6.0  # Target FI duration
+    subsistence_consumption: np.ndarray = None
+    variable_consumption: np.ndarray = None
 
 
 @dataclass
@@ -225,6 +228,40 @@ class StrategyComparisonResult:
     # Market condition paths (for visualization)
     stock_return_paths: np.ndarray      # Shape: (n_sims, total_years)
     interest_rate_paths: np.ndarray     # Shape: (n_sims, total_years)
+
+
+@dataclass
+class MedianPathComparisonResult:
+    """Results from comparing LDI vs Rule-of-Thumb on deterministic median paths."""
+    ages: np.ndarray
+
+    # LDI (optimal) strategy paths
+    ldi_financial_wealth: np.ndarray
+    ldi_total_consumption: np.ndarray
+    ldi_stock_weight: np.ndarray
+    ldi_bond_weight: np.ndarray
+    ldi_cash_weight: np.ndarray
+    ldi_human_capital: np.ndarray
+    ldi_net_worth: np.ndarray
+
+    # Rule-of-thumb strategy paths
+    rot_financial_wealth: np.ndarray
+    rot_total_consumption: np.ndarray
+    rot_stock_weight: np.ndarray
+    rot_bond_weight: np.ndarray
+    rot_cash_weight: np.ndarray
+
+    # Earnings (same for both)
+    earnings: np.ndarray
+
+    # PV consumption at time 0
+    ldi_pv_consumption: float
+    rot_pv_consumption: float
+
+    # Strategy parameters for display
+    rot_savings_rate: float
+    rot_target_duration: float
+    rot_withdrawal_rate: float
 
 
 # =============================================================================
@@ -1004,8 +1041,9 @@ def compute_lifecycle_fixed_consumption(
 def compute_rule_of_thumb_strategy(
     params: LifecycleParams = None,
     econ_params: EconomicParams = None,
-    savings_rate: float = 0.20,
+    savings_rate: float = 0.15,
     withdrawal_rate: float = 0.04,
+    target_duration: float = 6.0,
     stock_returns: np.ndarray = None,
     interest_rates: np.ndarray = None,
 ) -> RuleOfThumbResult:
@@ -1013,8 +1051,8 @@ def compute_rule_of_thumb_strategy(
     Compute lifecycle path using the classic "rule of thumb" financial advisor strategy.
 
     This implements traditional heuristics:
-    - During working years: Save 20% of income
-    - Allocation: (100 - age)% in stocks, rest split 50/50 between bonds and cash
+    - During working years: Save 15% of income
+    - Allocation: (100 - age)% in stocks, rest split between bonds/cash to achieve target duration
     - At retirement: Freeze allocation at retirement age
     - Retirement withdrawal: 4% of initial retirement wealth (fixed, not adjusted)
 
@@ -1023,8 +1061,9 @@ def compute_rule_of_thumb_strategy(
     Args:
         params: Lifecycle parameters
         econ_params: Economic parameters
-        savings_rate: Fraction of income to save during working years (default 20%)
+        savings_rate: Fraction of income to save during working years (default 15%)
         withdrawal_rate: Fixed withdrawal rate in retirement (default 4%)
+        target_duration: Target duration for fixed income portfolio (default 6)
         stock_returns: Optional array of stock returns for each year (uses expected if None)
         interest_rates: Optional array of interest rates for each year (uses r_bar if None)
 
@@ -1045,10 +1084,18 @@ def compute_rule_of_thumb_strategy(
     earnings = np.zeros(total_years)
     earnings[:working_years] = earnings_profile
 
+    # Compute expenses (subsistence) - same as LDI
+    working_exp, retirement_exp = compute_expense_profile(params)
+    expenses = np.zeros(total_years)
+    expenses[:working_years] = working_exp
+    expenses[working_years:] = retirement_exp
+
     # Initialize arrays
     financial_wealth = np.zeros(total_years)
     financial_wealth[0] = params.initial_wealth
     total_consumption = np.zeros(total_years)
+    subsistence_consumption = np.zeros(total_years)
+    variable_consumption = np.zeros(total_years)
     stock_weight = np.zeros(total_years)
     bond_weight = np.zeros(total_years)
     cash_weight = np.zeros(total_years)
@@ -1071,21 +1118,25 @@ def compute_rule_of_thumb_strategy(
         age = params.start_age + t
         fw = financial_wealth[t]
 
-        # Compute allocation: (100 - age)% stocks, rest split 50/50 bonds/cash
+        # Compute allocation: (100 - age)% stocks, rest split to achieve target duration
+        # bond_weight_in_fi = target_duration / long_bond_duration
+        long_bond_duration = econ_params.bond_duration
+        bond_weight_in_fi = min(1.0, target_duration / long_bond_duration) if long_bond_duration > 0 else 0.0
+
         if t < working_years:
             # Working years: update allocation based on age
             stock_pct = max(0.0, min(1.0, (100 - age) / 100.0))
             fixed_income_pct = 1.0 - stock_pct
-            bond_pct = fixed_income_pct * 0.5
-            cash_pct = fixed_income_pct * 0.5
+            bond_pct = fixed_income_pct * bond_weight_in_fi
+            cash_pct = fixed_income_pct * (1.0 - bond_weight_in_fi)
         else:
             # Retirement: freeze allocation at retirement age
             if retirement_stock_weight is None:
                 retirement_age = params.retirement_age
                 retirement_stock_weight = max(0.0, min(1.0, (100 - retirement_age) / 100.0))
                 retirement_fixed_income = 1.0 - retirement_stock_weight
-                retirement_bond_weight = retirement_fixed_income * 0.5
-                retirement_cash_weight = retirement_fixed_income * 0.5
+                retirement_bond_weight = retirement_fixed_income * bond_weight_in_fi
+                retirement_cash_weight = retirement_fixed_income * (1.0 - bond_weight_in_fi)
             stock_pct = retirement_stock_weight
             bond_pct = retirement_bond_weight
             cash_pct = retirement_cash_weight
@@ -1094,10 +1145,31 @@ def compute_rule_of_thumb_strategy(
         bond_weight[t] = bond_pct
         cash_weight[t] = cash_pct
 
-        # Compute consumption
+        # Compute consumption with subsistence floor
+        subsistence = expenses[t]
         if t < working_years:
             # Working years: consume (1 - savings_rate) of earnings
-            total_consumption[t] = earnings[t] * (1.0 - savings_rate)
+            baseline_consumption = earnings[t] * (1.0 - savings_rate)
+
+            if baseline_consumption >= subsistence:
+                # Normal case - savings rule consumption exceeds subsistence
+                total_consumption[t] = baseline_consumption
+                subsistence_consumption[t] = subsistence
+                variable_consumption[t] = baseline_consumption - subsistence
+            else:
+                # Savings rule gives less than subsistence - boost if possible
+                # Can use earnings + draw from financial wealth if needed
+                available = earnings[t] + fw  # Total resources available
+                if available >= subsistence:
+                    # Can afford subsistence
+                    total_consumption[t] = subsistence
+                    subsistence_consumption[t] = subsistence
+                    variable_consumption[t] = 0
+                else:
+                    # Not enough resources - consume what's available
+                    total_consumption[t] = max(0, available)
+                    subsistence_consumption[t] = total_consumption[t]
+                    variable_consumption[t] = 0
         else:
             # Retirement: fixed consumption from 4% rule
             if fixed_retirement_consumption is None:
@@ -1106,16 +1178,28 @@ def compute_rule_of_thumb_strategy(
 
             if defaulted:
                 total_consumption[t] = 0
+                subsistence_consumption[t] = 0
+                variable_consumption[t] = 0
             elif fw <= 0:
                 # Default!
                 defaulted = True
                 default_age = age
                 total_consumption[t] = 0
-            elif fw < fixed_retirement_consumption:
-                # Can't meet fixed consumption - consume what's left
-                total_consumption[t] = fw
+                subsistence_consumption[t] = 0
+                variable_consumption[t] = 0
             else:
-                total_consumption[t] = fixed_retirement_consumption
+                # 4% rule floored at subsistence
+                target_consumption = max(fixed_retirement_consumption, subsistence)
+                if fw < target_consumption:
+                    # Can't meet target - consume what's left
+                    total_consumption[t] = fw
+                    subsistence_consumption[t] = min(fw, subsistence)
+                    variable_consumption[t] = max(0, fw - subsistence)
+                else:
+                    # Can meet target
+                    total_consumption[t] = target_consumption
+                    subsistence_consumption[t] = subsistence
+                    variable_consumption[t] = target_consumption - subsistence
 
         # Evolve wealth to next period
         if t < total_years - 1 and not defaulted:
@@ -1152,6 +1236,83 @@ def compute_rule_of_thumb_strategy(
         default_age=default_age,
         savings_rate=savings_rate,
         withdrawal_rate=withdrawal_rate,
+        target_duration=target_duration,
+        subsistence_consumption=subsistence_consumption,
+        variable_consumption=variable_consumption,
+    )
+
+
+def compute_median_path_comparison(
+    params: LifecycleParams = None,
+    econ_params: EconomicParams = None,
+    rot_savings_rate: float = 0.15,
+    rot_target_duration: float = 6.0,
+    rot_withdrawal_rate: float = 0.04,
+) -> MedianPathComparisonResult:
+    """
+    Compare LDI strategy vs Rule-of-Thumb on deterministic median paths.
+
+    Both strategies use expected returns (no stochastic simulation).
+
+    Args:
+        params: Lifecycle parameters
+        econ_params: Economic parameters
+        rot_savings_rate: RoT savings rate during working years (default 15%)
+        rot_target_duration: RoT target duration for fixed income (default 6)
+        rot_withdrawal_rate: RoT withdrawal rate in retirement (default 4%)
+
+    Returns:
+        MedianPathComparisonResult with paths for both strategies
+    """
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    # Compute LDI median path
+    ldi_result = compute_lifecycle_median_path(params, econ_params)
+
+    # Compute Rule-of-Thumb median path (using expected returns)
+    rot_result = compute_rule_of_thumb_strategy(
+        params=params,
+        econ_params=econ_params,
+        savings_rate=rot_savings_rate,
+        withdrawal_rate=rot_withdrawal_rate,
+        target_duration=rot_target_duration,
+        stock_returns=None,  # Use expected returns
+        interest_rates=None,  # Use r_bar
+    )
+
+    # Compute PV consumption for both strategies
+    r = econ_params.r_bar
+    ldi_pv = compute_pv_consumption(ldi_result.total_consumption, r)
+    rot_pv = compute_pv_consumption(rot_result.total_consumption, r)
+
+    return MedianPathComparisonResult(
+        ages=ldi_result.ages,
+        # LDI paths
+        ldi_financial_wealth=ldi_result.financial_wealth,
+        ldi_total_consumption=ldi_result.total_consumption,
+        ldi_stock_weight=ldi_result.stock_weight_no_short,
+        ldi_bond_weight=ldi_result.bond_weight_no_short,
+        ldi_cash_weight=ldi_result.cash_weight_no_short,
+        ldi_human_capital=ldi_result.human_capital,
+        ldi_net_worth=ldi_result.net_worth,
+        # RoT paths
+        rot_financial_wealth=rot_result.financial_wealth,
+        rot_total_consumption=rot_result.total_consumption,
+        rot_stock_weight=rot_result.stock_weight,
+        rot_bond_weight=rot_result.bond_weight,
+        rot_cash_weight=rot_result.cash_weight,
+        # Earnings
+        earnings=ldi_result.earnings,
+        # PV consumption
+        ldi_pv_consumption=ldi_pv,
+        rot_pv_consumption=rot_pv,
+        # Strategy parameters
+        rot_savings_rate=rot_savings_rate,
+        rot_target_duration=rot_target_duration,
+        rot_withdrawal_rate=rot_withdrawal_rate,
     )
 
 
@@ -1246,7 +1407,7 @@ def run_lifecycle_monte_carlo(
 
     # Set initial conditions
     financial_wealth_paths[:, 0] = params.initial_wealth
-    human_capital_paths[:, :] = median_result.human_capital[np.newaxis, :]
+    # Note: human_capital_paths will be filled dynamically in the simulation loop
 
     # Consumption rate = median return + boost
     r = econ_params.r_bar
@@ -1264,8 +1425,25 @@ def run_lifecycle_monte_carlo(
 
         for t in range(total_years):
             fw = financial_wealth_paths[sim, t]
-            hc = human_capital_paths[sim, t]
-            pv_exp = median_result.pv_expenses[t]
+
+            # Dynamic revaluation using current simulated rate
+            current_rate = rate_paths[sim, t]
+
+            # PV of remaining expenses
+            remaining_expenses = expenses[t:]
+            pv_exp = compute_present_value(remaining_expenses, current_rate,
+                                           econ_params.phi, econ_params.r_bar)
+
+            # Human capital = PV of remaining earnings
+            if t < working_years:
+                remaining_earnings = earnings[t:working_years]
+                hc = compute_present_value(remaining_earnings, current_rate,
+                                           econ_params.phi, econ_params.r_bar)
+            else:
+                hc = 0.0
+
+            # Store for output
+            human_capital_paths[sim, t] = hc
 
             # Compute net worth
             net_worth = hc + fw - pv_exp
@@ -1422,6 +1600,9 @@ def run_strategy_comparison(
     random_seed: int = 42,
     bad_returns_early: bool = False,
     percentiles: List[int] = None,
+    rot_savings_rate: float = 0.15,
+    rot_target_duration: float = 6.0,
+    rot_withdrawal_rate: float = 0.04,
 ) -> StrategyComparisonResult:
     """
     Run a comparison between optimal and rule-of-thumb strategies.
@@ -1436,6 +1617,9 @@ def run_strategy_comparison(
         random_seed: Random seed for reproducibility
         bad_returns_early: If True, simulate bad returns in early retirement
         percentiles: List of percentiles to compute (default [5, 25, 50, 75, 95])
+        rot_savings_rate: RoT savings rate during working years (default 15%)
+        rot_target_duration: RoT target duration for fixed income (default 6)
+        rot_withdrawal_rate: RoT withdrawal rate in retirement (default 4%)
 
     Returns:
         StrategyComparisonResult with paths and statistics for both strategies
@@ -1527,8 +1711,23 @@ def run_strategy_comparison(
 
         for t in range(total_years):
             fw = optimal_wealth_paths[sim, t]
-            hc = median_result.human_capital[t]
-            pv_exp = median_result.pv_expenses[t]
+
+            # Dynamic revaluation using current simulated rate
+            current_rate = rate_paths[sim, t]
+
+            # PV of remaining expenses
+            remaining_expenses = expenses[t:]
+            pv_exp = compute_present_value(remaining_expenses, current_rate,
+                                           econ_params.phi, econ_params.r_bar)
+
+            # Human capital = PV of remaining earnings
+            if t < working_years:
+                remaining_earnings = earnings[t:working_years]
+                hc = compute_present_value(remaining_earnings, current_rate,
+                                           econ_params.phi, econ_params.r_bar)
+            else:
+                hc = 0.0
+
             net_worth = hc + fw - pv_exp
 
             # Consumption
@@ -1572,8 +1771,9 @@ def run_strategy_comparison(
         rot_result = compute_rule_of_thumb_strategy(
             params=params,
             econ_params=econ_params,
-            savings_rate=0.20,
-            withdrawal_rate=0.04,
+            savings_rate=rot_savings_rate,
+            withdrawal_rate=rot_withdrawal_rate,
+            target_duration=rot_target_duration,
             stock_returns=stock_return_paths[sim, :],
             interest_rates=rate_paths[sim, :],
         )
@@ -2212,12 +2412,12 @@ Default Rate:       {comparison_result.optimal_default_rate*100:6.1f}%    {compa
 Median Final Wealth: ${comparison_result.optimal_median_final_wealth:,.0f}k   ${comparison_result.rot_median_final_wealth:,.0f}k
 
 Rule-of-Thumb Strategy:
-  - Savings Rate: 20% of income
+  - Savings Rate: 15% of income
   - Stock Allocation: (100 - age)%
-  - Fixed Income: 50/50 bonds/cash
+  - FI Duration: 6 years (30% bonds, 70% cash)
   - Retirement: 4% fixed withdrawal
 
-Optimal Strategy:
+LDI Strategy:
   - Variable consumption based on net worth
   - MV-optimal allocation
   - Adapts to market conditions
@@ -2259,6 +2459,181 @@ Optimal Strategy:
     return fig
 
 
+def create_median_path_comparison_figure(
+    comparison_result: MedianPathComparisonResult,
+    params: LifecycleParams = None,
+    econ_params: EconomicParams = None,
+    figsize: Tuple[int, int] = (18, 14),
+    use_years: bool = True,
+) -> plt.Figure:
+    """
+    Create a figure comparing LDI vs Rule-of-Thumb on deterministic median paths.
+
+    Shows a 2x3 panel layout:
+    - (0,0): Financial Wealth comparison
+    - (0,1): Consumption comparison
+    - (0,2): Summary statistics / PV consumption
+    - (1,0): LDI stock allocation glide path
+    - (1,1): RoT stock allocation glide path
+    - (1,2): Fixed income breakdown comparison
+
+    Args:
+        comparison_result: Results from compute_median_path_comparison()
+        params: Lifecycle parameters
+        econ_params: Economic parameters
+        figsize: Figure size
+        use_years: If True, x-axis shows years from career start
+
+    Returns:
+        matplotlib Figure object
+    """
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+
+    if use_years:
+        x = np.arange(len(comparison_result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = comparison_result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    # Colors
+    color_ldi = '#2ecc71'    # Green for LDI
+    color_rot = '#3498db'    # Blue for RoT
+    color_earnings = '#f39c12'  # Orange for earnings
+
+    # ---- (0,0): Financial Wealth Comparison ----
+    ax = axes[0, 0]
+    ax.plot(x, comparison_result.ldi_financial_wealth, color=color_ldi,
+            linewidth=2.5, label='LDI Strategy')
+    ax.plot(x, comparison_result.rot_financial_wealth, color=color_rot,
+            linewidth=2.5, linestyle='--', label='Rule-of-Thumb')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5, label='Retirement')
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Financial Wealth (Deterministic Median)')
+    ax.legend(loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # ---- (0,1): Consumption Comparison ----
+    ax = axes[0, 1]
+    ax.plot(x, comparison_result.ldi_total_consumption, color=color_ldi,
+            linewidth=2.5, label='LDI Strategy')
+    ax.plot(x, comparison_result.rot_total_consumption, color=color_rot,
+            linewidth=2.5, linestyle='--', label='Rule-of-Thumb')
+    ax.plot(x, comparison_result.earnings, color=color_earnings,
+            linewidth=1.5, linestyle=':', alpha=0.7, label='Earnings')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Total Consumption (Deterministic Median)')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # ---- (0,2): Summary Statistics ----
+    ax = axes[0, 2]
+    ax.axis('off')
+
+    # Compute bond/cash split for display
+    long_bond_dur = econ_params.bond_duration
+    bond_weight_in_fi = min(1.0, comparison_result.rot_target_duration / long_bond_dur) if long_bond_dur > 0 else 0.0
+
+    summary_text = f"""
+Median Path Comparison (Expected Returns)
+{'='*45}
+
+LDI Strategy:
+  - Variable consumption based on net worth
+  - MV-optimal allocation (constant targets)
+  - Adapts consumption to wealth changes
+
+Rule-of-Thumb Strategy:
+  - Savings Rate: {comparison_result.rot_savings_rate*100:.0f}% of income
+  - Stock Allocation: (100 - age)%
+  - FI Target Duration: {comparison_result.rot_target_duration:.0f} years
+  - FI Split: {bond_weight_in_fi*100:.0f}% bonds / {(1-bond_weight_in_fi)*100:.0f}% cash
+    (bonds={long_bond_dur:.0f}yr duration)
+  - Retirement: {comparison_result.rot_withdrawal_rate*100:.0f}% fixed withdrawal
+
+PV Lifetime Consumption (@ r={econ_params.r_bar*100:.1f}%):
+  - LDI Strategy:     ${comparison_result.ldi_pv_consumption:,.0f}k
+  - Rule-of-Thumb:    ${comparison_result.rot_pv_consumption:,.0f}k
+  - Difference:       ${comparison_result.ldi_pv_consumption - comparison_result.rot_pv_consumption:+,.0f}k
+                      ({(comparison_result.ldi_pv_consumption/comparison_result.rot_pv_consumption - 1)*100:+.1f}%)
+"""
+
+    ax.text(0.05, 0.95, summary_text, transform=ax.transAxes,
+            fontsize=10, verticalalignment='top', fontfamily='monospace',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    # ---- (1,0): LDI Allocation Glide Path ----
+    ax = axes[1, 0]
+    ax.stackplot(x,
+                 comparison_result.ldi_stock_weight * 100,
+                 comparison_result.ldi_bond_weight * 100,
+                 comparison_result.ldi_cash_weight * 100,
+                 labels=['Stocks', 'Bonds', 'Cash'],
+                 colors=['#e74c3c', '#3498db', '#95a5a6'],
+                 alpha=0.8)
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title('LDI: Financial Portfolio Allocation')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_ylim(0, 100)
+
+    # ---- (1,1): RoT Allocation Glide Path ----
+    ax = axes[1, 1]
+    ax.stackplot(x,
+                 comparison_result.rot_stock_weight * 100,
+                 comparison_result.rot_bond_weight * 100,
+                 comparison_result.rot_cash_weight * 100,
+                 labels=['Stocks', 'Bonds', 'Cash'],
+                 colors=['#e74c3c', '#3498db', '#95a5a6'],
+                 alpha=0.8)
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title(f'Rule-of-Thumb: (100-Age)% Stock, {comparison_result.rot_target_duration:.0f}yr FI Duration')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_ylim(0, 100)
+
+    # ---- (1,2): Fixed Income Breakdown Comparison ----
+    ax = axes[1, 2]
+
+    # Plot bond percentages over time
+    ax.plot(x, comparison_result.ldi_bond_weight * 100, color=color_ldi,
+            linewidth=2, label='LDI Bonds')
+    ax.plot(x, comparison_result.rot_bond_weight * 100, color=color_rot,
+            linewidth=2, linestyle='--', label='RoT Bonds')
+
+    # Plot cash percentages
+    ax.plot(x, comparison_result.ldi_cash_weight * 100, color=color_ldi,
+            linewidth=2, linestyle=':', alpha=0.7, label='LDI Cash')
+    ax.plot(x, comparison_result.rot_cash_weight * 100, color=color_rot,
+            linewidth=2, linestyle=':', alpha=0.7, label='RoT Cash')
+
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title('Bond & Cash Allocations')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle('LDI vs Rule-of-Thumb: Deterministic Median Path Comparison',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    return fig
+
+
 # =============================================================================
 # Visualization Functions
 # =============================================================================
@@ -2269,6 +2644,21 @@ COLORS = {
     'orange': '#ff7f0e',
     'green': '#2ca02c',
 }
+
+
+def apply_wealth_log_scale(ax: plt.Axes, linthresh: float = 50, linscale: float = 0.5) -> None:
+    """
+    Apply symmetric log scale to a wealth chart's Y-axis.
+
+    Uses symlog which handles values near zero gracefully and works with
+    the transition from small to large wealth values.
+
+    Args:
+        ax: The matplotlib axes to modify
+        linthresh: Values between -linthresh and +linthresh display linearly
+        linscale: Controls visual transition between linear and log regions
+    """
+    ax.set_yscale('symlog', linthresh=linthresh, linscale=linscale)
 
 
 def plot_earnings_expenses_profile(
@@ -2637,6 +3027,7 @@ def create_monte_carlo_fan_chart(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Financial Wealth: Monte Carlo Fan Chart')
     ax.legend(loc='upper left', fontsize=8)
+    apply_wealth_log_scale(ax)
 
     # Panel 2: Consumption Fan Chart
     ax = axes[0, 1]
@@ -2657,22 +3048,29 @@ def create_monte_carlo_fan_chart(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Total Consumption: Monte Carlo Fan Chart')
     ax.legend(loc='upper right', fontsize=8)
+    apply_wealth_log_scale(ax)
 
     # Panel 3: Final Wealth Distribution
     ax = axes[1, 0]
     final_wealth = mc_result.final_wealth
     non_default = final_wealth[~mc_result.default_flags]
 
-    ax.hist(non_default, bins=50, alpha=0.7, color='blue', edgecolor='white', density=True)
-    ax.axvline(x=np.median(non_default), color='red', linestyle='--', linewidth=2,
+    # Use log scale with floor at $10k
+    floor_val = 10
+    non_default_floored = np.maximum(non_default, floor_val)
+    max_val = np.percentile(non_default_floored, 99)
+    bins = np.geomspace(floor_val, max_val, 50)
+    ax.hist(non_default_floored, bins=bins, alpha=0.7, color='blue', edgecolor='white', density=True)
+    ax.axvline(x=max(np.median(non_default), floor_val), color='red', linestyle='--', linewidth=2,
                label=f'Median: ${np.median(non_default):,.0f}k')
-    ax.axvline(x=np.mean(non_default), color='green', linestyle='--', linewidth=2,
+    ax.axvline(x=max(np.mean(non_default), floor_val), color='green', linestyle='--', linewidth=2,
                label=f'Mean: ${np.mean(non_default):,.0f}k')
 
     ax.set_xlabel('Final Wealth ($ 000s)')
     ax.set_ylabel('Density')
     ax.set_title(f'Final Wealth Distribution (Non-Defaulted, n={len(non_default)})')
     ax.legend(loc='upper right', fontsize=9)
+    ax.set_xscale('log')
 
     # Panel 4: Summary Statistics
     ax = axes[1, 1]
@@ -2817,6 +3215,7 @@ def create_monte_carlo_detailed_view(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Total Wealth (HC + FW)')
     ax.legend(loc='upper right', fontsize=8)
+    apply_wealth_log_scale(ax)
 
     # Panel 5: Cumulative Consumption
     ax = axes[1, 1]
@@ -4383,6 +4782,7 @@ def create_monte_carlo_page(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Consumption Distribution ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
+    apply_wealth_log_scale(ax)
 
     # ===== Financial Wealth Distribution =====
     ax = fig.add_subplot(gs[0, 1])
@@ -4396,6 +4796,7 @@ def create_monte_carlo_page(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Financial Wealth Distribution ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
+    apply_wealth_log_scale(ax)
 
     # ===== Net Worth Distribution =====
     ax = fig.add_subplot(gs[1, 0])
@@ -4409,6 +4810,7 @@ def create_monte_carlo_page(
     ax.set_ylabel('$ (000s)')
     ax.set_title('Net Worth Distribution (HC + FW - Expenses) ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
+    apply_wealth_log_scale(ax)
 
     # ===== Terminal Values Grid =====
     ax = fig.add_subplot(gs[1, 1])
@@ -4775,14 +5177,19 @@ def generate_lifecycle_pdf(
     params: LifecycleParams = None,
     econ_params: EconomicParams = None,
     include_legacy_pages: bool = False,
-    use_years: bool = True
+    use_years: bool = True,
+    rot_savings_rate: float = 0.15,
+    rot_target_duration: float = 6.0,
+    rot_withdrawal_rate: float = 0.04,
 ) -> str:
     """
     Generate a PDF report showing lifecycle investment strategy.
 
-    SIMPLIFIED STRUCTURE:
+    STRUCTURE:
     - Pages 1-3: Deterministic Median Path for Beta = 0.0, 0.5, 1.0
     - Page 4: Effect of Stock Beta comparison
+    - Page 5: LDI vs Rule-of-Thumb Median Path Comparison
+    - Page 6: Monte Carlo Strategy Comparison
 
     Args:
         output_path: Path for output PDF file
@@ -4790,6 +5197,9 @@ def generate_lifecycle_pdf(
         econ_params: Economic parameters (uses defaults if None)
         include_legacy_pages: If True, include old comparison pages (gamma, wealth, etc.)
         use_years: If True, x-axis shows years from career start; if False, shows age
+        rot_savings_rate: Rule-of-Thumb savings rate (default 15%)
+        rot_target_duration: Rule-of-Thumb FI target duration (default 6)
+        rot_withdrawal_rate: Rule-of-Thumb withdrawal rate (default 4%)
 
     Returns:
         Path to generated PDF file
@@ -4857,6 +5267,53 @@ def generate_lifecycle_pdf(
         )
         fig.suptitle('Effect of Stock Beta on Portfolio Allocation & Human Capital',
                     fontsize=14, fontweight='bold', y=1.02)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+        # ====================================================================
+        # PAGE 5: LDI vs RULE-OF-THUMB MEDIAN PATH COMPARISON
+        # ====================================================================
+        print("Generating Page 5: LDI vs Rule-of-Thumb Median Path Comparison...")
+        median_comparison = compute_median_path_comparison(
+            params=params,
+            econ_params=econ_params,
+            rot_savings_rate=rot_savings_rate,
+            rot_target_duration=rot_target_duration,
+            rot_withdrawal_rate=rot_withdrawal_rate,
+        )
+        fig = create_median_path_comparison_figure(
+            comparison_result=median_comparison,
+            params=params,
+            econ_params=econ_params,
+            figsize=(18, 14),
+            use_years=use_years,
+        )
+        fig.suptitle('PAGE 5: LDI vs Rule-of-Thumb (Deterministic Median Path)',
+                    fontsize=16, fontweight='bold', y=1.02)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+        # ====================================================================
+        # PAGE 6: MONTE CARLO STRATEGY COMPARISON
+        # ====================================================================
+        print("Generating Page 6: Monte Carlo Strategy Comparison...")
+        mc_comparison = run_strategy_comparison(
+            params=params,
+            econ_params=econ_params,
+            n_simulations=100,
+            random_seed=42,
+            rot_savings_rate=rot_savings_rate,
+            rot_target_duration=rot_target_duration,
+            rot_withdrawal_rate=rot_withdrawal_rate,
+        )
+        fig = create_strategy_comparison_figure(
+            comparison_result=mc_comparison,
+            params=params,
+            figsize=(18, 12),
+            use_years=use_years,
+        )
+        fig.suptitle('PAGE 6: LDI vs Rule-of-Thumb (Monte Carlo Comparison)',
+                    fontsize=16, fontweight='bold', y=1.02)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
 
@@ -5057,7 +5514,7 @@ def main(
     start_age: int = 25,
     retirement_age: int = 65,
     end_age: int = 85,
-    initial_earnings: float = 250,
+    initial_earnings: float = 150,
     stock_beta_hc: float = 0.0,
     bond_duration: float = 20.0,
     gamma: float = 2.0,
@@ -5068,11 +5525,14 @@ def main(
     rho: float = 0.0,
     r_bar: float = 0.02,
     consumption_share: float = 0.05,
-    consumption_boost: float = 0.01,
+    consumption_boost: float = 0.0,
     initial_wealth: float = 100.0,
     include_scenarios: bool = True,
     use_years: bool = True,
-    verbose: bool = True
+    verbose: bool = True,
+    rot_savings_rate: float = 0.15,
+    rot_target_duration: float = 6.0,
+    rot_withdrawal_rate: float = 0.04,
 ):
     """
     Generate lifecycle strategy PDF with configurable parameters.
@@ -5098,6 +5558,9 @@ def main(
         include_scenarios: If True, include scenario comparison pages in PDF
         use_years: If True, x-axis shows years from start; if False, shows age
         verbose: If True, print progress and statistics
+        rot_savings_rate: Rule-of-Thumb savings rate during working years (default 15%)
+        rot_target_duration: Rule-of-Thumb target duration for fixed income (default 6)
+        rot_withdrawal_rate: Rule-of-Thumb withdrawal rate in retirement (default 4%)
     """
     if verbose:
         print("Computing lifecycle investment strategy...")
@@ -5152,6 +5615,9 @@ def main(
         econ_params=econ_params,
         include_legacy_pages=include_scenarios,  # Legacy pages are now optional
         use_years=use_years,
+        rot_savings_rate=rot_savings_rate,
+        rot_target_duration=rot_target_duration,
+        rot_withdrawal_rate=rot_withdrawal_rate,
     )
 
     if verbose:
@@ -5188,8 +5654,8 @@ if __name__ == '__main__':
                        help='Retirement age (default: 65)')
     parser.add_argument('--end-age', type=int, default=85,
                        help='Planning horizon end (default: 85)')
-    parser.add_argument('--initial-earnings', type=float, default=250,
-                       help='Initial earnings in $000s (default: 250)')
+    parser.add_argument('--initial-earnings', type=float, default=150,
+                       help='Initial earnings in $000s (default: 150)')
     parser.add_argument('--stock-beta', type=float, default=0.0,
                        help='Stock beta of human capital (default: 0.0)')
     parser.add_argument('--bond-duration', type=float, default=20.0,
@@ -5210,8 +5676,8 @@ if __name__ == '__main__':
                        help='Long-run real risk-free rate (default: 0.02 = 2%%)')
     parser.add_argument('--consumption-share', type=float, default=0.05,
                        help='Share of net worth consumed above subsistence (default: 0.05)')
-    parser.add_argument('--consumption-boost', type=float, default=0.01,
-                       help='Boost above median return for consumption rate (default: 0.01 = 1%%)')
+    parser.add_argument('--consumption-boost', type=float, default=0.0,
+                       help='Boost above median return for consumption rate (default: 0.0)')
     parser.add_argument('--initial-wealth', type=float, default=100,
                        help='Initial financial wealth in $000s (default: 100, can be negative for student loans)')
     parser.add_argument('--use-age', action='store_true',
@@ -5222,6 +5688,14 @@ if __name__ == '__main__':
                        help='Include legacy parameter sensitivity pages (beta, gamma, volatility comparisons)')
     parser.add_argument('-q', '--quiet', action='store_true',
                        help='Suppress output messages')
+
+    # Rule-of-Thumb strategy parameters
+    parser.add_argument('--rot-savings-rate', type=float, default=0.15,
+                       help='Rule-of-Thumb savings rate (default: 0.15 = 15%%)')
+    parser.add_argument('--rot-target-duration', type=float, default=6.0,
+                       help='Rule-of-Thumb fixed income target duration in years (default: 6)')
+    parser.add_argument('--rot-withdrawal-rate', type=float, default=0.04,
+                       help='Rule-of-Thumb retirement withdrawal rate (default: 0.04 = 4%%)')
 
     args = parser.parse_args()
 
@@ -5246,4 +5720,7 @@ if __name__ == '__main__':
         include_scenarios=args.include_legacy,  # Legacy pages now opt-in
         use_years=not args.use_age,
         verbose=not args.quiet,
+        rot_savings_rate=args.rot_savings_rate,
+        rot_target_duration=args.rot_target_duration,
+        rot_withdrawal_rate=args.rot_withdrawal_rate,
     )
