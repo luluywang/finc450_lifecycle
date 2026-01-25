@@ -22,10 +22,12 @@ from .params import (
     # Result dataclasses
     LifecycleResult,
     MonteCarloResult,
+    SimulationResult,       # New unified result type
+    StrategyComparison,     # New unified comparison type
+    # Deprecated (kept for backward compatibility)
     RuleOfThumbResult,
     StrategyComparisonResult,
     MedianPathComparisonResult,
-    SimulationResult,
     MedianPathResult,
     ScenarioResult,
     # Generic strategy framework
@@ -74,6 +76,13 @@ from .economics import (
     compute_funded_ratio,
 )
 
+# Teaching scenarios
+from .scenarios import (
+    create_teaching_scenario,
+    generate_teaching_scenarios,
+    create_scenario_from_simulation_result,
+)
+
 # Simulation engines
 from .simulation import (
     # Helper functions
@@ -112,10 +121,12 @@ __all__ = [
     # Results
     'LifecycleResult',
     'MonteCarloResult',
+    'SimulationResult',       # New unified result type
+    'StrategyComparison',     # New unified comparison type
+    # Deprecated results (kept for backward compatibility)
     'RuleOfThumbResult',
     'StrategyComparisonResult',
     'MedianPathComparisonResult',
-    'SimulationResult',
     'MedianPathResult',
     'ScenarioResult',
     # Generic strategy framework
@@ -150,6 +161,10 @@ __all__ = [
     'simulate_interest_rates_random_walk',
     'simulate_stock_returns',
     'compute_funded_ratio',
+    # Teaching scenarios
+    'create_teaching_scenario',
+    'generate_teaching_scenarios',
+    'create_scenario_from_simulation_result',
     # Simulation helpers
     'compute_target_allocations',
     'normalize_portfolio_weights',

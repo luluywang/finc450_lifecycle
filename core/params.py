@@ -256,7 +256,11 @@ class MonteCarloResult:
 
 @dataclass
 class RuleOfThumbResult:
-    """Results from rule-of-thumb strategy simulation."""
+    """
+    DEPRECATED: Use SimulationResult with strategy_name='RuleOfThumb' instead.
+
+    Results from rule-of-thumb strategy simulation.
+    """
     ages: np.ndarray
     financial_wealth: np.ndarray
     earnings: np.ndarray
@@ -276,7 +280,11 @@ class RuleOfThumbResult:
 
 @dataclass
 class StrategyComparisonResult:
-    """Results from comparing optimal vs rule-of-thumb strategies."""
+    """
+    DEPRECATED: Use StrategyComparison instead.
+
+    Results from comparing optimal vs rule-of-thumb strategies.
+    """
     n_simulations: int
     ages: np.ndarray
     # Optimal strategy paths
@@ -316,7 +324,11 @@ class StrategyComparisonResult:
 
 @dataclass
 class MedianPathComparisonResult:
-    """Results from comparing LDI vs Rule-of-Thumb on deterministic median paths."""
+    """
+    DEPRECATED: Use StrategyComparison with single-sim results instead.
+
+    Results from comparing LDI vs Rule-of-Thumb on deterministic median paths.
+    """
     ages: np.ndarray
 
     # LDI (optimal) strategy paths
@@ -350,34 +362,169 @@ class MedianPathComparisonResult:
 
 @dataclass
 class SimulationResult:
-    """Results from a single strategy simulation (retirement_simulation style)."""
+    """
+    Unified, strategy-agnostic simulation result.
+
+    Works for both:
+    - Single simulation (deterministic median path): arrays are 1D [n_periods]
+    - Monte Carlo: arrays are 2D [n_sims, n_periods]
+
+    The strategy is an INPUT to simulation, not part of the OUTPUT type.
+    Any strategy (LDI, RuleOfThumb, Fixed, custom) produces this same result format.
+    """
+    # Identification
     strategy_name: str
-    wealth_paths: np.ndarray          # (n_sims, n_periods + 1)
-    consumption_paths: np.ndarray     # (n_sims, n_periods)
-    defaulted: np.ndarray             # (n_sims,) boolean
-    default_year: np.ndarray          # (n_sims,) year of default or -1
-    total_consumption: np.ndarray     # (n_sims,)
-    final_wealth: np.ndarray          # (n_sims,)
+    ages: np.ndarray                    # [n_periods] age at each time step
+
+    # Core wealth and consumption paths
+    # Shape: [n_periods] for single sim, [n_sims, n_periods] for MC
+    financial_wealth: np.ndarray
+    consumption: np.ndarray
+    subsistence_consumption: np.ndarray
+    variable_consumption: np.ndarray
+
+    # Portfolio allocation weights (sum to 1.0)
+    stock_weight: np.ndarray
+    bond_weight: np.ndarray
+    cash_weight: np.ndarray
+
+    # Market conditions used in simulation
+    interest_rates: np.ndarray
+    stock_returns: np.ndarray
+
+    # Default tracking
+    # For single sim: bool/int scalars; for MC: [n_sims] arrays
+    defaulted: np.ndarray               # True if ran out of money
+    default_age: np.ndarray             # Age at default (NaN if no default)
+    final_wealth: np.ndarray            # Terminal financial wealth
+
+    # Optional metadata for scenarios
+    description: str = ""
+
+    @property
+    def n_sims(self) -> int:
+        """Number of simulations (1 for deterministic, N for Monte Carlo)."""
+        if self.financial_wealth.ndim == 1:
+            return 1
+        return self.financial_wealth.shape[0]
+
+    @property
+    def n_periods(self) -> int:
+        """Number of time periods."""
+        if self.financial_wealth.ndim == 1:
+            return len(self.financial_wealth)
+        return self.financial_wealth.shape[1]
+
+    @property
+    def is_monte_carlo(self) -> bool:
+        """True if this contains multiple simulation paths."""
+        return self.n_sims > 1
+
+    @property
+    def cumulative_consumption(self) -> np.ndarray:
+        """Cumulative consumption over time."""
+        if self.is_monte_carlo:
+            return np.cumsum(self.consumption, axis=1)
+        return np.cumsum(self.consumption)
+
+    def percentile(self, field: str, percentiles: List[int]) -> np.ndarray:
+        """
+        Compute percentiles for a field across simulations.
+
+        Args:
+            field: Name of field (e.g., 'financial_wealth', 'consumption')
+            percentiles: List of percentiles to compute (e.g., [5, 25, 50, 75, 95])
+
+        Returns:
+            Array of shape [n_percentiles, n_periods]
+        """
+        data = getattr(self, field)
+        if not self.is_monte_carlo:
+            # Single sim: return the same data for all percentiles
+            return np.tile(data, (len(percentiles), 1))
+        return np.percentile(data, percentiles, axis=0)
 
 
 @dataclass
+class StrategyComparison:
+    """
+    Comparison of two strategies using identical market conditions.
+
+    Simply holds two SimulationResult objects that used the same shocks.
+    Percentiles and summary statistics are computed on demand via properties.
+    """
+    result_a: SimulationResult
+    result_b: SimulationResult
+
+    # Strategy parameters for display (optional)
+    strategy_a_params: dict = field(default_factory=dict)
+    strategy_b_params: dict = field(default_factory=dict)
+
+    @property
+    def ages(self) -> np.ndarray:
+        return self.result_a.ages
+
+    @property
+    def n_sims(self) -> int:
+        return self.result_a.n_sims
+
+    def default_rate(self, which: str = 'a') -> float:
+        """Default rate for strategy 'a' or 'b'."""
+        result = self.result_a if which == 'a' else self.result_b
+        return float(np.mean(result.defaulted))
+
+    def median_final_wealth(self, which: str = 'a') -> float:
+        """Median final wealth for strategy 'a' or 'b'."""
+        result = self.result_a if which == 'a' else self.result_b
+        return float(np.median(result.final_wealth))
+
+    def wealth_percentiles(self, which: str = 'a',
+                           percentiles: List[int] = None) -> np.ndarray:
+        """Wealth percentiles for strategy 'a' or 'b'."""
+        if percentiles is None:
+            percentiles = [5, 25, 50, 75, 95]
+        result = self.result_a if which == 'a' else self.result_b
+        return result.percentile('financial_wealth', percentiles)
+
+    def consumption_percentiles(self, which: str = 'a',
+                                percentiles: List[int] = None) -> np.ndarray:
+        """Consumption percentiles for strategy 'a' or 'b'."""
+        if percentiles is None:
+            percentiles = [5, 25, 50, 75, 95]
+        result = self.result_a if which == 'a' else self.result_b
+        return result.percentile('consumption', percentiles)
+
+
+# =============================================================================
+# Deprecated Result Types (kept for backward compatibility)
+# =============================================================================
+
+@dataclass
 class MedianPathResult:
-    """Results from a median-path (deterministic) simulation."""
+    """
+    DEPRECATED: Use SimulationResult with n_sims=1 instead.
+
+    Results from a median-path (deterministic) simulation.
+    """
     strategy_name: str
-    years: np.ndarray                  # (n_periods + 1,) year indices
-    rates: np.ndarray                  # (n_periods + 1,) interest rate path
-    wealth: np.ndarray                 # (n_periods + 1,) wealth path
-    consumption: np.ndarray            # (n_periods,) consumption each period
-    stock_weight: np.ndarray           # (n_periods,) stock allocation
-    mm_weight: np.ndarray              # (n_periods,) money market allocation
-    lb_weight: np.ndarray              # (n_periods,) long bond allocation
-    liability_pv: np.ndarray           # (n_periods + 1,) present value of liabilities
-    funded_ratio: np.ndarray           # (n_periods + 1,) funded status
+    years: np.ndarray
+    rates: np.ndarray
+    wealth: np.ndarray
+    consumption: np.ndarray
+    stock_weight: np.ndarray
+    mm_weight: np.ndarray
+    lb_weight: np.ndarray
+    liability_pv: np.ndarray
+    funded_ratio: np.ndarray
 
 
 @dataclass
 class ScenarioResult:
-    """Results from a teaching scenario simulation."""
+    """
+    DEPRECATED: Use SimulationResult with description field instead.
+
+    Results from a teaching scenario simulation.
+    """
     name: str
     description: str
     ages: np.ndarray

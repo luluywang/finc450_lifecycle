@@ -72,6 +72,14 @@ from .comparison_plots import (
     plot_strategy_comparison_bars,
 )
 
+# Import report page layouts
+from .report_pages import (
+    create_base_case_page,
+    create_monte_carlo_page,
+    create_scenario_page,
+    REPORT_COLORS,
+)
+
 # Import sensitivity plots
 from .sensitivity_plots import (
     create_beta_comparison_figure,
@@ -133,6 +141,12 @@ __all__ = [
     'create_median_path_comparison_figure',
     'plot_duration_matching_intuition',
     'plot_strategy_comparison_bars',
+
+    # Report pages
+    'create_base_case_page',
+    'create_monte_carlo_page',
+    'create_scenario_page',
+    'REPORT_COLORS',
 
     # Sensitivity plots
     'create_beta_comparison_figure',
