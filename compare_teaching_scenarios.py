@@ -201,35 +201,35 @@ def run_teaching_scenario(
     # Compute PV consumption for each simulation
     r = econ_params.r_bar
     ldi_pv_consumption = np.array([
-        compute_pv_consumption(ldi_result['total_consumption_paths'][sim], r)
+        compute_pv_consumption(ldi_result.consumption[sim], r)
         for sim in range(n_sims)
     ])
     rot_pv_consumption = np.array([
-        compute_pv_consumption(rot_result['total_consumption_paths'][sim], r)
+        compute_pv_consumption(rot_result.consumption[sim], r)
         for sim in range(n_sims)
     ])
 
     # Compute cumulative stock returns
-    cumulative_stock_returns = np.cumprod(1 + ldi_result['stock_return_paths'], axis=1)
+    cumulative_stock_returns = np.cumprod(1 + ldi_result.stock_returns, axis=1)
 
     return ScenarioResult(
         scenario=scenario,
         ages=ages,
         # LDI
-        ldi_financial_wealth_paths=ldi_result['financial_wealth_paths'],
-        ldi_consumption_paths=ldi_result['total_consumption_paths'],
-        ldi_default_flags=ldi_result['default_flags'],
-        ldi_default_ages=ldi_result['default_ages'],
+        ldi_financial_wealth_paths=ldi_result.financial_wealth,
+        ldi_consumption_paths=ldi_result.consumption,
+        ldi_default_flags=ldi_result.defaulted,
+        ldi_default_ages=ldi_result.default_age,
         ldi_pv_consumption=ldi_pv_consumption,
         # RoT
-        rot_financial_wealth_paths=rot_result['financial_wealth_paths'],
-        rot_consumption_paths=rot_result['total_consumption_paths'],
-        rot_default_flags=rot_result['default_flags'],
-        rot_default_ages=rot_result['default_ages'],
+        rot_financial_wealth_paths=rot_result.financial_wealth,
+        rot_consumption_paths=rot_result.consumption,
+        rot_default_flags=rot_result.defaulted,
+        rot_default_ages=rot_result.default_age,
         rot_pv_consumption=rot_pv_consumption,
         # Market
-        rate_paths=ldi_result['rate_paths'],
-        stock_return_paths=ldi_result['stock_return_paths'],
+        rate_paths=ldi_result.interest_rates,
+        stock_return_paths=ldi_result.stock_returns,
         cumulative_stock_returns=cumulative_stock_returns,
     )
 

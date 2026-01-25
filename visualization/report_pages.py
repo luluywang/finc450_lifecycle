@@ -428,6 +428,7 @@ def create_scenario_page(
         simulate_interest_rates,
         simulate_stock_returns,
         run_strategy_comparison,
+        compute_pv_consumption,
     )
 
     if rate_shock_age is None:
@@ -491,10 +492,40 @@ def create_scenario_page(
         'rateShock': f'Interest Rate Shock (at age {rate_shock_age})',
     }
 
+    # Define percentiles for comparison
+    percentiles = [5, 25, 50, 75, 95]
+
+    # Compute PV consumption for each simulation using initial rate
+    initial_rate = econ_params.r_bar
+    if comparison.result_a.consumption.ndim == 1:
+        # Single simulation
+        optimal_pv_consumption = np.array([compute_pv_consumption(comparison.result_a.consumption, initial_rate)])
+        rot_pv_consumption = np.array([compute_pv_consumption(comparison.result_b.consumption, initial_rate)])
+    else:
+        # Monte Carlo - compute PV for each simulation
+        optimal_pv_consumption = np.array([
+            compute_pv_consumption(comparison.result_a.consumption[i], initial_rate)
+            for i in range(comparison.n_sims)
+        ])
+        rot_pv_consumption = np.array([
+            compute_pv_consumption(comparison.result_b.consumption[i], initial_rate)
+            for i in range(comparison.n_sims)
+        ])
+
+    # Compute PV consumption percentiles
+    optimal_pv_consumption_percentiles = np.percentile(optimal_pv_consumption, percentiles)
+    rot_pv_consumption_percentiles = np.percentile(rot_pv_consumption, percentiles)
+
+    # Get wealth and consumption percentiles using the new API
+    optimal_wealth_percentiles = comparison.wealth_percentiles('a', percentiles)
+    rot_wealth_percentiles = comparison.wealth_percentiles('b', percentiles)
+    optimal_consumption_percentiles = comparison.consumption_percentiles('a', percentiles)
+    rot_consumption_percentiles = comparison.consumption_percentiles('b', percentiles)
+
     # ===== Default Risk Bar Chart =====
     ax = fig.add_subplot(gs[0, 0])
     strategies = ['Optimal\n(Variable)', 'Rule of Thumb\n(4% Rule)']
-    default_rates = [comparison.optimal_default_rate * 100, comparison.rot_default_rate * 100]
+    default_rates = [comparison.default_rate('a') * 100, comparison.default_rate('b') * 100]
     colors = [COLORS['optimal'], COLORS['rot']]
 
     bars = ax.bar(strategies, default_rates, color=colors, alpha=0.8, edgecolor='black')
@@ -511,33 +542,33 @@ def create_scenario_page(
 
     # ===== PV Consumption Comparison =====
     ax = fig.add_subplot(gs[0, 1])
-    x_pos = np.arange(len(comparison.percentiles))
+    x_pos = np.arange(len(percentiles))
     width = 0.35
 
-    ax.bar(x_pos - width/2, comparison.optimal_pv_consumption_percentiles,
+    ax.bar(x_pos - width/2, optimal_pv_consumption_percentiles,
           width, label='Optimal', color=COLORS['optimal'], alpha=0.8)
-    ax.bar(x_pos + width/2, comparison.rot_pv_consumption_percentiles,
+    ax.bar(x_pos + width/2, rot_pv_consumption_percentiles,
           width, label='Rule of Thumb', color=COLORS['rot'], alpha=0.8)
 
     ax.set_xlabel('Percentile')
     ax.set_ylabel('PV Consumption ($k)')
     ax.set_title('PV Consumption at Time 0', fontweight='bold')
     ax.set_xticks(x_pos)
-    ax.set_xticklabels([f'{p}th' for p in comparison.percentiles])
+    ax.set_xticklabels([f'{p}th' for p in percentiles])
     ax.legend(loc='upper left', fontsize=9)
 
     # ===== Financial Wealth Percentiles =====
     ax = fig.add_subplot(gs[1, 0])
-    for i, p in enumerate(comparison.percentiles):
+    for i, p in enumerate(percentiles):
         if p == 50:
-            ax.plot(x, comparison.optimal_wealth_percentiles[i], color=COLORS['optimal'],
+            ax.plot(x, optimal_wealth_percentiles[i], color=COLORS['optimal'],
                    linewidth=2, label='Optimal Median')
-            ax.plot(x, comparison.rot_wealth_percentiles[i], color=COLORS['rot'],
+            ax.plot(x, rot_wealth_percentiles[i], color=COLORS['rot'],
                    linewidth=2, linestyle='--', label='RoT Median')
         elif p in [25, 75]:
-            ax.plot(x, comparison.optimal_wealth_percentiles[i], color=COLORS['optimal'],
+            ax.plot(x, optimal_wealth_percentiles[i], color=COLORS['optimal'],
                    linewidth=1, alpha=0.6)
-            ax.plot(x, comparison.rot_wealth_percentiles[i], color=COLORS['rot'],
+            ax.plot(x, rot_wealth_percentiles[i], color=COLORS['rot'],
                    linewidth=1, linestyle='--', alpha=0.6)
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
@@ -549,16 +580,16 @@ def create_scenario_page(
 
     # ===== Consumption Percentiles =====
     ax = fig.add_subplot(gs[1, 1])
-    for i, p in enumerate(comparison.percentiles):
+    for i, p in enumerate(percentiles):
         if p == 50:
-            ax.plot(x, comparison.optimal_consumption_percentiles[i], color=COLORS['optimal'],
+            ax.plot(x, optimal_consumption_percentiles[i], color=COLORS['optimal'],
                    linewidth=2, label='Optimal Median')
-            ax.plot(x, comparison.rot_consumption_percentiles[i], color=COLORS['rot'],
+            ax.plot(x, rot_consumption_percentiles[i], color=COLORS['rot'],
                    linewidth=2, linestyle='--', label='RoT Median')
         elif p in [25, 75]:
-            ax.plot(x, comparison.optimal_consumption_percentiles[i], color=COLORS['optimal'],
+            ax.plot(x, optimal_consumption_percentiles[i], color=COLORS['optimal'],
                    linewidth=1, alpha=0.6)
-            ax.plot(x, comparison.rot_consumption_percentiles[i], color=COLORS['rot'],
+            ax.plot(x, rot_consumption_percentiles[i], color=COLORS['rot'],
                    linewidth=1, linestyle='--', alpha=0.6)
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
@@ -606,9 +637,16 @@ def create_scenario_page(
 
     else:  # normal
         ax = fig.add_subplot(gs[2, 0])
-        ax.plot(x, comparison.rot_stock_weight_sample * 100, color=COLORS['rot'],
+        # Get sample allocation from first simulation
+        if comparison.result_b.stock_weight.ndim == 1:
+            rot_stock_sample = comparison.result_b.stock_weight
+            rot_bond_sample = comparison.result_b.bond_weight
+        else:
+            rot_stock_sample = comparison.result_b.stock_weight[0]
+            rot_bond_sample = comparison.result_b.bond_weight[0]
+        ax.plot(x, rot_stock_sample * 100, color=COLORS['rot'],
                linewidth=2, label='RoT Stocks')
-        ax.plot(x, comparison.rot_bond_weight_sample * 100, color='#9b59b6',
+        ax.plot(x, rot_bond_sample * 100, color='#9b59b6',
                linewidth=2, linestyle='--', label='RoT Bonds')
         ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
         ax.set_xlabel(xlabel)
@@ -628,18 +666,18 @@ Strategy Comparison Summary
 Scenario: {scenario_titles.get(scenario_type, scenario_type)}
 
 Default Rates:
-  Optimal (Variable):     {comparison.optimal_default_rate*100:>6.1f}%
-  Rule of Thumb (4%):     {comparison.rot_default_rate*100:>6.1f}%
+  Optimal (Variable):     {comparison.default_rate('a')*100:>6.1f}%
+  Rule of Thumb (4%):     {comparison.default_rate('b')*100:>6.1f}%
 
 Median Final Wealth ($k):
-  Optimal:                ${comparison.optimal_median_final_wealth:>10,.0f}
-  Rule of Thumb:          ${comparison.rot_median_final_wealth:>10,.0f}
+  Optimal:                ${comparison.median_final_wealth('a'):>10,.0f}
+  Rule of Thumb:          ${comparison.median_final_wealth('b'):>10,.0f}
 
 Median PV Consumption ($k):
-  Optimal:                ${np.median(comparison.optimal_pv_consumption):>10,.0f}
-  Rule of Thumb:          ${np.median(comparison.rot_pv_consumption):>10,.0f}
+  Optimal:                ${np.median(optimal_pv_consumption):>10,.0f}
+  Rule of Thumb:          ${np.median(rot_pv_consumption):>10,.0f}
 
-Simulations: {n_simulations}
+Simulations: {comparison.n_sims}
 """
     ax.text(0.1, 0.9, summary_text, transform=ax.transAxes, fontsize=11,
            verticalalignment='top', fontfamily='monospace',

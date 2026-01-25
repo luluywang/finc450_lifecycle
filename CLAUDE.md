@@ -21,7 +21,8 @@ finc450_lifecycle/
 │   ├── params.py                   # All dataclasses (LifecycleParams, EconomicParams, etc.)
 │   ├── economics.py                # Bond pricing, PV calculations, MV optimization
 │   ├── simulation.py               # Monte Carlo engines, strategy comparison
-│   └── strategies.py               # Generic strategy implementations (LDI, RoT, Fixed)
+│   ├── strategies.py               # Generic strategy implementations (LDI, RoT, Fixed)
+│   └── scenarios.py                # Teaching scenarios (good/bad/median paths)
 │
 ├── visualization/                  # Matplotlib visualization code
 │   ├── __init__.py                 # Public API exports
@@ -30,7 +31,8 @@ finc450_lifecycle/
 │   ├── lifecycle_plots.py          # Median path charts
 │   ├── monte_carlo_plots.py        # Fan charts, distributions
 │   ├── comparison_plots.py         # Strategy comparisons
-│   └── sensitivity_plots.py        # Parameter sensitivity
+│   ├── sensitivity_plots.py        # Parameter sensitivity
+│   └── report_pages.py             # PDF page layouts
 │
 ├── deprecated/                     # Backward compatibility stubs
 │
@@ -55,11 +57,15 @@ The `core/` module is the single source of truth for all simulation logic:
 
 ```python
 from core import (
+    # Parameter dataclasses
     LifecycleParams,
     EconomicParams,
-    ScenarioResult,
-    compute_lifecycle_median_path,
+    # Result types
+    SimulationResult,      # Returned by simulate_with_strategy()
+    StrategyComparison,    # Returned by run_strategy_comparison()
+    # Simulation functions
     run_strategy_comparison,
+    compute_median_path_comparison,
 )
 ```
 
@@ -77,6 +83,8 @@ from core import (
     LDIStrategy,
     RuleOfThumbStrategy,
     FixedConsumptionStrategy,
+    # Result types
+    SimulationResult,
     # Generic simulation engine
     simulate_with_strategy,
     generate_correlated_shocks,
@@ -89,14 +97,28 @@ rot = RuleOfThumbStrategy(savings_rate=0.15, withdrawal_rate=0.04)
 # Zero shocks = deterministic median path
 rate_shocks = np.zeros((1, n_periods))
 stock_shocks = np.zeros((1, n_periods))
-result = simulate_with_strategy(ldi, params, econ, rate_shocks, stock_shocks)
+result: SimulationResult = simulate_with_strategy(ldi, params, econ, rate_shocks, stock_shocks)
+
+# Access result fields
+print(result.ages)           # Array of ages
+print(result.wealth)         # Wealth trajectories (n_sims, n_periods)
+print(result.consumption)    # Consumption trajectories
+print(result.stock_weight)   # Stock allocation weights
 
 # Random shocks = Monte Carlo
 rate_shocks, stock_shocks = generate_correlated_shocks(n_periods, n_sims, rho, rng)
-mc_result = simulate_with_strategy(rot, params, econ, rate_shocks, stock_shocks)
+mc_result: SimulationResult = simulate_with_strategy(rot, params, econ, rate_shocks, stock_shocks)
 ```
 
 Key insight: **Static calculations = Dynamic with zero shocks**. This unifies the codebase.
+
+### Result Types
+
+The simulation functions return structured dataclasses:
+
+- **`SimulationResult`** - Returned by `simulate_with_strategy()`. Contains arrays for ages, wealth, consumption, stock weights, and other simulation outputs.
+
+- **`StrategyComparison`** - Returned by `run_strategy_comparison()` and `compute_median_path_comparison()`. Contains results for multiple strategies keyed by strategy name, plus shared metadata like ages.
 
 ### Visualization Module
 

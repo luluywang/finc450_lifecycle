@@ -14,7 +14,7 @@ from .styles import COLORS, STRATEGY_COLORS
 if TYPE_CHECKING:
     from core import (
         LifecycleParams, EconomicParams, LifecycleResult,
-        StrategyComparisonResult, MedianPathComparisonResult, SimulationResult
+        SimulationResult, StrategyComparison,
     )
 
 
@@ -159,14 +159,14 @@ def create_optimal_vs_4pct_rule_comparison(
 
 
 def create_strategy_comparison_figure(
-    comparison_result: 'StrategyComparisonResult',
+    comparison_result: 'StrategyComparison',
     params: 'LifecycleParams' = None,
     figsize: Tuple[int, int] = (18, 12),
     use_years: bool = True,
     title_suffix: str = "",
 ) -> plt.Figure:
     """
-    Create a figure comparing optimal vs rule-of-thumb strategies.
+    Create a figure comparing LDI vs Rule-of-Thumb strategies.
 
     Shows a 2x3 panel layout:
     - (0,0): Default risk bar chart
@@ -175,6 +175,9 @@ def create_strategy_comparison_figure(
     - (1,0): Rule-of-thumb allocation glide path
     - (1,1): Summary statistics table
     - (1,2): Default age distribution histograms
+
+    Args:
+        comparison_result: StrategyComparison with result_a=LDI, result_b=RoT
     """
     from core import LifecycleParams
 
@@ -196,13 +199,23 @@ def create_strategy_comparison_figure(
     color_rot = '#3498db'
     alpha_fan = 0.3
 
+    # Compute percentiles on demand
+    percentiles = [5, 25, 50, 75, 95]
+    p_idx = {p: i for i, p in enumerate(percentiles)}
+
+    ldi_wealth_pct = comparison_result.wealth_percentiles('a', percentiles)
+    rot_wealth_pct = comparison_result.wealth_percentiles('b', percentiles)
+    ldi_cons_pct = comparison_result.consumption_percentiles('a', percentiles)
+    rot_cons_pct = comparison_result.consumption_percentiles('b', percentiles)
+
+    # Get default rates
+    ldi_default_rate = comparison_result.default_rate('a')
+    rot_default_rate = comparison_result.default_rate('b')
+
     # (0,0): Default Risk Bar Chart
     ax = axes[0, 0]
-    strategies = ['Optimal\n(Variable Consumption)', 'Rule of Thumb\n(100-Age, 4% Rule)']
-    default_rates = [
-        comparison_result.optimal_default_rate * 100,
-        comparison_result.rot_default_rate * 100
-    ]
+    strategies = ['LDI\n(Variable Consumption)', 'Rule of Thumb\n(100-Age, 4% Rule)']
+    default_rates = [ldi_default_rate * 100, rot_default_rate * 100]
     colors = [color_optimal, color_rot]
     bars = ax.bar(strategies, default_rates, color=colors, alpha=0.8, edgecolor='black')
 
@@ -219,35 +232,20 @@ def create_strategy_comparison_figure(
 
     # (0,1): Consumption Percentile Fan Charts
     ax = axes[0, 1]
-    p_idx = {p: i for i, p in enumerate(comparison_result.percentiles)}
 
-    if 5 in p_idx and 95 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.optimal_consumption_percentiles[p_idx[5], :],
-                        comparison_result.optimal_consumption_percentiles[p_idx[95], :],
-                        alpha=alpha_fan, color=color_optimal, label='Optimal 5-95%')
-    if 25 in p_idx and 75 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.optimal_consumption_percentiles[p_idx[25], :],
-                        comparison_result.optimal_consumption_percentiles[p_idx[75], :],
-                        alpha=alpha_fan + 0.2, color=color_optimal)
-    if 50 in p_idx:
-        ax.plot(x, comparison_result.optimal_consumption_percentiles[p_idx[50], :],
-                color=color_optimal, linewidth=2, label='Optimal Median')
+    ax.fill_between(x, ldi_cons_pct[p_idx[5], :], ldi_cons_pct[p_idx[95], :],
+                    alpha=alpha_fan, color=color_optimal, label='LDI 5-95%')
+    ax.fill_between(x, ldi_cons_pct[p_idx[25], :], ldi_cons_pct[p_idx[75], :],
+                    alpha=alpha_fan + 0.2, color=color_optimal)
+    ax.plot(x, ldi_cons_pct[p_idx[50], :],
+            color=color_optimal, linewidth=2, label='LDI Median')
 
-    if 5 in p_idx and 95 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.rot_consumption_percentiles[p_idx[5], :],
-                        comparison_result.rot_consumption_percentiles[p_idx[95], :],
-                        alpha=alpha_fan, color=color_rot, label='RoT 5-95%')
-    if 25 in p_idx and 75 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.rot_consumption_percentiles[p_idx[25], :],
-                        comparison_result.rot_consumption_percentiles[p_idx[75], :],
-                        alpha=alpha_fan + 0.2, color=color_rot)
-    if 50 in p_idx:
-        ax.plot(x, comparison_result.rot_consumption_percentiles[p_idx[50], :],
-                color=color_rot, linewidth=2, linestyle='--', label='RoT Median')
+    ax.fill_between(x, rot_cons_pct[p_idx[5], :], rot_cons_pct[p_idx[95], :],
+                    alpha=alpha_fan, color=color_rot, label='RoT 5-95%')
+    ax.fill_between(x, rot_cons_pct[p_idx[25], :], rot_cons_pct[p_idx[75], :],
+                    alpha=alpha_fan + 0.2, color=color_rot)
+    ax.plot(x, rot_cons_pct[p_idx[50], :],
+            color=color_rot, linewidth=2, linestyle='--', label='RoT Median')
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -259,33 +257,19 @@ def create_strategy_comparison_figure(
     # (0,2): Wealth Percentile Fan Charts
     ax = axes[0, 2]
 
-    if 5 in p_idx and 95 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.optimal_wealth_percentiles[p_idx[5], :],
-                        comparison_result.optimal_wealth_percentiles[p_idx[95], :],
-                        alpha=alpha_fan, color=color_optimal, label='Optimal 5-95%')
-    if 25 in p_idx and 75 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.optimal_wealth_percentiles[p_idx[25], :],
-                        comparison_result.optimal_wealth_percentiles[p_idx[75], :],
-                        alpha=alpha_fan + 0.2, color=color_optimal)
-    if 50 in p_idx:
-        ax.plot(x, comparison_result.optimal_wealth_percentiles[p_idx[50], :],
-                color=color_optimal, linewidth=2, label='Optimal Median')
+    ax.fill_between(x, ldi_wealth_pct[p_idx[5], :], ldi_wealth_pct[p_idx[95], :],
+                    alpha=alpha_fan, color=color_optimal, label='LDI 5-95%')
+    ax.fill_between(x, ldi_wealth_pct[p_idx[25], :], ldi_wealth_pct[p_idx[75], :],
+                    alpha=alpha_fan + 0.2, color=color_optimal)
+    ax.plot(x, ldi_wealth_pct[p_idx[50], :],
+            color=color_optimal, linewidth=2, label='LDI Median')
 
-    if 5 in p_idx and 95 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.rot_wealth_percentiles[p_idx[5], :],
-                        comparison_result.rot_wealth_percentiles[p_idx[95], :],
-                        alpha=alpha_fan, color=color_rot, label='RoT 5-95%')
-    if 25 in p_idx and 75 in p_idx:
-        ax.fill_between(x,
-                        comparison_result.rot_wealth_percentiles[p_idx[25], :],
-                        comparison_result.rot_wealth_percentiles[p_idx[75], :],
-                        alpha=alpha_fan + 0.2, color=color_rot)
-    if 50 in p_idx:
-        ax.plot(x, comparison_result.rot_wealth_percentiles[p_idx[50], :],
-                color=color_rot, linewidth=2, linestyle='--', label='RoT Median')
+    ax.fill_between(x, rot_wealth_pct[p_idx[5], :], rot_wealth_pct[p_idx[95], :],
+                    alpha=alpha_fan, color=color_rot, label='RoT 5-95%')
+    ax.fill_between(x, rot_wealth_pct[p_idx[25], :], rot_wealth_pct[p_idx[75], :],
+                    alpha=alpha_fan + 0.2, color=color_rot)
+    ax.plot(x, rot_wealth_pct[p_idx[50], :],
+            color=color_rot, linewidth=2, linestyle='--', label='RoT Median')
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -294,12 +278,12 @@ def create_strategy_comparison_figure(
     ax.set_title('Financial Wealth Comparison (Percentile Bands)')
     ax.legend(loc='upper left', fontsize=8)
 
-    # (1,0): Rule-of-Thumb Allocation Glide Path
+    # (1,0): Rule-of-Thumb Allocation Glide Path (sample from first simulation)
     ax = axes[1, 0]
-    ax.stackplot(x,
-                 comparison_result.rot_stock_weight_sample * 100,
-                 comparison_result.rot_bond_weight_sample * 100,
-                 comparison_result.rot_cash_weight_sample * 100,
+    rot_stock = comparison_result.result_b.stock_weight[0] * 100
+    rot_bond = comparison_result.result_b.bond_weight[0] * 100
+    rot_cash = comparison_result.result_b.cash_weight[0] * 100
+    ax.stackplot(x, rot_stock, rot_bond, rot_cash,
                  labels=['Stocks', 'Bonds', 'Cash'],
                  colors=['#e74c3c', '#3498db', '#95a5a6'],
                  alpha=0.8)
@@ -314,15 +298,18 @@ def create_strategy_comparison_figure(
     ax = axes[1, 1]
     ax.axis('off')
 
+    ldi_median_final = comparison_result.median_final_wealth('a')
+    rot_median_final = comparison_result.median_final_wealth('b')
+
     summary_text = f"""
 Strategy Comparison Summary
 {'='*40}
-Number of Simulations: {comparison_result.n_simulations}
+Number of Simulations: {comparison_result.n_sims}
 
-                    Optimal    Rule-of-Thumb
+                    LDI        Rule-of-Thumb
                     -------    -------------
-Default Rate:       {comparison_result.optimal_default_rate*100:6.1f}%    {comparison_result.rot_default_rate*100:6.1f}%
-Median Final Wealth: ${comparison_result.optimal_median_final_wealth:,.0f}k   ${comparison_result.rot_median_final_wealth:,.0f}k
+Default Rate:       {ldi_default_rate*100:6.1f}%    {rot_default_rate*100:6.1f}%
+Median Final Wealth: ${ldi_median_final:,.0f}k   ${rot_median_final:,.0f}k
 
 Rule-of-Thumb Strategy:
   - Savings Rate: 15% of income
@@ -343,18 +330,26 @@ LDI Strategy:
     # (1,2): Default Age Distribution
     ax = axes[1, 2]
 
-    opt_default_ages = comparison_result.optimal_default_ages[~np.isnan(comparison_result.optimal_default_ages)]
-    rot_default_ages = comparison_result.rot_default_ages[~np.isnan(comparison_result.rot_default_ages)]
+    ldi_default_ages = comparison_result.result_a.default_age
+    rot_default_ages = comparison_result.result_b.default_age
 
-    if len(opt_default_ages) > 0 or len(rot_default_ages) > 0:
+    # Handle both scalar (single sim) and array (MC) cases
+    if np.ndim(ldi_default_ages) == 0:
+        ldi_default_ages = np.array([ldi_default_ages])
+        rot_default_ages = np.array([rot_default_ages])
+
+    ldi_valid = ldi_default_ages[~np.isnan(ldi_default_ages)]
+    rot_valid = rot_default_ages[~np.isnan(rot_default_ages)]
+
+    if len(ldi_valid) > 0 or len(rot_valid) > 0:
         bins = np.arange(params.retirement_age, params.end_age + 1, 2)
 
-        if len(opt_default_ages) > 0:
-            ax.hist(opt_default_ages, bins=bins, alpha=0.6, color=color_optimal,
-                    label=f'Optimal (n={len(opt_default_ages)})', edgecolor='black')
-        if len(rot_default_ages) > 0:
-            ax.hist(rot_default_ages, bins=bins, alpha=0.6, color=color_rot,
-                    label=f'RoT (n={len(rot_default_ages)})', edgecolor='black')
+        if len(ldi_valid) > 0:
+            ax.hist(ldi_valid, bins=bins, alpha=0.6, color=color_optimal,
+                    label=f'LDI (n={len(ldi_valid)})', edgecolor='black')
+        if len(rot_valid) > 0:
+            ax.hist(rot_valid, bins=bins, alpha=0.6, color=color_rot,
+                    label=f'RoT (n={len(rot_valid)})', edgecolor='black')
 
         ax.set_xlabel('Age at Default')
         ax.set_ylabel('Count')
@@ -365,14 +360,14 @@ LDI Strategy:
                 ha='center', va='center', transform=ax.transAxes, fontsize=14)
         ax.set_title('Default Age Distribution')
 
-    plt.suptitle(f'Optimal vs Rule-of-Thumb Strategy Comparison{title_suffix}',
+    plt.suptitle(f'LDI vs Rule-of-Thumb Strategy Comparison{title_suffix}',
                  fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
     return fig
 
 
 def create_median_path_comparison_figure(
-    comparison_result: 'MedianPathComparisonResult',
+    comparison_result: 'StrategyComparison',
     params: 'LifecycleParams' = None,
     econ_params: 'EconomicParams' = None,
     figsize: Tuple[int, int] = (18, 14),
@@ -380,8 +375,11 @@ def create_median_path_comparison_figure(
 ) -> plt.Figure:
     """
     Create a figure comparing LDI vs Rule-of-Thumb on deterministic median paths.
+
+    Args:
+        comparison_result: StrategyComparison with result_a=LDI, result_b=RoT (single sim)
     """
-    from core import LifecycleParams, EconomicParams
+    from core import LifecycleParams, EconomicParams, compute_earnings_profile, compute_pv_consumption
 
     if params is None:
         params = LifecycleParams()
@@ -399,15 +397,37 @@ def create_median_path_comparison_figure(
         xlabel = 'Age'
         retirement_x = params.retirement_age
 
+    # Extract results
+    ldi = comparison_result.result_a
+    rot = comparison_result.result_b
+
     color_ldi = '#2ecc71'
     color_rot = '#3498db'
     color_earnings = '#f39c12'
 
+    # Compute earnings for display
+    earnings_profile = compute_earnings_profile(params)
+    working_years = params.retirement_age - params.start_age
+    total_years = params.end_age - params.start_age
+    earnings = np.zeros(total_years)
+    earnings[:working_years] = earnings_profile
+
+    # Get RoT strategy params
+    rot_params = comparison_result.strategy_b_params
+    rot_savings_rate = rot_params.get('savings_rate', 0.15)
+    rot_target_duration = rot_params.get('target_duration', 6.0)
+    rot_withdrawal_rate = rot_params.get('withdrawal_rate', 0.04)
+
+    # Compute PV consumption
+    r = econ_params.r_bar
+    ldi_pv = compute_pv_consumption(ldi.consumption, r)
+    rot_pv = compute_pv_consumption(rot.consumption, r)
+
     # (0,0): Financial Wealth Comparison
     ax = axes[0, 0]
-    ax.plot(x, comparison_result.ldi_financial_wealth, color=color_ldi,
+    ax.plot(x, ldi.financial_wealth, color=color_ldi,
             linewidth=2.5, label='LDI Strategy')
-    ax.plot(x, comparison_result.rot_financial_wealth, color=color_rot,
+    ax.plot(x, rot.financial_wealth, color=color_rot,
             linewidth=2.5, linestyle='--', label='Rule-of-Thumb')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5, label='Retirement')
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -419,11 +439,11 @@ def create_median_path_comparison_figure(
 
     # (0,1): Consumption Comparison
     ax = axes[0, 1]
-    ax.plot(x, comparison_result.ldi_total_consumption, color=color_ldi,
+    ax.plot(x, ldi.consumption, color=color_ldi,
             linewidth=2.5, label='LDI Strategy')
-    ax.plot(x, comparison_result.rot_total_consumption, color=color_rot,
+    ax.plot(x, rot.consumption, color=color_rot,
             linewidth=2.5, linestyle='--', label='Rule-of-Thumb')
-    ax.plot(x, comparison_result.earnings, color=color_earnings,
+    ax.plot(x, earnings, color=color_earnings,
             linewidth=1.5, linestyle=':', alpha=0.7, label='Earnings')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -438,7 +458,7 @@ def create_median_path_comparison_figure(
     ax.axis('off')
 
     long_bond_dur = econ_params.bond_duration
-    bond_weight_in_fi = min(1.0, comparison_result.rot_target_duration / long_bond_dur) if long_bond_dur > 0 else 0.0
+    bond_weight_in_fi = min(1.0, rot_target_duration / long_bond_dur) if long_bond_dur > 0 else 0.0
 
     summary_text = f"""
 Median Path Comparison (Expected Returns)
@@ -450,18 +470,18 @@ LDI Strategy:
   - Adapts consumption to wealth changes
 
 Rule-of-Thumb Strategy:
-  - Savings Rate: {comparison_result.rot_savings_rate*100:.0f}% of income
+  - Savings Rate: {rot_savings_rate*100:.0f}% of income
   - Stock Allocation: (100 - age)%
-  - FI Target Duration: {comparison_result.rot_target_duration:.0f} years
+  - FI Target Duration: {rot_target_duration:.0f} years
   - FI Split: {bond_weight_in_fi*100:.0f}% bonds / {(1-bond_weight_in_fi)*100:.0f}% cash
     (bonds={long_bond_dur:.0f}yr duration)
-  - Retirement: {comparison_result.rot_withdrawal_rate*100:.0f}% fixed withdrawal
+  - Retirement: {rot_withdrawal_rate*100:.0f}% fixed withdrawal
 
-PV Lifetime Consumption (@ r={econ_params.r_bar*100:.1f}%):
-  - LDI Strategy:     ${comparison_result.ldi_pv_consumption:,.0f}k
-  - Rule-of-Thumb:    ${comparison_result.rot_pv_consumption:,.0f}k
-  - Difference:       ${comparison_result.ldi_pv_consumption - comparison_result.rot_pv_consumption:+,.0f}k
-                      ({(comparison_result.ldi_pv_consumption/comparison_result.rot_pv_consumption - 1)*100:+.1f}%)
+PV Lifetime Consumption (@ r={r*100:.1f}%):
+  - LDI Strategy:     ${ldi_pv:,.0f}k
+  - Rule-of-Thumb:    ${rot_pv:,.0f}k
+  - Difference:       ${ldi_pv - rot_pv:+,.0f}k
+                      ({(ldi_pv/rot_pv - 1)*100:+.1f}%)
 """
 
     ax.text(0.05, 0.95, summary_text, transform=ax.transAxes,
@@ -471,9 +491,9 @@ PV Lifetime Consumption (@ r={econ_params.r_bar*100:.1f}%):
     # (1,0): LDI Allocation Glide Path
     ax = axes[1, 0]
     ax.stackplot(x,
-                 comparison_result.ldi_stock_weight * 100,
-                 comparison_result.ldi_bond_weight * 100,
-                 comparison_result.ldi_cash_weight * 100,
+                 ldi.stock_weight * 100,
+                 ldi.bond_weight * 100,
+                 ldi.cash_weight * 100,
                  labels=['Stocks', 'Bonds', 'Cash'],
                  colors=['#e74c3c', '#3498db', '#95a5a6'],
                  alpha=0.8)
@@ -487,30 +507,30 @@ PV Lifetime Consumption (@ r={econ_params.r_bar*100:.1f}%):
     # (1,1): RoT Allocation Glide Path
     ax = axes[1, 1]
     ax.stackplot(x,
-                 comparison_result.rot_stock_weight * 100,
-                 comparison_result.rot_bond_weight * 100,
-                 comparison_result.rot_cash_weight * 100,
+                 rot.stock_weight * 100,
+                 rot.bond_weight * 100,
+                 rot.cash_weight * 100,
                  labels=['Stocks', 'Bonds', 'Cash'],
                  colors=['#e74c3c', '#3498db', '#95a5a6'],
                  alpha=0.8)
     ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('Allocation (%)')
-    ax.set_title(f'Rule-of-Thumb: (100-Age)% Stock, {comparison_result.rot_target_duration:.0f}yr FI Duration')
+    ax.set_title(f'Rule-of-Thumb: (100-Age)% Stock, {rot_target_duration:.0f}yr FI Duration')
     ax.legend(loc='upper right', fontsize=8)
     ax.set_ylim(0, 100)
 
     # (1,2): Fixed Income Breakdown Comparison
     ax = axes[1, 2]
 
-    ax.plot(x, comparison_result.ldi_bond_weight * 100, color=color_ldi,
+    ax.plot(x, ldi.bond_weight * 100, color=color_ldi,
             linewidth=2, label='LDI Bonds')
-    ax.plot(x, comparison_result.rot_bond_weight * 100, color=color_rot,
+    ax.plot(x, rot.bond_weight * 100, color=color_rot,
             linewidth=2, linestyle='--', label='RoT Bonds')
 
-    ax.plot(x, comparison_result.ldi_cash_weight * 100, color=color_ldi,
+    ax.plot(x, ldi.cash_weight * 100, color=color_ldi,
             linewidth=2, linestyle=':', alpha=0.7, label='LDI Cash')
-    ax.plot(x, comparison_result.rot_cash_weight * 100, color=color_rot,
+    ax.plot(x, rot.cash_weight * 100, color=color_rot,
             linewidth=2, linestyle=':', alpha=0.7, label='RoT Cash')
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)

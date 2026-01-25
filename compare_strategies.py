@@ -66,12 +66,12 @@ def run_net_worth_comparison(
     working_years = params.retirement_age - params.start_age
     ages = comparison.ages
 
-    # Extract paths from comparison result
-    ldi_wealth_paths = comparison.optimal_wealth_paths
-    ldi_consumption_paths = comparison.optimal_consumption_paths
-    rot_wealth_paths = comparison.rot_wealth_paths
-    rot_consumption_paths = comparison.rot_consumption_paths
-    rate_paths = comparison.interest_rate_paths
+    # Extract paths from comparison result (new unified API)
+    ldi_wealth_paths = comparison.result_a.financial_wealth
+    ldi_consumption_paths = comparison.result_a.consumption
+    rot_wealth_paths = comparison.result_b.financial_wealth
+    rot_consumption_paths = comparison.result_b.consumption
+    rate_paths = comparison.result_a.interest_rates
 
     # Compute net worth paths with dynamic revaluation
     ldi_net_worth_paths = np.zeros((n_simulations, total_years))

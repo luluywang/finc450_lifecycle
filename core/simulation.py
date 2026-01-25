@@ -14,12 +14,15 @@ from .params import (
     MonteCarloParams,
     LifecycleResult,
     MonteCarloResult,
-    RuleOfThumbResult,
-    StrategyComparisonResult,
-    MedianPathComparisonResult,
     SimulationState,
     StrategyActions,
     StrategyProtocol,
+    SimulationResult,
+    StrategyComparison,
+)
+from .strategies import (
+    LDIStrategy,
+    RuleOfThumbStrategy,
 )
 from .economics import (
     compute_present_value,
@@ -327,7 +330,8 @@ def simulate_with_strategy(
     rate_shocks: np.ndarray,
     stock_shocks: np.ndarray,
     initial_rate: float = None,
-) -> dict:
+    description: str = "",
+) -> SimulationResult:
     """
     Generic simulation engine that runs ANY strategy.
 
@@ -344,16 +348,11 @@ def simulate_with_strategy(
         rate_shocks: Shape (n_sims, n_periods) - interest rate epsilon shocks
         stock_shocks: Shape (n_sims, n_periods) - stock return epsilon shocks
         initial_rate: Starting interest rate (defaults to r_bar)
+        description: Optional description for the simulation result
 
     Returns:
-        Dictionary containing all simulation outputs:
-        - financial_wealth_paths: (n_sims, n_periods)
-        - human_capital_paths: (n_sims, n_periods)
-        - total_wealth_paths: (n_sims, n_periods)
-        - consumption paths (total, subsistence, variable)
-        - weight paths (stock, bond, cash)
-        - rate_paths, stock_return_paths
-        - default_flags, default_ages
+        SimulationResult containing all simulation outputs with unified field names.
+        Arrays are 2D [n_sims, n_periods] for Monte Carlo, squeezed to 1D for single sim.
     """
     if initial_rate is None:
         initial_rate = econ_params.r_bar
@@ -548,37 +547,52 @@ def simulate_with_strategy(
                 savings = earnings[t] - actions.total_consumption
                 financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
 
-    return {
-        # Core paths
-        'financial_wealth_paths': financial_wealth_paths,
-        'human_capital_paths': human_capital_paths,
-        'total_wealth_paths': total_wealth_paths,
-        'pv_expenses_paths': pv_expenses_paths,
-        'net_worth_paths': net_worth_paths,
-        # Consumption
-        'total_consumption_paths': total_consumption_paths,
-        'subsistence_consumption_paths': subsistence_consumption_paths,
-        'variable_consumption_paths': variable_consumption_paths,
-        'savings_paths': savings_paths,
-        # Weights
-        'stock_weight_paths': stock_weight_paths,
-        'bond_weight_paths': bond_weight_paths,
-        'cash_weight_paths': cash_weight_paths,
-        # Market paths
-        'rate_paths': rate_paths,
-        'stock_return_paths': stock_return_paths,
-        'bond_return_paths': bond_return_paths,
-        # Default tracking
-        'default_flags': default_flags,
-        'default_ages': default_ages,
-        # Reference arrays
-        'earnings': earnings,
-        'expenses': expenses,
-        # Targets
-        'target_stock': target_stock,
-        'target_bond': target_bond,
-        'target_cash': target_cash,
-    }
+    # Compute ages array
+    ages = np.arange(params.start_age, params.end_age)
+
+    # Compute final wealth (last period)
+    final_wealth = financial_wealth_paths[:, -1]
+
+    # Get strategy name from class name
+    strategy_name = type(strategy).__name__
+
+    # For single simulation, squeeze arrays to 1D for cleaner API
+    if n_sims == 1:
+        return SimulationResult(
+            strategy_name=strategy_name,
+            ages=ages,
+            financial_wealth=financial_wealth_paths.squeeze(0),
+            consumption=total_consumption_paths.squeeze(0),
+            subsistence_consumption=subsistence_consumption_paths.squeeze(0),
+            variable_consumption=variable_consumption_paths.squeeze(0),
+            stock_weight=stock_weight_paths.squeeze(0),
+            bond_weight=bond_weight_paths.squeeze(0),
+            cash_weight=cash_weight_paths.squeeze(0),
+            interest_rates=rate_paths.squeeze(0),
+            stock_returns=stock_return_paths.squeeze(0),
+            defaulted=default_flags[0],
+            default_age=default_ages[0],
+            final_wealth=final_wealth[0],
+            description=description,
+        )
+
+    return SimulationResult(
+        strategy_name=strategy_name,
+        ages=ages,
+        financial_wealth=financial_wealth_paths,
+        consumption=total_consumption_paths,
+        subsistence_consumption=subsistence_consumption_paths,
+        variable_consumption=variable_consumption_paths,
+        stock_weight=stock_weight_paths,
+        bond_weight=bond_weight_paths,
+        cash_weight=cash_weight_paths,
+        interest_rates=rate_paths,
+        stock_returns=stock_return_paths,
+        defaulted=default_flags,
+        default_age=default_ages,
+        final_wealth=final_wealth,
+        description=description,
+    )
 
 
 # =============================================================================
@@ -1046,191 +1060,6 @@ def compute_lifecycle_median_path(
 
 
 # =============================================================================
-# Rule of Thumb Strategy
-# =============================================================================
-
-def compute_rule_of_thumb_strategy(
-    params: LifecycleParams = None,
-    econ_params: EconomicParams = None,
-    savings_rate: float = 0.15,
-    withdrawal_rate: float = 0.04,
-    target_duration: float = 6.0,
-    stock_returns: np.ndarray = None,
-    interest_rates: np.ndarray = None,
-    bond_returns: np.ndarray = None,
-) -> RuleOfThumbResult:
-    """
-    Compute lifecycle path using the classic "rule of thumb" financial advisor strategy.
-
-    This implements traditional heuristics:
-    - During working years: Save 15% of income
-    - Allocation: (100 - age)% in stocks, rest split between bonds/cash to achieve target duration
-    - At retirement: Freeze allocation at retirement age
-    - Retirement withdrawal: 4% of initial retirement wealth (fixed, not adjusted)
-
-    This is NOT optimal but represents common retail advice.
-    """
-    if params is None:
-        params = LifecycleParams()
-    if econ_params is None:
-        econ_params = EconomicParams()
-
-    total_years = params.end_age - params.start_age
-    working_years = params.retirement_age - params.start_age
-    ages = np.arange(params.start_age, params.end_age)
-
-    # Get earnings profile
-    earnings_profile = compute_earnings_profile(params)
-    earnings = np.zeros(total_years)
-    earnings[:working_years] = earnings_profile
-
-    # Compute expenses (subsistence)
-    working_exp, retirement_exp = compute_expense_profile(params)
-    expenses = np.zeros(total_years)
-    expenses[:working_years] = working_exp
-    expenses[working_years:] = retirement_exp
-
-    # Initialize arrays
-    financial_wealth = np.zeros(total_years)
-    financial_wealth[0] = params.initial_wealth
-    total_consumption = np.zeros(total_years)
-    subsistence_consumption = np.zeros(total_years)
-    variable_consumption = np.zeros(total_years)
-    stock_weight = np.zeros(total_years)
-    bond_weight = np.zeros(total_years)
-    cash_weight = np.zeros(total_years)
-
-    # Use expected returns if not provided
-    r = econ_params.r_bar
-    if stock_returns is None:
-        stock_returns = np.full(total_years, r + econ_params.mu_excess)
-    if interest_rates is None:
-        interest_rates = np.full(total_years, r)
-    if bond_returns is None:
-        # Default to yield + spread (for median path without duration effects)
-        bond_returns = interest_rates + econ_params.mu_bond
-
-    defaulted = False
-    default_age = None
-    fixed_retirement_consumption = None
-    retirement_stock_weight = None
-    retirement_bond_weight = None
-    retirement_cash_weight = None
-
-    for t in range(total_years):
-        age = params.start_age + t
-        fw = financial_wealth[t]
-
-        # Compute allocation: (100 - age)% stocks
-        long_bond_duration = econ_params.bond_duration
-        bond_weight_in_fi = min(1.0, target_duration / long_bond_duration) if long_bond_duration > 0 else 0.0
-
-        if t < working_years:
-            stock_pct = max(0.0, min(1.0, (100 - age) / 100.0))
-            fixed_income_pct = 1.0 - stock_pct
-            bond_pct = fixed_income_pct * bond_weight_in_fi
-            cash_pct = fixed_income_pct * (1.0 - bond_weight_in_fi)
-        else:
-            if retirement_stock_weight is None:
-                retirement_age = params.retirement_age
-                retirement_stock_weight = max(0.0, min(1.0, (100 - retirement_age) / 100.0))
-                retirement_fixed_income = 1.0 - retirement_stock_weight
-                retirement_bond_weight = retirement_fixed_income * bond_weight_in_fi
-                retirement_cash_weight = retirement_fixed_income * (1.0 - bond_weight_in_fi)
-            stock_pct = retirement_stock_weight
-            bond_pct = retirement_bond_weight
-            cash_pct = retirement_cash_weight
-
-        stock_weight[t] = stock_pct
-        bond_weight[t] = bond_pct
-        cash_weight[t] = cash_pct
-
-        # Compute consumption with subsistence floor
-        subsistence = expenses[t]
-        if t < working_years:
-            baseline_consumption = earnings[t] * (1.0 - savings_rate)
-
-            if baseline_consumption >= subsistence:
-                total_consumption[t] = baseline_consumption
-                subsistence_consumption[t] = subsistence
-                variable_consumption[t] = baseline_consumption - subsistence
-            else:
-                available = earnings[t] + fw
-                if available >= subsistence:
-                    total_consumption[t] = subsistence
-                    subsistence_consumption[t] = subsistence
-                    variable_consumption[t] = 0
-                else:
-                    total_consumption[t] = max(0, available)
-                    subsistence_consumption[t] = total_consumption[t]
-                    variable_consumption[t] = 0
-        else:
-            if fixed_retirement_consumption is None:
-                fixed_retirement_consumption = withdrawal_rate * fw
-
-            if defaulted:
-                total_consumption[t] = 0
-                subsistence_consumption[t] = 0
-                variable_consumption[t] = 0
-            elif fw <= 0:
-                defaulted = True
-                default_age = age
-                total_consumption[t] = 0
-                subsistence_consumption[t] = 0
-                variable_consumption[t] = 0
-            else:
-                target_consumption = max(fixed_retirement_consumption, subsistence)
-                if fw < target_consumption:
-                    total_consumption[t] = fw
-                    subsistence_consumption[t] = min(fw, subsistence)
-                    variable_consumption[t] = max(0, fw - subsistence)
-                else:
-                    total_consumption[t] = target_consumption
-                    subsistence_consumption[t] = subsistence
-                    variable_consumption[t] = target_consumption - subsistence
-
-        # Evolve wealth to next period
-        if t < total_years - 1 and not defaulted:
-            if t < working_years:
-                sav = earnings[t] - total_consumption[t]
-            else:
-                sav = -total_consumption[t]
-
-            stock_ret = stock_returns[t]
-            # Use duration-based bond returns if provided
-            bond_ret = bond_returns[t]
-            cash_ret = interest_rates[t]
-
-            portfolio_return = (
-                stock_weight[t] * stock_ret +
-                bond_weight[t] * bond_ret +
-                cash_weight[t] * cash_ret
-            )
-
-            financial_wealth[t + 1] = fw * (1 + portfolio_return) + sav
-            if financial_wealth[t + 1] < 0:
-                financial_wealth[t + 1] = 0
-
-    return RuleOfThumbResult(
-        ages=ages,
-        financial_wealth=financial_wealth,
-        earnings=earnings,
-        total_consumption=total_consumption,
-        retirement_consumption_fixed=fixed_retirement_consumption if fixed_retirement_consumption else 0,
-        stock_weight=stock_weight,
-        bond_weight=bond_weight,
-        cash_weight=cash_weight,
-        defaulted=defaulted,
-        default_age=default_age,
-        savings_rate=savings_rate,
-        withdrawal_rate=withdrawal_rate,
-        target_duration=target_duration,
-        subsistence_consumption=subsistence_consumption,
-        variable_consumption=variable_consumption,
-    )
-
-
-# =============================================================================
 # Strategy Comparison Functions
 # =============================================================================
 
@@ -1240,56 +1069,54 @@ def compute_median_path_comparison(
     rot_savings_rate: float = 0.15,
     rot_target_duration: float = 6.0,
     rot_withdrawal_rate: float = 0.04,
-) -> MedianPathComparisonResult:
+) -> StrategyComparison:
     """
     Compare LDI strategy vs Rule-of-Thumb on deterministic median paths.
 
-    Both strategies use expected returns (no stochastic simulation).
+    Both strategies use expected returns (zero shocks = deterministic path).
+
+    Returns:
+        StrategyComparison with result_a = LDI, result_b = RuleOfThumb
     """
     if params is None:
         params = LifecycleParams()
     if econ_params is None:
         econ_params = EconomicParams()
 
-    # Compute LDI median path
-    ldi_result = compute_lifecycle_median_path(params, econ_params)
+    # Zero shocks for deterministic median paths
+    n_periods = params.end_age - params.start_age
+    zero_rate_shocks = np.zeros((1, n_periods))
+    zero_stock_shocks = np.zeros((1, n_periods))
 
-    # Compute Rule-of-Thumb median path (using expected returns)
-    rot_result = compute_rule_of_thumb_strategy(
-        params=params,
-        econ_params=econ_params,
+    # Strategy 1: LDI (Liability-Driven Investment)
+    ldi_strategy = LDIStrategy(allow_leverage=False)
+    ldi_result = simulate_with_strategy(
+        ldi_strategy, params, econ_params,
+        zero_rate_shocks, zero_stock_shocks,
+        description="LDI (Liability-Driven Investment)"
+    )
+
+    # Strategy 2: Rule-of-Thumb (100-age rule)
+    rot_strategy = RuleOfThumbStrategy(
         savings_rate=rot_savings_rate,
         withdrawal_rate=rot_withdrawal_rate,
         target_duration=rot_target_duration,
-        stock_returns=None,
-        interest_rates=None,
+    )
+    rot_result = simulate_with_strategy(
+        rot_strategy, params, econ_params,
+        zero_rate_shocks, zero_stock_shocks,
+        description="Rule-of-Thumb (100-age rule)"
     )
 
-    # Compute PV consumption for both strategies
-    r = econ_params.r_bar
-    ldi_pv = compute_pv_consumption(ldi_result.total_consumption, r)
-    rot_pv = compute_pv_consumption(rot_result.total_consumption, r)
-
-    return MedianPathComparisonResult(
-        ages=ldi_result.ages,
-        ldi_financial_wealth=ldi_result.financial_wealth,
-        ldi_total_consumption=ldi_result.total_consumption,
-        ldi_stock_weight=ldi_result.stock_weight_no_short,
-        ldi_bond_weight=ldi_result.bond_weight_no_short,
-        ldi_cash_weight=ldi_result.cash_weight_no_short,
-        ldi_human_capital=ldi_result.human_capital,
-        ldi_net_worth=ldi_result.net_worth,
-        rot_financial_wealth=rot_result.financial_wealth,
-        rot_total_consumption=rot_result.total_consumption,
-        rot_stock_weight=rot_result.stock_weight,
-        rot_bond_weight=rot_result.bond_weight,
-        rot_cash_weight=rot_result.cash_weight,
-        earnings=ldi_result.earnings,
-        ldi_pv_consumption=ldi_pv,
-        rot_pv_consumption=rot_pv,
-        rot_savings_rate=rot_savings_rate,
-        rot_target_duration=rot_target_duration,
-        rot_withdrawal_rate=rot_withdrawal_rate,
+    return StrategyComparison(
+        result_a=ldi_result,
+        result_b=rot_result,
+        strategy_a_params={'allow_leverage': False},
+        strategy_b_params={
+            'savings_rate': rot_savings_rate,
+            'withdrawal_rate': rot_withdrawal_rate,
+            'target_duration': rot_target_duration,
+        },
     )
 
 
@@ -1376,293 +1203,75 @@ def run_strategy_comparison(
     rot_savings_rate: float = 0.15,
     rot_target_duration: float = 6.0,
     rot_withdrawal_rate: float = 0.04,
-) -> StrategyComparisonResult:
+) -> StrategyComparison:
     """
-    Run a comparison between optimal and rule-of-thumb strategies.
+    Run a comparison between LDI and Rule-of-Thumb strategies.
 
-    Both strategies are run with identical random seeds (same market conditions)
-    for a fair comparison. Computes percentile statistics across simulations.
+    Both strategies are run with identical random shocks (same market conditions)
+    for a fair comparison. Statistics are computed on demand via StrategyComparison methods.
+
+    Args:
+        params: Lifecycle parameters
+        econ_params: Economic parameters
+        n_simulations: Number of Monte Carlo simulations
+        random_seed: Random seed for reproducibility
+        bad_returns_early: DEPRECATED - use compare_teaching_scenarios instead
+        percentiles: DEPRECATED - use comparison.wealth_percentiles() instead
+        rot_savings_rate: Rule-of-thumb savings rate during working years
+        rot_target_duration: Rule-of-thumb target bond duration
+        rot_withdrawal_rate: Rule-of-thumb withdrawal rate in retirement
+
+    Returns:
+        StrategyComparison with result_a = LDI, result_b = RuleOfThumb
     """
     if params is None:
         params = LifecycleParams()
     if econ_params is None:
         econ_params = EconomicParams()
-    if percentiles is None:
-        percentiles = [5, 25, 50, 75, 95]
 
-    total_years = params.end_age - params.start_age
-    working_years = params.retirement_age - params.start_age
-    ages = np.arange(params.start_age, params.end_age)
-
-    # Compute optimal target allocations
-    if params.gamma > 0:
-        target_stock, target_bond, target_cash = compute_mv_optimal_allocation(
-            mu_stock=econ_params.mu_excess,
-            mu_bond=econ_params.mu_bond,
-            sigma_s=econ_params.sigma_s,
-            sigma_r=econ_params.sigma_r,
-            rho=econ_params.rho,
-            duration=econ_params.bond_duration,
-            gamma=params.gamma
+    if bad_returns_early:
+        import warnings
+        warnings.warn(
+            "bad_returns_early is deprecated. Use compare_teaching_scenarios.py instead.",
+            DeprecationWarning
         )
-    else:
-        target_stock = params.target_stock_allocation
-        target_bond = params.target_bond_allocation
-        target_cash = 1.0 - target_stock - target_bond
 
     # Generate random shocks once - same for both strategies
+    n_periods = params.end_age - params.start_age
     rng = np.random.default_rng(random_seed)
     rate_shocks, stock_shocks = generate_correlated_shocks(
-        total_years, n_simulations, econ_params.rho, rng
+        n_periods, n_simulations, econ_params.rho, rng
     )
 
-    # Simulate interest rate paths
-    initial_rate = econ_params.r_bar
-    rate_paths = simulate_interest_rates(
-        initial_rate, total_years, n_simulations, econ_params, rate_shocks
+    # Strategy 1: LDI (Liability-Driven Investment)
+    ldi_strategy = LDIStrategy(allow_leverage=False)
+    ldi_result = simulate_with_strategy(
+        ldi_strategy, params, econ_params,
+        rate_shocks, stock_shocks,
+        description="LDI (Optimal)"
     )
 
-    # Simulate stock return paths
-    stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
-
-    # Compute bond returns using duration approximation
-    if econ_params.bond_duration > 0:
-        bond_return_paths = compute_duration_approx_returns(
-            rate_paths, econ_params.bond_duration, econ_params
-        )
-        bond_return_paths = bond_return_paths + econ_params.mu_bond
-    else:
-        bond_return_paths = rate_paths[:, :-1] + econ_params.mu_bond
-
-    # Apply bad returns early if requested
-    if bad_returns_early:
-        for sim in range(n_simulations):
-            for t in range(working_years, min(working_years + 5, total_years)):
-                stock_return_paths[sim, t] = -0.20
-
-    # Get median path for optimal strategy reference
-    median_result = compute_lifecycle_median_path(params, econ_params)
-    earnings = median_result.earnings.copy()
-    expenses = median_result.expenses.copy()
-
-    # Pre-compute static HC and expense decompositions (at r_bar) using DRY helper
-    r = econ_params.r_bar
-    phi = econ_params.phi
-
-    pv_earnings_static, pv_expenses_static, duration_earnings_static, duration_expenses_static = compute_static_pvs(
-        earnings, expenses, working_years, total_years, r, phi
+    # Strategy 2: Rule-of-Thumb
+    rot_strategy = RuleOfThumbStrategy(
+        savings_rate=rot_savings_rate,
+        withdrawal_rate=rot_withdrawal_rate,
+        target_duration=rot_target_duration,
+    )
+    rot_result = simulate_with_strategy(
+        rot_strategy, params, econ_params,
+        rate_shocks, stock_shocks,
+        description="Rule-of-Thumb"
     )
 
-    # Initialize output arrays
-    optimal_wealth_paths = np.zeros((n_simulations, total_years))
-    optimal_consumption_paths = np.zeros((n_simulations, total_years))
-    optimal_default_flags = np.zeros(n_simulations, dtype=bool)
-    optimal_default_ages = np.full(n_simulations, np.nan)
-
-    rot_wealth_paths = np.zeros((n_simulations, total_years))
-    rot_consumption_paths = np.zeros((n_simulations, total_years))
-    rot_default_flags = np.zeros(n_simulations, dtype=bool)
-    rot_default_ages = np.full(n_simulations, np.nan)
-
-    rot_stock_weight_sample = np.zeros(total_years)
-    rot_bond_weight_sample = np.zeros(total_years)
-    rot_cash_weight_sample = np.zeros(total_years)
-
-    r = econ_params.r_bar
-    avg_median_return = (
-        target_stock * (r + econ_params.mu_excess) +
-        target_bond * r +
-        target_cash * r
-    )
-    consumption_rate = avg_median_return + params.consumption_boost
-
-    # Run simulations
-    for sim in range(n_simulations):
-        # ---- OPTIMAL STRATEGY ----
-        optimal_wealth_paths[sim, 0] = params.initial_wealth
-        opt_defaulted = False
-
-        for t in range(total_years):
-            fw = optimal_wealth_paths[sim, t]
-
-            current_rate = rate_paths[sim, t]
-
-            remaining_expenses = expenses[t:]
-            pv_exp = compute_present_value(remaining_expenses, current_rate,
-                                           econ_params.phi, econ_params.r_bar)
-
-            if t < working_years:
-                remaining_earnings = earnings[t:working_years]
-                hc = compute_present_value(remaining_earnings, current_rate,
-                                           econ_params.phi, econ_params.r_bar)
-            else:
-                hc = 0.0
-
-            net_worth = hc + fw - pv_exp
-
-            subsistence = expenses[t]
-            variable = max(0, consumption_rate * net_worth)
-            total_cons = subsistence + variable
-
-            if t < working_years:
-                if total_cons > earnings[t]:
-                    total_cons = earnings[t]
-            else:
-                if opt_defaulted:
-                    total_cons = 0
-                elif fw <= 0:
-                    opt_defaulted = True
-                    optimal_default_flags[sim] = True
-                    optimal_default_ages[sim] = params.start_age + t
-                    total_cons = 0
-                elif total_cons > fw:
-                    total_cons = fw
-
-            optimal_consumption_paths[sim, t] = total_cons
-
-            if t < total_years - 1 and not opt_defaulted:
-                savings = earnings[t] - total_cons
-
-                # Compute LDI hedge: dynamic HC and expense decomposition at current rate
-                total_wealth = fw + hc
-
-                # Compute duration of remaining expenses at current rate
-                remaining_expenses = expenses[t:]
-                duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
-                if econ_params.bond_duration > 0 and pv_exp > 0:
-                    exp_bond_frac = duration_exp_t / econ_params.bond_duration
-                    exp_bond_t = pv_exp * exp_bond_frac
-                    exp_cash_t = pv_exp * (1.0 - exp_bond_frac)
-                else:
-                    exp_bond_t = 0.0
-                    exp_cash_t = pv_exp
-
-                # Compute HC decomposition at current rate (if working)
-                if t < working_years and hc > 0:
-                    remaining_earnings = earnings[t:working_years]
-                    duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
-                    hc_stock_t = hc * params.stock_beta_human_capital
-                    non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
-                    if econ_params.bond_duration > 0:
-                        hc_bond_frac = duration_hc_t / econ_params.bond_duration
-                        hc_bond_t = non_stock_hc_t * hc_bond_frac
-                        hc_cash_t = non_stock_hc_t * (1.0 - hc_bond_frac)
-                    else:
-                        hc_bond_t = 0.0
-                        hc_cash_t = non_stock_hc_t
-                else:
-                    hc_stock_t = 0.0
-                    hc_bond_t = 0.0
-                    hc_cash_t = 0.0
-
-                # Target financial holdings = target total - HC component + expense component
-                target_fin_stock = target_stock * total_wealth - hc_stock_t
-                target_fin_bond = target_bond * total_wealth - hc_bond_t + exp_bond_t
-                target_fin_cash = target_cash * total_wealth - hc_cash_t + exp_cash_t
-
-                # Normalize to portfolio weights (with no-short constraint)
-                w_s, w_b, w_c = normalize_portfolio_weights(
-                    target_fin_stock, target_fin_bond, target_fin_cash, fw,
-                    target_stock, target_bond, target_cash,
-                    allow_leverage=params.allow_leverage
-                )
-
-                stock_ret = stock_return_paths[sim, t]
-                # Use duration-based bond returns (includes capital gains/losses from rate changes)
-                bond_ret = bond_return_paths[sim, t]
-                cash_ret = rate_paths[sim, t]
-
-                portfolio_return = w_s * stock_ret + w_b * bond_ret + w_c * cash_ret
-                optimal_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
-
-        # ---- RULE OF THUMB STRATEGY ----
-        rot_result = compute_rule_of_thumb_strategy(
-            params=params,
-            econ_params=econ_params,
-            savings_rate=rot_savings_rate,
-            withdrawal_rate=rot_withdrawal_rate,
-            target_duration=rot_target_duration,
-            stock_returns=stock_return_paths[sim, :],
-            interest_rates=rate_paths[sim, :],
-            bond_returns=bond_return_paths[sim, :],
-        )
-
-        rot_wealth_paths[sim, :] = rot_result.financial_wealth
-        rot_consumption_paths[sim, :] = rot_result.total_consumption
-        rot_default_flags[sim] = rot_result.defaulted
-        if rot_result.default_age is not None:
-            rot_default_ages[sim] = rot_result.default_age
-
-        if sim == 0:
-            rot_stock_weight_sample = rot_result.stock_weight.copy()
-            rot_bond_weight_sample = rot_result.bond_weight.copy()
-            rot_cash_weight_sample = rot_result.cash_weight.copy()
-
-    # Compute percentile statistics
-    n_percentiles = len(percentiles)
-    optimal_wealth_percentiles = np.zeros((n_percentiles, total_years))
-    rot_wealth_percentiles = np.zeros((n_percentiles, total_years))
-    optimal_consumption_percentiles = np.zeros((n_percentiles, total_years))
-    rot_consumption_percentiles = np.zeros((n_percentiles, total_years))
-
-    for i, p in enumerate(percentiles):
-        optimal_wealth_percentiles[i, :] = np.percentile(optimal_wealth_paths, p, axis=0)
-        rot_wealth_percentiles[i, :] = np.percentile(rot_wealth_paths, p, axis=0)
-        optimal_consumption_percentiles[i, :] = np.percentile(optimal_consumption_paths, p, axis=0)
-        rot_consumption_percentiles[i, :] = np.percentile(rot_consumption_paths, p, axis=0)
-
-    # Compute summary statistics
-    optimal_default_rate = np.mean(optimal_default_flags)
-    rot_default_rate = np.mean(rot_default_flags)
-    optimal_median_final_wealth = np.median(optimal_wealth_paths[:, -1])
-    rot_median_final_wealth = np.median(rot_wealth_paths[:, -1])
-
-    # Compute PV consumption for each simulation
-    optimal_pv_consumption = np.array([
-        compute_pv_consumption(optimal_consumption_paths[sim, :], r)
-        for sim in range(n_simulations)
-    ])
-    rot_pv_consumption = np.array([
-        compute_pv_consumption(rot_consumption_paths[sim, :], r)
-        for sim in range(n_simulations)
-    ])
-
-    optimal_pv_consumption_percentiles = np.array([
-        np.percentile(optimal_pv_consumption, p) for p in percentiles
-    ])
-    rot_pv_consumption_percentiles = np.array([
-        np.percentile(rot_pv_consumption, p) for p in percentiles
-    ])
-
-    return StrategyComparisonResult(
-        n_simulations=n_simulations,
-        ages=ages,
-        optimal_wealth_paths=optimal_wealth_paths,
-        optimal_consumption_paths=optimal_consumption_paths,
-        optimal_default_flags=optimal_default_flags,
-        optimal_default_ages=optimal_default_ages,
-        rot_wealth_paths=rot_wealth_paths,
-        rot_consumption_paths=rot_consumption_paths,
-        rot_default_flags=rot_default_flags,
-        rot_default_ages=rot_default_ages,
-        rot_stock_weight_sample=rot_stock_weight_sample,
-        rot_bond_weight_sample=rot_bond_weight_sample,
-        rot_cash_weight_sample=rot_cash_weight_sample,
-        percentiles=percentiles,
-        optimal_wealth_percentiles=optimal_wealth_percentiles,
-        rot_wealth_percentiles=rot_wealth_percentiles,
-        optimal_consumption_percentiles=optimal_consumption_percentiles,
-        rot_consumption_percentiles=rot_consumption_percentiles,
-        optimal_default_rate=optimal_default_rate,
-        rot_default_rate=rot_default_rate,
-        optimal_median_final_wealth=optimal_median_final_wealth,
-        rot_median_final_wealth=rot_median_final_wealth,
-        optimal_pv_consumption=optimal_pv_consumption,
-        rot_pv_consumption=rot_pv_consumption,
-        optimal_pv_consumption_percentiles=optimal_pv_consumption_percentiles,
-        rot_pv_consumption_percentiles=rot_pv_consumption_percentiles,
-        stock_return_paths=stock_return_paths,
-        interest_rate_paths=rate_paths,
+    return StrategyComparison(
+        result_a=ldi_result,
+        result_b=rot_result,
+        strategy_a_params={'allow_leverage': False},
+        strategy_b_params={
+            'savings_rate': rot_savings_rate,
+            'withdrawal_rate': rot_withdrawal_rate,
+            'target_duration': rot_target_duration,
+        },
     )
 
 

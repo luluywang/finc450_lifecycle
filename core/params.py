@@ -279,88 +279,6 @@ class RuleOfThumbResult:
 
 
 @dataclass
-class StrategyComparisonResult:
-    """
-    DEPRECATED: Use StrategyComparison instead.
-
-    Results from comparing optimal vs rule-of-thumb strategies.
-    """
-    n_simulations: int
-    ages: np.ndarray
-    # Optimal strategy paths
-    optimal_wealth_paths: np.ndarray
-    optimal_consumption_paths: np.ndarray
-    optimal_default_flags: np.ndarray
-    optimal_default_ages: np.ndarray
-    # Rule-of-thumb paths
-    rot_wealth_paths: np.ndarray
-    rot_consumption_paths: np.ndarray
-    rot_default_flags: np.ndarray
-    rot_default_ages: np.ndarray
-    # Sample allocation path (from first simulation)
-    rot_stock_weight_sample: np.ndarray
-    rot_bond_weight_sample: np.ndarray
-    rot_cash_weight_sample: np.ndarray
-    # Percentile statistics
-    percentiles: List[int]
-    optimal_wealth_percentiles: np.ndarray
-    rot_wealth_percentiles: np.ndarray
-    optimal_consumption_percentiles: np.ndarray
-    rot_consumption_percentiles: np.ndarray
-    # Summary stats
-    optimal_default_rate: float
-    rot_default_rate: float
-    optimal_median_final_wealth: float
-    rot_median_final_wealth: float
-    # PV consumption stats (at time 0)
-    optimal_pv_consumption: np.ndarray  # Shape: (n_sims,) - PV consumption for each sim
-    rot_pv_consumption: np.ndarray      # Shape: (n_sims,)
-    optimal_pv_consumption_percentiles: np.ndarray  # Shape: (n_percentiles,)
-    rot_pv_consumption_percentiles: np.ndarray
-    # Market condition paths (for visualization)
-    stock_return_paths: np.ndarray      # Shape: (n_sims, total_years)
-    interest_rate_paths: np.ndarray     # Shape: (n_sims, total_years)
-
-
-@dataclass
-class MedianPathComparisonResult:
-    """
-    DEPRECATED: Use StrategyComparison with single-sim results instead.
-
-    Results from comparing LDI vs Rule-of-Thumb on deterministic median paths.
-    """
-    ages: np.ndarray
-
-    # LDI (optimal) strategy paths
-    ldi_financial_wealth: np.ndarray
-    ldi_total_consumption: np.ndarray
-    ldi_stock_weight: np.ndarray
-    ldi_bond_weight: np.ndarray
-    ldi_cash_weight: np.ndarray
-    ldi_human_capital: np.ndarray
-    ldi_net_worth: np.ndarray
-
-    # Rule-of-thumb strategy paths
-    rot_financial_wealth: np.ndarray
-    rot_total_consumption: np.ndarray
-    rot_stock_weight: np.ndarray
-    rot_bond_weight: np.ndarray
-    rot_cash_weight: np.ndarray
-
-    # Earnings (same for both)
-    earnings: np.ndarray
-
-    # PV consumption at time 0
-    ldi_pv_consumption: float
-    rot_pv_consumption: float
-
-    # Strategy parameters for display
-    rot_savings_rate: float
-    rot_target_duration: float
-    rot_withdrawal_rate: float
-
-
-@dataclass
 class SimulationResult:
     """
     Unified, strategy-agnostic simulation result.
@@ -493,29 +411,6 @@ class StrategyComparison:
             percentiles = [5, 25, 50, 75, 95]
         result = self.result_a if which == 'a' else self.result_b
         return result.percentile('consumption', percentiles)
-
-
-# =============================================================================
-# Deprecated Result Types (kept for backward compatibility)
-# =============================================================================
-
-@dataclass
-class MedianPathResult:
-    """
-    DEPRECATED: Use SimulationResult with n_sims=1 instead.
-
-    Results from a median-path (deterministic) simulation.
-    """
-    strategy_name: str
-    years: np.ndarray
-    rates: np.ndarray
-    wealth: np.ndarray
-    consumption: np.ndarray
-    stock_weight: np.ndarray
-    mm_weight: np.ndarray
-    lb_weight: np.ndarray
-    liability_pv: np.ndarray
-    funded_ratio: np.ndarray
 
 
 @dataclass

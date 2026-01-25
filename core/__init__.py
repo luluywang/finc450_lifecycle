@@ -26,9 +26,6 @@ from .params import (
     StrategyComparison,     # New unified comparison type
     # Deprecated (kept for backward compatibility)
     RuleOfThumbResult,
-    StrategyComparisonResult,
-    MedianPathComparisonResult,
-    MedianPathResult,
     ScenarioResult,
     # Generic strategy framework
     SimulationState,
@@ -100,7 +97,6 @@ from .simulation import (
     # Strategy computations
     compute_lifecycle_median_path,
     compute_lifecycle_fixed_consumption,
-    compute_rule_of_thumb_strategy,
     compute_median_path_comparison,
     run_lifecycle_monte_carlo,
     run_strategy_comparison,
@@ -125,9 +121,6 @@ __all__ = [
     'StrategyComparison',     # New unified comparison type
     # Deprecated results (kept for backward compatibility)
     'RuleOfThumbResult',
-    'StrategyComparisonResult',
-    'MedianPathComparisonResult',
-    'MedianPathResult',
     'ScenarioResult',
     # Generic strategy framework
     'SimulationState',
@@ -177,7 +170,6 @@ __all__ = [
     'compute_expense_profile',
     'compute_lifecycle_median_path',
     'compute_lifecycle_fixed_consumption',
-    'compute_rule_of_thumb_strategy',
     'compute_median_path_comparison',
     'run_lifecycle_monte_carlo',
     'run_strategy_comparison',

@@ -15,6 +15,7 @@ FIGURE_DPI = 150
 # Output files
 LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_report.pdf
 DASHBOARD_PDF = $(OUTPUT_DIR)/strategy_comparison.pdf
+TEACHING_PDF = $(OUTPUT_DIR)/teaching_scenarios.pdf
 
 # Source files that trigger rebuilds
 CORE_SOURCES = core/params.py core/economics.py core/simulation.py core/strategies.py
@@ -22,7 +23,7 @@ VIZ_SOURCES = visualization/styles.py visualization/helpers.py \
               visualization/lifecycle_plots.py visualization/monte_carlo_plots.py \
               visualization/comparison_plots.py visualization/sensitivity_plots.py
 
-.PHONY: all figures pdfs clean help
+.PHONY: all figures pdfs teaching clean help
 
 # Default target: build everything
 all: figures pdfs
@@ -36,7 +37,10 @@ $(FIGURES_DIR)/.stamp: generate_lecture_figures.py $(CORE_SOURCES) $(VIZ_SOURCES
 	@touch $@
 
 # Generate all PDFs
-pdfs: $(LIFECYCLE_PDF) $(DASHBOARD_PDF)
+pdfs: $(LIFECYCLE_PDF) $(DASHBOARD_PDF) $(TEACHING_PDF)
+
+# Teaching scenarios PDF
+teaching: $(TEACHING_PDF)
 
 # Lifecycle report PDF
 $(LIFECYCLE_PDF): generate_report.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
@@ -48,6 +52,11 @@ $(DASHBOARD_PDF): compare_strategies.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPU
 	@echo "Generating $(DASHBOARD_PDF)..."
 	$(PYTHON) compare_strategies.py
 	@mv strategy_comparison.pdf $@
+
+# Teaching scenarios PDF
+$(TEACHING_PDF): compare_teaching_scenarios.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
+	@echo "Generating $(TEACHING_PDF)..."
+	$(PYTHON) compare_teaching_scenarios.py -o $@
 
 # Create output directories
 $(OUTPUT_DIR):
@@ -73,10 +82,12 @@ help:
 	@echo "  all      - Generate all figures and PDFs (default)"
 	@echo "  figures  - Generate lecture figures ($(FIGURES_DIR)/)"
 	@echo "  pdfs     - Generate PDF reports"
+	@echo "  teaching - Generate teaching scenarios PDF only"
 	@echo "  clean    - Remove all generated files"
 	@echo "  help     - Show this help message"
 	@echo ""
 	@echo "Output files:"
 	@echo "  $(LIFECYCLE_PDF)"
 	@echo "  $(DASHBOARD_PDF)"
+	@echo "  $(TEACHING_PDF)"
 	@echo "  $(FIGURES_DIR)/*.png"

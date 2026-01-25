@@ -4,12 +4,12 @@
 
 The new `SimulationResult` and `StrategyComparison` types are defined in `core/params.py` but not yet used by the simulation functions. The following functions still return legacy types:
 
-| Function | Current Return | Target Return |
-|----------|---------------|---------------|
-| `simulate_with_strategy()` | `dict` | `SimulationResult` |
-| `compute_rule_of_thumb_strategy()` | `RuleOfThumbResult` | `SimulationResult` |
-| `run_strategy_comparison()` | `StrategyComparisonResult` | `StrategyComparison` |
-| `compute_median_path_comparison()` | `MedianPathComparisonResult` | `StrategyComparison` |
+| Function | Current Return | Target Return | Status |
+|----------|---------------|---------------|--------|
+| `simulate_with_strategy()` | `SimulationResult` | `SimulationResult` | Done |
+| `compute_rule_of_thumb_strategy()` | — | — | Removed |
+| `run_strategy_comparison()` | `StrategyComparison` | `StrategyComparison` | Done |
+| `compute_median_path_comparison()` | `StrategyComparison` | `StrategyComparison` | Done |
 
 ### Steps
 
@@ -72,3 +72,8 @@ Update documentation to reflect:
 - Moved PDF page creation to `visualization/report_pages.py`
 - Reduced `generate_report.py` from 1648 to 551 lines (67% reduction)
 - Added `compare_teaching_scenarios.py` for LDI vs RoT analysis
+
+### Migration Table Updates
+
+- `compute_rule_of_thumb_strategy()` removed (functionality replaced by `RuleOfThumbStrategy` class used with `simulate_with_strategy()`)
+- All simulation functions now return unified result types (`SimulationResult` or `StrategyComparison`)
