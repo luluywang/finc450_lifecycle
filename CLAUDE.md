@@ -42,7 +42,7 @@ finc450_lifecycle/
 │
 ├── notebooks/                      # Jupyter notebooks
 ├── data/                           # Data files
-├── output/                         # Generated figures and PDFs (gitignored)
+├── output/                         # Generated figures and PDFs (tracked in git)
 │
 ├── generate_report.py              # Main lifecycle report PDF
 ├── compare_strategies.py           # LDI vs RoT comparison PDF
