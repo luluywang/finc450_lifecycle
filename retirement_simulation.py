@@ -23,13 +23,18 @@ class EconomicParams:
     """Parameters for the economic environment (VAR structure)."""
     r_bar: float = 0.02        # Long-run mean real rate
     phi: float = 1.0           # Interest rate persistence (1.0 = random walk)
-    sigma_r: float = 0.012     # Rate shock volatility
+    sigma_r: float = 0.006     # Rate shock volatility (was 0.012)
     mu_excess: float = 0.04    # Equity risk premium (stock excess return)
-    mu_bond: float = 0.005     # Bond risk premium (excess return over short rate)
+    bond_sharpe: float = 0.037  # Bond Sharpe ratio (replaces fixed mu_bond)
     sigma_s: float = 0.18      # Stock return volatility
-    rho: float = -0.2          # Correlation between rate and stock shocks
+    rho: float = 0.0           # Correlation between rate and stock shocks (was -0.2)
     r_floor: float = 0.001     # Minimum interest rate (0.1%)
     bond_duration: float = 20.0 # Duration for HC decomposition and MV optimization
+
+    @property
+    def mu_bond(self) -> float:
+        """Bond excess return = Sharpe * volatility, where vol = duration * sigma_r."""
+        return self.bond_sharpe * self.bond_duration * self.sigma_r
 
 
 @dataclass
@@ -1456,9 +1461,11 @@ def run_random_walk_monte_carlo(
         phi=1.0,             # No mean reversion
         sigma_r=rw_params.sigma_r,
         mu_excess=econ_params.mu_excess,
+        bond_sharpe=econ_params.bond_sharpe,
         sigma_s=econ_params.sigma_s,
         rho=econ_params.rho,
-        r_floor=rw_params.r_floor
+        r_floor=rw_params.r_floor,
+        bond_duration=econ_params.bond_duration
     )
 
     # Compute bond returns

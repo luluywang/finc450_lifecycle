@@ -897,7 +897,8 @@ def plot_lifecycle_allocation(
     ax.set_title('Total Wealth = Human Capital + Financial Wealth')
     ax.legend(loc='upper right')
     ax.set_xlim(ages[0], ages[-1])
-    ax.set_ylim(0, None)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    # Allow negative values (e.g., student loans)
     ax.grid(True, alpha=0.3)
 
     # Panel 2: Stock Allocation in Financial Portfolio (The Glide Path)

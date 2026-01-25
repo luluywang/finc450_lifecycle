@@ -37,22 +37,22 @@ class LifecycleParams:
     end_age: int = 85            # Planning horizon (death or planning end)
 
     # Income parameters (in $000s for cleaner numbers)
-    initial_earnings: float = 100    # Starting annual earnings ($100k)
-    earnings_growth: float = 0.02    # Real earnings growth rate
-    earnings_hump_age: int = 50      # Age at peak earnings
-    earnings_decline: float = 0.01   # Decline rate after peak
+    initial_earnings: float = 250    # Starting annual earnings ($250k)
+    earnings_growth: float = 0.0     # Real earnings growth rate (flat)
+    earnings_hump_age: int = 65      # Age at peak earnings (at retirement = flat)
+    earnings_decline: float = 0.0    # Decline rate after peak
 
     # Expense parameters (subsistence/baseline)
-    base_expenses: float = 60        # Base annual subsistence expenses ($60k)
-    expense_growth: float = 0.01     # Real expense growth rate
-    retirement_expenses: float = 80  # Retirement subsistence expenses ($80k)
+    base_expenses: float = 100       # Base annual subsistence expenses ($100k)
+    expense_growth: float = 0.0      # Real expense growth rate (flat)
+    retirement_expenses: float = 100 # Retirement subsistence expenses ($100k)
 
     # Consumption parameters
     consumption_share: float = 0.05  # Share of net worth consumed above subsistence
     consumption_boost: float = 0.01  # Boost above median return for consumption rate
 
     # Asset allocation parameters
-    stock_beta_human_capital: float = 0.1    # Beta of human capital to stocks
+    stock_beta_human_capital: float = 0.0    # Beta of human capital to stocks
 
     # Mean-variance optimization parameters
     # If gamma > 0, target allocations are derived from MV optimization
@@ -66,7 +66,7 @@ class LifecycleParams:
     equity_premium: float = 0.04     # Equity risk premium
 
     # Initial financial wealth (can be negative for student loans)
-    initial_wealth: float = 1        # Starting financial wealth ($1k, negative allowed)
+    initial_wealth: float = 100      # Starting financial wealth ($100k, negative allowed)
 
 
 @dataclass
@@ -505,13 +505,18 @@ def compute_lifecycle_median_path(
     # Allocate non-stock portion between bonds and cash based on duration
     # Higher duration = more bond-like (interest rate sensitive)
     # Lower duration (near retirement) = more cash-like
+    #
+    # IMPORTANT: These are unconstrained calculations for the theoretical investor.
+    # Bond fraction can exceed 1.0 when duration > bond_duration, implying a
+    # leveraged bond position offset by negative cash. Constraints (no-shorting)
+    # are applied only at the implementation stage for the financial portfolio.
     hc_bond_component = np.zeros(total_years)
     hc_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
         if econ_params.bond_duration > 0 and non_stock_hc[i] > 0:
-            # Bond fraction based on duration ratio (capped at 1.0)
-            bond_fraction = min(1.0, duration_earnings[i] / econ_params.bond_duration)
+            # Bond fraction based on duration ratio (unconstrained)
+            bond_fraction = duration_earnings[i] / econ_params.bond_duration
             hc_bond_component[i] = non_stock_hc[i] * bond_fraction
             hc_cash_component[i] = non_stock_hc[i] * (1.0 - bond_fraction)
         else:
@@ -520,13 +525,14 @@ def compute_lifecycle_median_path(
 
     # Decompose expense liability into bond/cash components (similar to HC decomposition)
     # Based on duration of expense stream - longer duration = more bond-like
+    # Unconstrained calculation - bond fraction can exceed 1.0
     exp_bond_component = np.zeros(total_years)
     exp_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
         if econ_params.bond_duration > 0 and pv_expenses[i] > 0:
-            # Bond fraction based on expense duration ratio (capped at 1.0)
-            bond_fraction = min(1.0, duration_expenses[i] / econ_params.bond_duration)
+            # Bond fraction based on expense duration ratio (unconstrained)
+            bond_fraction = duration_expenses[i] / econ_params.bond_duration
             exp_bond_component[i] = pv_expenses[i] * bond_fraction
             exp_cash_component[i] = pv_expenses[i] * (1.0 - bond_fraction)
         else:
@@ -608,9 +614,9 @@ def compute_lifecycle_median_path(
     target_total_bonds = target_bond * total_wealth
     target_total_cash = target_cash * total_wealth
 
-    # Target financial holdings = Total target - Human capital component + Expense liability hedge
-    # HC is an implicit asset -> subtract its components
-    # Expense liability is an implicit short -> add bonds/cash to hedge it
+    # Target financial holdings = Total target - Implicit holdings
+    # Implicit = HC (asset) - Expenses (liability)
+    # HC is bond-like asset → subtract; Expenses is bond-like liability → add
     target_fin_stocks = target_total_stocks - hc_stock_component
     target_fin_bonds = target_total_bonds - hc_bond_component + exp_bond_component
     target_fin_cash = target_total_cash - hc_cash_component + exp_cash_component
@@ -804,7 +810,7 @@ def compute_lifecycle_fixed_consumption(
     # Human capital
     human_capital = pv_earnings.copy()
 
-    # HC decomposition
+    # HC decomposition (unconstrained - bond fraction can exceed 1.0)
     hc_stock_component = human_capital * params.stock_beta_human_capital
     non_stock_hc = human_capital * (1.0 - params.stock_beta_human_capital)
     hc_bond_component = np.zeros(total_years)
@@ -812,19 +818,19 @@ def compute_lifecycle_fixed_consumption(
 
     for i in range(total_years):
         if econ_params.bond_duration > 0 and non_stock_hc[i] > 0:
-            bond_fraction = min(1.0, duration_earnings[i] / econ_params.bond_duration)
+            bond_fraction = duration_earnings[i] / econ_params.bond_duration
             hc_bond_component[i] = non_stock_hc[i] * bond_fraction
             hc_cash_component[i] = non_stock_hc[i] * (1.0 - bond_fraction)
         else:
             hc_cash_component[i] = non_stock_hc[i]
 
-    # Decompose expense liability into bond/cash components
+    # Decompose expense liability into bond/cash components (unconstrained)
     exp_bond_component = np.zeros(total_years)
     exp_cash_component = np.zeros(total_years)
 
     for i in range(total_years):
         if econ_params.bond_duration > 0 and pv_expenses[i] > 0:
-            bond_fraction = min(1.0, duration_expenses[i] / econ_params.bond_duration)
+            bond_fraction = duration_expenses[i] / econ_params.bond_duration
             exp_bond_component[i] = pv_expenses[i] * bond_fraction
             exp_cash_component[i] = pv_expenses[i] * (1.0 - bond_fraction)
         else:
@@ -903,8 +909,8 @@ def compute_lifecycle_fixed_consumption(
     total_wealth = financial_wealth + human_capital
 
     # Target financial holdings and weights (same logic as optimal)
-    # HC is an implicit asset -> subtract its components
-    # Expense liability is an implicit short -> add bonds/cash to hedge it
+    # Implicit = HC (asset) - Expenses (liability)
+    # HC is bond-like asset → subtract; Expenses is bond-like liability → add
     target_fin_stocks = target_stock * total_wealth - hc_stock_component
     target_fin_bonds = target_bond * total_wealth - hc_bond_component + exp_bond_component
     target_fin_cash = target_cash * total_wealth - hc_cash_component + exp_cash_component
@@ -4165,22 +4171,28 @@ def create_base_case_page(
     }
 
     # ===== Section 1: Assumptions =====
-    # Earnings Profile
+    # Income and Expenses on same chart
     ax = fig.add_subplot(gs[0, 0])
-    ax.plot(x, result.earnings, color=COLORS['earnings'], linewidth=2)
+    ax.plot(x, result.earnings, color=COLORS['earnings'], linewidth=2, label='Earnings')
+    ax.plot(x, result.expenses, color=COLORS['expenses'], linewidth=2, label='Expenses')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5, label='Retirement')
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
-    ax.set_title('Earnings Profile ($k)', fontweight='bold')
+    ax.set_title('Income & Expenses ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # Expense Profile
+    # Savings = Earnings - Expenses (shows the lifecycle cash flow problem)
     ax = fig.add_subplot(gs[0, 1])
-    ax.plot(x, result.expenses, color=COLORS['expenses'], linewidth=2)
+    savings = result.earnings - result.expenses
+    ax.fill_between(x, 0, savings, where=savings >= 0, alpha=0.7, color=COLORS['earnings'], label='Savings')
+    ax.fill_between(x, 0, savings, where=savings < 0, alpha=0.7, color=COLORS['expenses'], label='Drawdown')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
-    ax.set_title('Expense Profile ($k)', fontweight='bold')
+    ax.set_title('Cash Flow: Earnings − Expenses ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
 
     # ===== Section 2: Forward-Looking Values =====
     # Present Values
@@ -4215,44 +4227,43 @@ def create_base_case_page(
     ax.set_title('Human Capital vs Financial Wealth ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # HC Decomposition (stacked area)
+    # HC Decomposition (line chart - allows negative values)
     ax = fig.add_subplot(gs[2, 1])
-    ax.fill_between(x, 0, result.hc_cash_component, alpha=0.7, color=COLORS['cash'], label='HC Cash')
-    ax.fill_between(x, result.hc_cash_component,
-                   result.hc_cash_component + result.hc_bond_component,
-                   alpha=0.7, color=COLORS['bond'], label='HC Bond')
-    ax.fill_between(x, result.hc_cash_component + result.hc_bond_component,
-                   result.hc_cash_component + result.hc_bond_component + result.hc_stock_component,
-                   alpha=0.7, color=COLORS['stock'], label='HC Stock')
+    ax.plot(x, result.hc_cash_component, color=COLORS['cash'], linewidth=2, label='HC Cash')
+    ax.plot(x, result.hc_bond_component, color=COLORS['bond'], linewidth=2, label='HC Bond')
+    ax.plot(x, result.hc_stock_component, color=COLORS['stock'], linewidth=2, label='HC Stock')
+    ax.plot(x, result.human_capital, color='black', linewidth=1.5, linestyle='--', label='Total HC')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
     ax.set_title('Human Capital Decomposition ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # Expense Liability Decomposition (stacked area)
+    # Expense Liability Decomposition (line chart - allows negative values)
     ax = fig.add_subplot(gs[3, 0])
-    ax.fill_between(x, 0, result.exp_cash_component, alpha=0.7, color=COLORS['cash'], label='Expense Cash')
-    ax.fill_between(x, result.exp_cash_component,
-                   result.exp_cash_component + result.exp_bond_component,
-                   alpha=0.7, color=COLORS['bond'], label='Expense Bond')
+    ax.plot(x, result.exp_cash_component, color=COLORS['cash'], linewidth=2, label='Expense Cash')
+    ax.plot(x, result.exp_bond_component, color=COLORS['bond'], linewidth=2, label='Expense Bond')
+    ax.plot(x, result.pv_expenses, color='black', linewidth=1.5, linestyle='--', label='Total Expenses')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
     ax.set_title('Expense Liability Decomposition ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # Net HC minus Expenses (stacked area)
+    # Net HC minus Expenses (line chart - allows negative values)
     ax = fig.add_subplot(gs[3, 1])
     # Net = HC - Expenses for each component
     net_stock = result.hc_stock_component  # Expenses have no stock component
     net_bond = result.hc_bond_component - result.exp_bond_component
     net_cash = result.hc_cash_component - result.exp_cash_component
+    net_total = net_stock + net_bond + net_cash
 
-    ax.fill_between(x, 0, net_cash, alpha=0.7, color=COLORS['cash'], label='Net Cash')
-    ax.fill_between(x, net_cash, net_cash + net_bond, alpha=0.7, color=COLORS['bond'], label='Net Bond')
-    ax.fill_between(x, net_cash + net_bond, net_cash + net_bond + net_stock,
-                   alpha=0.7, color=COLORS['stock'], label='Net Stock')
+    ax.plot(x, net_cash, color=COLORS['cash'], linewidth=2, label='Net Cash')
+    ax.plot(x, net_bond, color=COLORS['bond'], linewidth=2, label='Net Bond')
+    ax.plot(x, net_stock, color=COLORS['stock'], linewidth=2, label='Net Stock')
+    ax.plot(x, net_total, color='black', linewidth=1.5, linestyle='--', label='Net Total')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
@@ -4769,17 +4780,15 @@ def generate_lifecycle_pdf(
     """
     Generate a PDF report showing lifecycle investment strategy.
 
-    NEW STRUCTURE (matching TSX visualizer):
-    - Page 1: BASE CASE (Deterministic Median Path) - 4 sections, 10 charts
-    - Page 2: MONTE CARLO (50 Runs) - 6 chart panels with percentile bands
-    - Pages 3a-c: TEACHING SCENARIOS - Normal, Sequence Risk, Rate Shock
-    - Page 4: BETA COMPARISON - Portfolio allocation & HC decomposition by beta
+    SIMPLIFIED STRUCTURE:
+    - Pages 1-3: Deterministic Median Path for Beta = 0.0, 0.5, 1.0
+    - Page 4: Effect of Stock Beta comparison
 
     Args:
         output_path: Path for output PDF file
         params: Lifecycle parameters (uses defaults if None)
         econ_params: Economic parameters (uses defaults if None)
-        include_legacy_pages: If True, include old comparison pages (beta, gamma, etc.)
+        include_legacy_pages: If True, include old comparison pages (gamma, wealth, etc.)
         use_years: If True, x-axis shows years from career start; if False, shows age
 
     Returns:
@@ -4790,96 +4799,57 @@ def generate_lifecycle_pdf(
     if econ_params is None:
         econ_params = EconomicParams()
 
+    beta_values = [0.0, 0.5, 1.0]
+
     with PdfPages(output_path) as pdf:
         # ====================================================================
-        # PAGE 1: BASE CASE (Deterministic Median Path)
+        # PAGES 1-3: DETERMINISTIC MEDIAN PATH for each Beta
         # ====================================================================
-        print("Generating Page 1: Base Case...")
-        result = compute_lifecycle_median_path(params, econ_params)
+        for page_num, beta in enumerate(beta_values, start=1):
+            print(f"Generating Page {page_num}: Deterministic Path (Beta = {beta})...")
 
-        fig = create_base_case_page(
-            result=result,
-            params=params,
-            econ_params=econ_params,
-            figsize=(20, 24),
-            use_years=use_years
-        )
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
+            # Create params for this beta
+            beta_params = LifecycleParams(
+                start_age=params.start_age,
+                retirement_age=params.retirement_age,
+                end_age=params.end_age,
+                initial_earnings=params.initial_earnings,
+                earnings_growth=params.earnings_growth,
+                earnings_hump_age=params.earnings_hump_age,
+                earnings_decline=params.earnings_decline,
+                base_expenses=params.base_expenses,
+                expense_growth=params.expense_growth,
+                retirement_expenses=params.retirement_expenses,
+                stock_beta_human_capital=beta,
+                gamma=params.gamma,
+                target_stock_allocation=params.target_stock_allocation,
+                target_bond_allocation=params.target_bond_allocation,
+                risk_free_rate=params.risk_free_rate,
+                equity_premium=params.equity_premium,
+                initial_wealth=params.initial_wealth,
+                consumption_boost=params.consumption_boost,
+            )
+            result = compute_lifecycle_median_path(beta_params, econ_params)
 
-        # ====================================================================
-        # PAGE 2: MONTE CARLO (50 Runs)
-        # ====================================================================
-        print("Generating Page 2: Monte Carlo...")
-        mc_params = MonteCarloParams(n_simulations=50, random_seed=42)
-        mc_result = run_lifecycle_monte_carlo(params, econ_params, mc_params)
-
-        fig = create_monte_carlo_page(
-            mc_result=mc_result,
-            params=params,
-            econ_params=econ_params,
-            figsize=(20, 22),
-            use_years=use_years
-        )
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-
-        # ====================================================================
-        # PAGE 3a: TEACHING SCENARIO - Normal Market (Optimal vs Rule of Thumb)
-        # ====================================================================
-        print("Generating Page 3a: Normal Market Scenario...")
-        fig = create_scenario_page(
-            scenario_type='normal',
-            params=params,
-            econ_params=econ_params,
-            figsize=(20, 18),
-            use_years=use_years,
-            n_simulations=50,
-            random_seed=42
-        )
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
+            fig = create_base_case_page(
+                result=result,
+                params=beta_params,
+                econ_params=econ_params,
+                figsize=(20, 24),
+                use_years=use_years
+            )
+            # Update the title to show the beta value
+            fig.suptitle(f'PAGE {page_num}: DETERMINISTIC MEDIAN PATH (Beta = {beta})',
+                        fontsize=16, fontweight='bold', y=0.995)
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
 
         # ====================================================================
-        # PAGE 3b: TEACHING SCENARIO - Sequence Risk (Bad Early Returns)
-        # ====================================================================
-        print("Generating Page 3b: Sequence Risk Scenario...")
-        fig = create_scenario_page(
-            scenario_type='sequenceRisk',
-            params=params,
-            econ_params=econ_params,
-            figsize=(20, 18),
-            use_years=use_years,
-            n_simulations=50,
-            random_seed=42
-        )
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-
-        # ====================================================================
-        # PAGE 3c: TEACHING SCENARIO - Interest Rate Shock
-        # ====================================================================
-        print("Generating Page 3c: Rate Shock Scenario...")
-        fig = create_scenario_page(
-            scenario_type='rateShock',
-            params=params,
-            econ_params=econ_params,
-            figsize=(20, 18),
-            use_years=use_years,
-            n_simulations=50,
-            random_seed=42,
-            rate_shock_age=params.retirement_age,
-            rate_shock_magnitude=-0.02
-        )
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
-
-        # ====================================================================
-        # PAGE 4: BETA COMPARISON (Portfolio Allocation & HC Decomposition)
+        # PAGE 4: BETA COMPARISON (Effect of Stock Beta)
         # ====================================================================
         print("Generating Page 4: Beta Comparison...")
         fig = create_beta_comparison_figure(
-            beta_values=[0.0, 0.5, 1.0],
+            beta_values=beta_values,
             base_params=params,
             econ_params=econ_params,
             figsize=(16, 10),
@@ -4948,56 +4918,34 @@ def generate_lifecycle_pdf(
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
-            # Old strategy comparison figures
-            comparison_result = run_strategy_comparison(
+            # Monte Carlo page
+            print("Generating Monte Carlo page...")
+            mc_params = MonteCarloParams(n_simulations=50, random_seed=42)
+            mc_result = run_lifecycle_monte_carlo(params, econ_params, mc_params)
+            fig = create_monte_carlo_page(
+                mc_result=mc_result,
                 params=params,
                 econ_params=econ_params,
-                n_simulations=50,
-                random_seed=42,
-                bad_returns_early=False,
-            )
-            fig = create_strategy_comparison_figure(
-                comparison_result=comparison_result,
-                params=params,
-                figsize=(18, 12),
-                use_years=use_years,
-                title_suffix=" (Normal Market Conditions)"
+                figsize=(20, 22),
+                use_years=use_years
             )
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
-        # Keep legacy individual pages support (now disabled by default)
-        if False:  # Previously: include_individual_pages
-            # Beta-separated sections: all charts for each beta value
-            beta_values = [0.0, 0.5, 1.0]
-
-            for beta in beta_values:
-                # Create params for this beta
-                beta_params = LifecycleParams(
-                    start_age=params.start_age,
-                    retirement_age=params.retirement_age,
-                    end_age=params.end_age,
-                    initial_earnings=params.initial_earnings,
-                    earnings_growth=params.earnings_growth,
-                    earnings_hump_age=params.earnings_hump_age,
-                    earnings_decline=params.earnings_decline,
-                    base_expenses=params.base_expenses,
-                    expense_growth=params.expense_growth,
-                    retirement_expenses=params.retirement_expenses,
-                    stock_beta_human_capital=beta,
-                    gamma=params.gamma,
-                    target_stock_allocation=params.target_stock_allocation,
-                    target_bond_allocation=params.target_bond_allocation,
-                    risk_free_rate=params.risk_free_rate,
-                    equity_premium=params.equity_premium,
-                    initial_wealth=params.initial_wealth,
+            # Teaching scenarios
+            for scenario_type in ['normal', 'sequenceRisk', 'rateShock']:
+                print(f"Generating {scenario_type} scenario page...")
+                fig = create_scenario_page(
+                    scenario_type=scenario_type,
+                    params=params,
+                    econ_params=econ_params,
+                    figsize=(20, 18),
+                    use_years=use_years,
+                    n_simulations=50,
+                    random_seed=42,
+                    rate_shock_age=params.retirement_age if scenario_type == 'rateShock' else None,
+                    rate_shock_magnitude=-0.02 if scenario_type == 'rateShock' else None
                 )
-                beta_result = compute_lifecycle_median_path(beta_params, econ_params)
-
-                # Page with all charts for this beta
-                fig = create_lifecycle_figure(beta_result, beta_params, figsize=(20, 10), use_years=use_years)
-                fig.suptitle(f'Lifecycle Investment Strategy - Beta = {beta}',
-                            fontsize=14, fontweight='bold', y=1.02)
                 pdf.savefig(fig, bbox_inches='tight')
                 plt.close(fig)
 
@@ -5058,7 +5006,7 @@ Human Capital Allocation:
 Mean-Variance Optimization (Full VCV):
   - Risk-Free Rate (r_bar): {econ_params.r_bar*100:.1f}%
   - Stock Excess Return (mu_s): {econ_params.mu_excess*100:.1f}%
-  - Bond Excess Return (mu_b): {econ_params.mu_bond*100:.2f}%
+  - Bond Sharpe Ratio: {econ_params.bond_sharpe:.2f} → mu_b = {econ_params.mu_bond*100:.2f}%
   - Stock Volatility (sigma_s): {econ_params.sigma_s*100:.0f}%
   - Rate Shock Volatility (sigma_r): {econ_params.sigma_r*100:.1f}%
   - Rate/Stock Correlation (rho): {econ_params.rho:.2f}
@@ -5109,19 +5057,19 @@ def main(
     start_age: int = 25,
     retirement_age: int = 65,
     end_age: int = 85,
-    initial_earnings: float = 100,
-    stock_beta_hc: float = 0.1,
+    initial_earnings: float = 250,
+    stock_beta_hc: float = 0.0,
     bond_duration: float = 20.0,
     gamma: float = 2.0,
     mu_excess: float = 0.04,
-    mu_bond: float = 0.005,
+    bond_sharpe: float = 0.0,
     sigma_s: float = 0.18,
-    sigma_r: float = 0.012,
-    rho: float = -0.2,
+    sigma_r: float = 0.006,
+    rho: float = 0.0,
     r_bar: float = 0.02,
     consumption_share: float = 0.05,
     consumption_boost: float = 0.01,
-    initial_wealth: float = 1.0,
+    initial_wealth: float = 100.0,
     include_scenarios: bool = True,
     use_years: bool = True,
     verbose: bool = True
@@ -5139,7 +5087,7 @@ def main(
         bond_duration: Bond duration for MV optimization (years)
         gamma: Risk aversion coefficient for MV optimization (0 = use fixed targets)
         mu_excess: Equity risk premium (stock excess return)
-        mu_bond: Bond risk premium (excess return over short rate)
+        bond_sharpe: Bond Sharpe ratio (mu_bond = bond_sharpe * bond_duration * sigma_r)
         sigma_s: Stock return volatility
         sigma_r: Interest rate shock volatility
         rho: Correlation between rate shocks and stock shocks
@@ -5158,7 +5106,7 @@ def main(
     econ_params = EconomicParams(
         r_bar=r_bar,
         mu_excess=mu_excess,
-        mu_bond=mu_bond,
+        bond_sharpe=bond_sharpe,
         sigma_s=sigma_s,
         sigma_r=sigma_r,
         rho=rho,
@@ -5169,7 +5117,7 @@ def main(
     if gamma > 0:
         opt_stock, opt_bond, opt_cash = compute_mv_optimal_allocation(
             mu_stock=mu_excess,
-            mu_bond=mu_bond,
+            mu_bond=econ_params.mu_bond,
             sigma_s=sigma_s,
             sigma_r=sigma_r,
             rho=rho,
@@ -5240,32 +5188,32 @@ if __name__ == '__main__':
                        help='Retirement age (default: 65)')
     parser.add_argument('--end-age', type=int, default=85,
                        help='Planning horizon end (default: 85)')
-    parser.add_argument('--initial-earnings', type=float, default=100,
-                       help='Initial earnings in $000s (default: 100)')
-    parser.add_argument('--stock-beta', type=float, default=0.1,
-                       help='Stock beta of human capital (default: 0.1)')
+    parser.add_argument('--initial-earnings', type=float, default=250,
+                       help='Initial earnings in $000s (default: 250)')
+    parser.add_argument('--stock-beta', type=float, default=0.0,
+                       help='Stock beta of human capital (default: 0.0)')
     parser.add_argument('--bond-duration', type=float, default=20.0,
                        help='Bond duration for MV optimization in years (default: 7.0)')
     parser.add_argument('--gamma', type=float, default=2.0,
                        help='Risk aversion for MV optimization (default: 2.0, 0=use fixed targets)')
     parser.add_argument('--mu-excess', type=float, default=0.04,
                        help='Equity risk premium (default: 0.04 = 4%%)')
-    parser.add_argument('--mu-bond', type=float, default=0.005,
-                       help='Bond risk premium over short rate (default: 0.005 = 0.5%%)')
+    parser.add_argument('--bond-sharpe', type=float, default=0.0,
+                       help='Bond Sharpe ratio (default: 0.037); mu_bond = sharpe * duration * sigma_r')
     parser.add_argument('--sigma', type=float, default=0.18,
                        help='Stock return volatility (default: 0.18 = 18%%)')
-    parser.add_argument('--sigma-r', type=float, default=0.012,
-                       help='Interest rate shock volatility (default: 0.012 = 1.2%%)')
-    parser.add_argument('--rho', type=float, default=-0.2,
-                       help='Correlation between rate and stock shocks (default: -0.2)')
+    parser.add_argument('--sigma-r', type=float, default=0.006,
+                       help='Interest rate shock volatility (default: 0.006 = 0.6%%)')
+    parser.add_argument('--rho', type=float, default=0.0,
+                       help='Correlation between rate and stock shocks (default: 0.0)')
     parser.add_argument('--r-bar', type=float, default=0.02,
                        help='Long-run real risk-free rate (default: 0.02 = 2%%)')
     parser.add_argument('--consumption-share', type=float, default=0.05,
                        help='Share of net worth consumed above subsistence (default: 0.05)')
     parser.add_argument('--consumption-boost', type=float, default=0.01,
                        help='Boost above median return for consumption rate (default: 0.01 = 1%%)')
-    parser.add_argument('--initial-wealth', type=float, default=1,
-                       help='Initial financial wealth in $000s (default: 1, can be negative for student loans)')
+    parser.add_argument('--initial-wealth', type=float, default=100,
+                       help='Initial financial wealth in $000s (default: 100, can be negative for student loans)')
     parser.add_argument('--use-age', action='store_true',
                        help='Use age instead of years from start on x-axis')
     parser.add_argument('--no-scenarios', action='store_true',
@@ -5287,7 +5235,7 @@ if __name__ == '__main__':
         bond_duration=args.bond_duration,
         gamma=args.gamma,
         mu_excess=args.mu_excess,
-        mu_bond=args.mu_bond,
+        bond_sharpe=args.bond_sharpe,
         sigma_s=args.sigma,
         sigma_r=args.sigma_r,
         rho=args.rho,

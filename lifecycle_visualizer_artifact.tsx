@@ -5,7 +5,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine
 } from 'recharts';
 
 // =============================================================================
@@ -31,19 +31,23 @@ interface Params {
 
   // Portfolio parameters
   stockBetaHC: number;
-  bondDurationBenchmark: number;
   gamma: number;
   initialWealth: number;
 
   // Market parameters (VCV Merton)
   rBar: number;
   muStock: number;
-  muBond: number;
+  bondSharpe: number;  // Bond Sharpe ratio (muBond = bondSharpe * bondDuration * sigmaR)
   sigmaS: number;
   sigmaR: number;
   rho: number;
   bondDuration: number;
   phi: number;
+}
+
+// Helper function to compute muBond from bondSharpe
+function computeMuBond(params: Params): number {
+  return params.bondSharpe * params.bondDuration * params.sigmaR;
 }
 
 interface LifecycleResult {
@@ -58,6 +62,8 @@ interface LifecycleResult {
   hcStock: number[];
   hcBond: number[];
   hcCash: number[];
+  expBond: number[];
+  expCash: number[];
   financialWealth: number[];
   totalWealth: number[];
   stockWeight: number[];
@@ -70,6 +76,112 @@ interface LifecycleResult {
   targetStock: number;
   targetBond: number;
   targetCash: number;
+  // Market conditions tracking
+  cumulativeStockReturn: number[];  // Cumulative stock return (1 = starting value)
+  interestRate: number[];           // Interest rate path per year
+}
+
+interface MonteCarloResult {
+  ages: number[];
+  runs: LifecycleResult[];
+  // Percentiles for key variables
+  consumption_p05: number[];
+  consumption_p25: number[];
+  consumption_p50: number[];
+  consumption_p75: number[];
+  consumption_p95: number[];
+  financialWealth_p05: number[];
+  financialWealth_p25: number[];
+  financialWealth_p50: number[];
+  financialWealth_p75: number[];
+  financialWealth_p95: number[];
+  totalWealth_p05: number[];
+  totalWealth_p25: number[];
+  totalWealth_p50: number[];
+  totalWealth_p75: number[];
+  totalWealth_p95: number[];
+  // Net Worth = HC + FW - pvExpenses (total wealth including liabilities)
+  netWorth_p05: number[];
+  netWorth_p25: number[];
+  netWorth_p50: number[];
+  netWorth_p75: number[];
+  netWorth_p95: number[];
+  // Market conditions percentiles
+  stockReturn_p05: number[];
+  stockReturn_p25: number[];
+  stockReturn_p50: number[];
+  stockReturn_p75: number[];
+  stockReturn_p95: number[];
+  interestRate_p05: number[];
+  interestRate_p25: number[];
+  interestRate_p50: number[];
+  interestRate_p75: number[];
+  interestRate_p95: number[];
+}
+
+type PageType = 'base' | 'monteCarlo' | 'scenarios';
+
+type ConsumptionRule = 'adaptive' | 'fourPercent';
+
+interface ScenarioParams {
+  consumptionRule: ConsumptionRule;
+  rateShockAge: number;      // Age when rate shock occurs
+  rateShockMagnitude: number; // Change in rate (e.g., -0.02 for 2% drop)
+  badReturnsEarly: boolean;   // Force bad returns in first 10 years of retirement
+}
+
+// type StrategyType = 'optimal' | 'ruleOfThumb'; // Kept for documentation
+
+interface StrategyResult {
+  ages: number[];
+  financialWealth: number[];
+  totalConsumption: number[];
+  subsistenceConsumption: number[];
+  variableConsumption: number[];
+  stockWeight: number[];
+  bondWeight: number[];
+  cashWeight: number[];
+  savings: number[];
+  defaulted: boolean;
+  defaultAge: number | null;
+  terminalWealth: number;
+  // For scenario visualization
+  cumulativeStockReturn: number[];  // Cumulative stock return (1 = starting value)
+  interestRate: number[];           // Interest rate path
+}
+
+// =============================================================================
+// Random Number Generation
+// =============================================================================
+
+// Seedable random number generator (Mulberry32)
+function mulberry32(seed: number): () => number {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Box-Muller transform for normal distribution
+function boxMuller(rand: () => number): number {
+  const u1 = rand();
+  const u2 = rand();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+// Generate correlated normal shocks
+function generateCorrelatedShocks(
+  rand: () => number,
+  rho: number
+): [number, number] {
+  const z1 = boxMuller(rand);
+  const z2 = boxMuller(rand);
+  // z1 = stock shock, z2 = rate shock (correlated with z1)
+  const stockShock = z1;
+  const rateShock = rho * z1 + Math.sqrt(1 - rho * rho) * z2;
+  return [stockShock, rateShock];
 }
 
 // =============================================================================
@@ -244,8 +356,9 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const workingYears = params.retirementAge - params.startAge;
 
   // Compute target allocations from MV optimization
+  const muBond = computeMuBond(params);
   const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
-    params.muStock, params.muBond, params.sigmaS, params.sigmaR,
+    params.muStock, muBond, params.sigmaS, params.sigmaR,
     params.rho, params.bondDuration, params.gamma
   );
 
@@ -298,13 +411,28 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const hcBond = Array(totalYears).fill(0);
   const hcCash = Array(totalYears).fill(0);
 
+  // Unconstrained calculation - bond fraction can exceed 1.0 when duration > bondDuration
   for (let i = 0; i < totalYears; i++) {
-    if (params.bondDurationBenchmark > 0 && nonStockHC[i] > 0) {
-      const bondFraction = Math.min(1, durationEarnings[i] / params.bondDurationBenchmark);
+    if (params.bondDuration > 0 && nonStockHC[i] > 0) {
+      const bondFraction = durationEarnings[i] / params.bondDuration;
       hcBond[i] = nonStockHC[i] * bondFraction;
       hcCash[i] = nonStockHC[i] * (1 - bondFraction);
     } else {
       hcCash[i] = nonStockHC[i];
+    }
+  }
+
+  // Decompose expenses (liabilities) into bond-like and cash-like
+  const expBond = Array(totalYears).fill(0);
+  const expCash = Array(totalYears).fill(0);
+
+  for (let i = 0; i < totalYears; i++) {
+    if (params.bondDuration > 0 && pvExpenses[i] > 0) {
+      const bondFraction = durationExpenses[i] / params.bondDuration;
+      expBond[i] = pvExpenses[i] * bondFraction;
+      expCash[i] = pvExpenses[i] * (1 - bondFraction);
+    } else {
+      expCash[i] = pvExpenses[i];
     }
   }
 
@@ -430,6 +558,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     hcStock,
     hcBond,
     hcCash,
+    expBond,
+    expCash,
     financialWealth,
     totalWealth,
     stockWeight,
@@ -443,6 +573,1092 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     targetBond,
     targetCash,
   };
+}
+
+// =============================================================================
+// Monte Carlo Simulation
+// =============================================================================
+
+function computeStochasticPath(params: Params, rand: () => number): LifecycleResult {
+  const totalYears = params.endAge - params.startAge;
+  const workingYears = params.retirementAge - params.startAge;
+
+  // Initialize arrays
+  const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
+  const earnings = Array(totalYears).fill(0);
+  const expenses = Array(totalYears).fill(0);
+
+  // Fill earnings and expenses (these don't change with market shocks)
+  const earningsProfile = computeEarningsProfile(params);
+  const expenseProfile = computeExpenseProfile(params);
+
+  for (let i = 0; i < workingYears; i++) {
+    earnings[i] = earningsProfile[i];
+    expenses[i] = expenseProfile.working[i];
+  }
+  for (let i = workingYears; i < totalYears; i++) {
+    expenses[i] = expenseProfile.retirement[i - workingYears];
+  }
+
+  // State variables that evolve with shocks
+  let latentRate = params.rBar;  // Latent rate follows pure random walk
+  let currentRate = params.rBar; // Observed rate = capped latent rate
+  const phi = params.phi;
+
+  // Track arrays for each year
+  const pvEarnings = Array(totalYears).fill(0);
+  const pvExpenses = Array(totalYears).fill(0);
+  const durationEarnings = Array(totalYears).fill(0);
+  const durationExpenses = Array(totalYears).fill(0);
+  const humanCapital = Array(totalYears).fill(0);
+  const hcStock = Array(totalYears).fill(0);
+  const hcBond = Array(totalYears).fill(0);
+  const hcCash = Array(totalYears).fill(0);
+  const expBond = Array(totalYears).fill(0);
+  const expCash = Array(totalYears).fill(0);
+  const financialWealth = Array(totalYears).fill(0);
+  const totalWealth = Array(totalYears).fill(0);
+  const stockWeight = Array(totalYears).fill(0);
+  const bondWeight = Array(totalYears).fill(0);
+  const cashWeight = Array(totalYears).fill(0);
+  const subsistenceConsumption = [...expenses];
+  const variableConsumption = Array(totalYears).fill(0);
+  const totalConsumption = Array(totalYears).fill(0);
+  const netWorth = Array(totalYears).fill(0);
+  // Market conditions tracking
+  const interestRateArr = Array(totalYears).fill(params.rBar);
+  const cumulativeStockReturnArr = Array(totalYears).fill(1);
+  let cumStockReturn = 1;
+
+  financialWealth[0] = params.initialWealth;
+
+  // Simulate year by year
+  for (let i = 0; i < totalYears; i++) {
+    // Generate correlated shocks for this year
+    const [stockShock, rateShock] = generateCorrelatedShocks(rand, params.rho);
+
+    // Update latent rate with pure random walk (no mean reversion)
+    latentRate = latentRate + params.sigmaR * rateShock;
+    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
+    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+
+    // Track interest rate
+    interestRateArr[i] = currentRate;
+
+    // Compute PVs and durations with current rate
+    let remainingEarnings: number[] = [];
+    if (i < workingYears) {
+      remainingEarnings = earnings.slice(i, workingYears);
+    }
+    const remainingExpenses = expenses.slice(i);
+
+    pvEarnings[i] = computePresentValue(remainingEarnings, currentRate, phi, params.rBar);
+    pvExpenses[i] = computePresentValue(remainingExpenses, currentRate, phi, params.rBar);
+    durationEarnings[i] = computeDuration(remainingEarnings, currentRate, phi, params.rBar);
+    durationExpenses[i] = computeDuration(remainingExpenses, currentRate, phi, params.rBar);
+
+    humanCapital[i] = pvEarnings[i];
+
+    // Decompose human capital
+    hcStock[i] = humanCapital[i] * params.stockBetaHC;
+    const nonStockHC = humanCapital[i] * (1 - params.stockBetaHC);
+
+    if (params.bondDuration > 0 && nonStockHC > 0) {
+      const bondFraction = Math.min(1, durationEarnings[i] / params.bondDuration);
+      hcBond[i] = nonStockHC * bondFraction;
+      hcCash[i] = nonStockHC * (1 - bondFraction);
+    } else {
+      hcCash[i] = nonStockHC;
+    }
+
+    // Decompose expenses
+    if (params.bondDuration > 0 && pvExpenses[i] > 0) {
+      const bondFraction = durationExpenses[i] / params.bondDuration;
+      expBond[i] = pvExpenses[i] * bondFraction;
+      expCash[i] = pvExpenses[i] * (1 - bondFraction);
+    } else {
+      expCash[i] = pvExpenses[i];
+    }
+
+    // Compute target allocation based on current market conditions
+    const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+      params.muStock, computeMuBond(params), params.sigmaS, params.sigmaR,
+      params.rho, params.bondDuration, params.gamma
+    );
+
+    totalWealth[i] = financialWealth[i] + humanCapital[i];
+
+    // Portfolio weights
+    const fw = financialWealth[i];
+    if (fw > 1e-6) {
+      const targetFinStocks = targetStock * totalWealth[i] - hcStock[i];
+      const targetFinBonds = targetBond * totalWealth[i] - hcBond[i];
+      const targetFinCash = targetCash * totalWealth[i] - hcCash[i];
+
+      let wStock = targetFinStocks / fw;
+      let wBond = targetFinBonds / fw;
+      let wCash = targetFinCash / fw;
+
+      let equity = Math.max(0, wStock);
+      let fixedIncome = Math.max(0, wBond + wCash);
+
+      const totalAgg = equity + fixedIncome;
+      if (totalAgg > 0) {
+        equity /= totalAgg;
+        fixedIncome /= totalAgg;
+      } else {
+        equity = targetStock;
+        fixedIncome = targetBond + targetCash;
+      }
+
+      if (wBond > 0 && wCash > 0) {
+        const fiTotal = wBond + wCash;
+        bondWeight[i] = fixedIncome * (wBond / fiTotal);
+        cashWeight[i] = fixedIncome * (wCash / fiTotal);
+      } else if (wBond > 0) {
+        bondWeight[i] = fixedIncome;
+      } else if (wCash > 0) {
+        cashWeight[i] = fixedIncome;
+      } else {
+        const targetFI = targetBond + targetCash;
+        if (targetFI > 0) {
+          bondWeight[i] = fixedIncome * (targetBond / targetFI);
+          cashWeight[i] = fixedIncome * (targetCash / targetFI);
+        } else {
+          bondWeight[i] = fixedIncome / 2;
+          cashWeight[i] = fixedIncome / 2;
+        }
+      }
+      stockWeight[i] = equity;
+    }
+
+    // Consumption decision
+    netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
+
+    // Consumption rate based on expected return + 1pp
+    const expectedReturn = currentRate + stockWeight[i] * params.muStock;
+    const consumptionRate = expectedReturn + 0.01;
+
+    variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
+    totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
+
+    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
+      // Working years: cap consumption at earnings (can't borrow against HC)
+      totalConsumption[i] = earnings[i];
+      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+    } else if (earnings[i] === 0) {
+      // Retirement: cap consumption at financial wealth
+      const fw = financialWealth[i];
+      if (subsistenceConsumption[i] > fw) {
+        // Bankruptcy: can't even meet subsistence, consume whatever remains
+        totalConsumption[i] = fw;
+        subsistenceConsumption[i] = fw;
+        variableConsumption[i] = 0;
+      } else if (totalConsumption[i] > fw) {
+        // Can meet subsistence but not variable consumption
+        totalConsumption[i] = fw;
+        variableConsumption[i] = fw - subsistenceConsumption[i];
+      }
+    }
+
+    // Wealth accumulation with stochastic returns
+    // Track cumulative stock return at start of this year
+    cumulativeStockReturnArr[i] = cumStockReturn;
+
+    if (i < totalYears - 1) {
+      const savings = earnings[i] - totalConsumption[i];
+
+      // Realized returns with shocks
+      const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+      const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
+      const cashReturn = currentRate;
+
+      // Update cumulative stock return
+      cumStockReturn *= (1 + stockReturn);
+
+      const portfolioReturn = stockWeight[i] * stockReturn +
+                             bondWeight[i] * bondReturn +
+                             cashWeight[i] * cashReturn;
+
+      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savings);
+    }
+  }
+
+  return {
+    ages,
+    earnings,
+    expenses,
+    pvEarnings,
+    pvExpenses,
+    durationEarnings,
+    durationExpenses,
+    humanCapital,
+    hcStock,
+    hcBond,
+    hcCash,
+    expBond,
+    expCash,
+    financialWealth,
+    totalWealth,
+    stockWeight,
+    bondWeight,
+    cashWeight,
+    subsistenceConsumption,
+    variableConsumption,
+    totalConsumption,
+    netWorth,
+    targetStock: 0,
+    targetBond: 0,
+    targetCash: 0,
+    cumulativeStockReturn: cumulativeStockReturnArr,
+    interestRate: interestRateArr,
+  };
+}
+
+function computePercentile(values: number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (p / 100) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
+function computeMonteCarloSimulation(params: Params, numRuns: number = 50, baseSeed: number = 42): MonteCarloResult {
+  const runs: LifecycleResult[] = [];
+
+  // Run simulations with different seeds
+  for (let run = 0; run < numRuns; run++) {
+    const rand = mulberry32(baseSeed + run * 1000);
+    runs.push(computeStochasticPath(params, rand));
+  }
+
+  const totalYears = params.endAge - params.startAge;
+  const ages = runs[0].ages;
+
+  // Compute percentiles for each year
+  const consumption_p05 = Array(totalYears).fill(0);
+  const consumption_p25 = Array(totalYears).fill(0);
+  const consumption_p50 = Array(totalYears).fill(0);
+  const consumption_p75 = Array(totalYears).fill(0);
+  const consumption_p95 = Array(totalYears).fill(0);
+
+  const financialWealth_p05 = Array(totalYears).fill(0);
+  const financialWealth_p25 = Array(totalYears).fill(0);
+  const financialWealth_p50 = Array(totalYears).fill(0);
+  const financialWealth_p75 = Array(totalYears).fill(0);
+  const financialWealth_p95 = Array(totalYears).fill(0);
+
+  const totalWealth_p05 = Array(totalYears).fill(0);
+  const totalWealth_p25 = Array(totalYears).fill(0);
+  const totalWealth_p50 = Array(totalYears).fill(0);
+  const totalWealth_p75 = Array(totalYears).fill(0);
+  const totalWealth_p95 = Array(totalYears).fill(0);
+
+  const netWorth_p05 = Array(totalYears).fill(0);
+  const netWorth_p25 = Array(totalYears).fill(0);
+  const netWorth_p50 = Array(totalYears).fill(0);
+  const netWorth_p75 = Array(totalYears).fill(0);
+  const netWorth_p95 = Array(totalYears).fill(0);
+
+  // Market conditions percentiles
+  const stockReturn_p05 = Array(totalYears).fill(0);
+  const stockReturn_p25 = Array(totalYears).fill(0);
+  const stockReturn_p50 = Array(totalYears).fill(0);
+  const stockReturn_p75 = Array(totalYears).fill(0);
+  const stockReturn_p95 = Array(totalYears).fill(0);
+
+  const interestRate_p05 = Array(totalYears).fill(0);
+  const interestRate_p25 = Array(totalYears).fill(0);
+  const interestRate_p50 = Array(totalYears).fill(0);
+  const interestRate_p75 = Array(totalYears).fill(0);
+  const interestRate_p95 = Array(totalYears).fill(0);
+
+  for (let i = 0; i < totalYears; i++) {
+    const consumptionValues = runs.map(r => r.totalConsumption[i]);
+    consumption_p05[i] = computePercentile(consumptionValues, 5);
+    consumption_p25[i] = computePercentile(consumptionValues, 25);
+    consumption_p50[i] = computePercentile(consumptionValues, 50);
+    consumption_p75[i] = computePercentile(consumptionValues, 75);
+    consumption_p95[i] = computePercentile(consumptionValues, 95);
+
+    const fwValues = runs.map(r => r.financialWealth[i]);
+    financialWealth_p05[i] = computePercentile(fwValues, 5);
+    financialWealth_p25[i] = computePercentile(fwValues, 25);
+    financialWealth_p50[i] = computePercentile(fwValues, 50);
+    financialWealth_p75[i] = computePercentile(fwValues, 75);
+    financialWealth_p95[i] = computePercentile(fwValues, 95);
+
+    const twValues = runs.map(r => r.totalWealth[i]);
+    totalWealth_p05[i] = computePercentile(twValues, 5);
+    totalWealth_p25[i] = computePercentile(twValues, 25);
+    totalWealth_p50[i] = computePercentile(twValues, 50);
+    totalWealth_p75[i] = computePercentile(twValues, 75);
+    totalWealth_p95[i] = computePercentile(twValues, 95);
+
+    const nwValues = runs.map(r => r.netWorth[i]);
+    netWorth_p05[i] = computePercentile(nwValues, 5);
+    netWorth_p25[i] = computePercentile(nwValues, 25);
+    netWorth_p50[i] = computePercentile(nwValues, 50);
+    netWorth_p75[i] = computePercentile(nwValues, 75);
+    netWorth_p95[i] = computePercentile(nwValues, 95);
+
+    // Stock return percentiles (cumulative)
+    const srValues = runs.map(r => r.cumulativeStockReturn[i]);
+    stockReturn_p05[i] = computePercentile(srValues, 5);
+    stockReturn_p25[i] = computePercentile(srValues, 25);
+    stockReturn_p50[i] = computePercentile(srValues, 50);
+    stockReturn_p75[i] = computePercentile(srValues, 75);
+    stockReturn_p95[i] = computePercentile(srValues, 95);
+
+    // Interest rate percentiles
+    const irValues = runs.map(r => r.interestRate[i]);
+    interestRate_p05[i] = computePercentile(irValues, 5);
+    interestRate_p25[i] = computePercentile(irValues, 25);
+    interestRate_p50[i] = computePercentile(irValues, 50);
+    interestRate_p75[i] = computePercentile(irValues, 75);
+    interestRate_p95[i] = computePercentile(irValues, 95);
+  }
+
+  return {
+    ages,
+    runs,
+    consumption_p05,
+    consumption_p25,
+    consumption_p50,
+    consumption_p75,
+    consumption_p95,
+    financialWealth_p05,
+    financialWealth_p25,
+    financialWealth_p50,
+    financialWealth_p75,
+    financialWealth_p95,
+    totalWealth_p05,
+    totalWealth_p25,
+    totalWealth_p50,
+    totalWealth_p75,
+    totalWealth_p95,
+    netWorth_p05,
+    netWorth_p25,
+    netWorth_p50,
+    netWorth_p75,
+    netWorth_p95,
+    stockReturn_p05,
+    stockReturn_p25,
+    stockReturn_p50,
+    stockReturn_p75,
+    stockReturn_p95,
+    interestRate_p05,
+    interestRate_p25,
+    interestRate_p50,
+    interestRate_p75,
+    interestRate_p95,
+  };
+}
+
+// =============================================================================
+// Scenario Simulation (for teaching concepts)
+// =============================================================================
+
+interface ScenarioResult {
+  ages: number[];
+  financialWealth: number[];
+  totalWealth: number[];      // financialWealth + humanCapital
+  totalConsumption: number[];
+  subsistenceConsumption: number[];
+  variableConsumption: number[];
+  rate: number[];
+  defaulted: boolean;        // Did they fail to meet subsistence?
+  defaultAge: number | null; // Age when default occurred
+  terminalWealth: number;
+  // For scenario visualization
+  cumulativeStockReturn: number[];  // Cumulative stock return (1 = starting value)
+  interestRate: number[];           // Interest rate path
+}
+
+function computeScenarioPath(
+  params: Params,
+  scenario: ScenarioParams,
+  rand: () => number,
+  preRetirementConsumption?: number[]  // Optional: use this consumption during working years
+): ScenarioResult {
+  const totalYears = params.endAge - params.startAge;
+  const workingYears = params.retirementAge - params.startAge;
+
+  const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
+  const earnings = Array(totalYears).fill(0);
+  const expenses = Array(totalYears).fill(0);
+
+  // Fill earnings and expenses
+  const earningsProfile = computeEarningsProfile(params);
+  const expenseProfile = computeExpenseProfile(params);
+
+  for (let i = 0; i < workingYears; i++) {
+    earnings[i] = earningsProfile[i];
+    expenses[i] = expenseProfile.working[i];
+  }
+  for (let i = workingYears; i < totalYears; i++) {
+    expenses[i] = expenseProfile.retirement[i - workingYears];
+  }
+
+  // State tracking
+  let latentRate = params.rBar;  // Latent rate follows pure random walk
+  let currentRate = params.rBar; // Observed rate = capped latent rate
+  const phi = params.phi;
+
+  const financialWealth = Array(totalYears).fill(0);
+  const totalWealthArr = Array(totalYears).fill(0);
+  const subsistenceConsumption = [...expenses];
+  const variableConsumption = Array(totalYears).fill(0);
+  const totalConsumption = Array(totalYears).fill(0);
+  const rateHistory = Array(totalYears).fill(params.rBar);
+  const cumulativeStockReturn = Array(totalYears).fill(1);
+  let cumStockReturn = 1;
+
+  financialWealth[0] = params.initialWealth;
+
+  // For 4% rule: calculate initial withdrawal amount at retirement
+  // Based on FINANCIAL wealth at retirement (not human capital)
+  let fourPercentWithdrawal = 0;
+  let fourPercentCalculated = false;
+
+  let defaulted = false;
+  let defaultAge: number | null = null;
+
+  // Simulate year by year
+  for (let i = 0; i < totalYears; i++) {
+    const age = params.startAge + i;
+
+    // Generate shocks
+    let [stockShock, rateShock] = generateCorrelatedShocks(rand, params.rho);
+
+    // Apply "bad returns early" scenario: force negative stock returns in first 10 years of retirement
+    if (scenario.badReturnsEarly && i >= workingYears && i < workingYears + 10) {
+      stockShock = -Math.abs(stockShock) * 0.5 - 0.3; // Force moderately negative (~-5% avg/year)
+    }
+
+    // Apply rate shock to latent rate at specified age
+    if (age === scenario.rateShockAge) {
+      latentRate += scenario.rateShockMagnitude;
+    }
+
+    // Update latent rate with pure random walk (no mean reversion)
+    latentRate = latentRate + params.sigmaR * rateShock;
+    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
+    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    rateHistory[i] = currentRate;
+
+    // Compute PVs with current rate
+    let remainingEarnings: number[] = [];
+    if (i < workingYears) {
+      remainingEarnings = earnings.slice(i, workingYears);
+    }
+    const remainingExpenses = expenses.slice(i);
+
+    const pvEarnings = computePresentValue(remainingEarnings, currentRate, phi, params.rBar);
+    const pvExpenses = computePresentValue(remainingExpenses, currentRate, phi, params.rBar);
+    const durationEarnings = computeDuration(remainingEarnings, currentRate, phi, params.rBar);
+
+    const humanCapital = pvEarnings;
+
+    // HC decomposition for portfolio
+    const hcStock = humanCapital * params.stockBetaHC;
+    const nonStockHC = humanCapital * (1 - params.stockBetaHC);
+    let hcBond = 0;
+    let hcCash = 0;
+    if (params.bondDuration > 0 && nonStockHC > 0) {
+      const bondFraction = Math.min(1, durationEarnings / params.bondDuration);
+      hcBond = nonStockHC * bondFraction;
+      hcCash = nonStockHC * (1 - bondFraction);
+    } else {
+      hcCash = nonStockHC;
+    }
+
+    // Target allocation
+    const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+      params.muStock, computeMuBond(params), params.sigmaS, params.sigmaR,
+      params.rho, params.bondDuration, params.gamma
+    );
+
+    const totalWealth = financialWealth[i] + humanCapital;
+    totalWealthArr[i] = totalWealth;
+
+    // Portfolio weights
+    let stockWeight = targetStock;
+    let bondWeight = targetBond;
+    let cashWeight = targetCash;
+
+    const fw = financialWealth[i];
+    if (fw > 1e-6) {
+      const targetFinStocks = targetStock * totalWealth - hcStock;
+      const targetFinBonds = targetBond * totalWealth - hcBond;
+      const targetFinCash = targetCash * totalWealth - hcCash;
+
+      let wStock = targetFinStocks / fw;
+      let wBond = targetFinBonds / fw;
+      let wCash = targetFinCash / fw;
+
+      let equity = Math.max(0, wStock);
+      let fixedIncome = Math.max(0, wBond + wCash);
+
+      const totalAgg = equity + fixedIncome;
+      if (totalAgg > 0) {
+        equity /= totalAgg;
+        fixedIncome /= totalAgg;
+      }
+
+      if (wBond > 0 && wCash > 0) {
+        const fiTotal = wBond + wCash;
+        bondWeight = fixedIncome * (wBond / fiTotal);
+        cashWeight = fixedIncome * (wCash / fiTotal);
+      } else if (wBond > 0) {
+        bondWeight = fixedIncome;
+        cashWeight = 0;
+      } else {
+        bondWeight = 0;
+        cashWeight = fixedIncome;
+      }
+      stockWeight = equity;
+    }
+
+    // Consumption decision based on rule
+    const netWorth = humanCapital + financialWealth[i] - pvExpenses;
+
+    if (scenario.consumptionRule === 'adaptive') {
+      // Adaptive: consume based on net worth, always protect subsistence
+      const expectedReturn = currentRate + stockWeight * params.muStock;
+      const consumptionRate = expectedReturn + 0.01;
+      variableConsumption[i] = Math.max(0, consumptionRate * netWorth);
+      totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
+
+      if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
+        // Working years: cap consumption at earnings (can't borrow against HC)
+        totalConsumption[i] = earnings[i];
+        variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+      } else if (earnings[i] === 0) {
+        // Retirement: cap consumption at financial wealth
+        const fw = financialWealth[i];
+        if (subsistenceConsumption[i] > fw) {
+          // Bankruptcy: can't even meet subsistence
+          if (!defaulted) {
+            defaulted = true;
+            defaultAge = params.startAge + i;
+          }
+          // Consume whatever wealth remains
+          totalConsumption[i] = fw;
+          subsistenceConsumption[i] = fw;
+          variableConsumption[i] = 0;
+        } else if (totalConsumption[i] > fw) {
+          // Can meet subsistence but not variable consumption
+          totalConsumption[i] = fw;
+          variableConsumption[i] = fw - subsistenceConsumption[i];
+        }
+      }
+    } else {
+      // 4% Rule: fixed withdrawal from financial wealth at retirement
+      if (i < workingYears) {
+        // Before retirement: use the same consumption as the adaptive case (if provided)
+        if (preRetirementConsumption && preRetirementConsumption[i] !== undefined) {
+          totalConsumption[i] = preRetirementConsumption[i];
+          variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
+        } else {
+          // Fallback: consume from earnings
+          variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+          totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
+          if (totalConsumption[i] > earnings[i]) {
+            totalConsumption[i] = earnings[i];
+            variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+          }
+        }
+      } else {
+        // At retirement, calculate the 4% withdrawal based on FINANCIAL wealth only
+        if (!fourPercentCalculated) {
+          fourPercentWithdrawal = 0.04 * financialWealth[i];
+          fourPercentCalculated = true;
+        }
+
+        // After retirement: fixed 4% withdrawal (same dollar amount each year)
+        totalConsumption[i] = fourPercentWithdrawal;
+        variableConsumption[i] = Math.max(0, fourPercentWithdrawal - subsistenceConsumption[i]);
+
+        // Check if we can meet the withdrawal (or at least subsistence)
+        if (financialWealth[i] < fourPercentWithdrawal) {
+          // Can only withdraw what we have
+          totalConsumption[i] = Math.max(0, financialWealth[i]);
+          variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
+
+          // Check if we can't even meet subsistence
+          if (financialWealth[i] < subsistenceConsumption[i]) {
+            if (!defaulted) {
+              defaulted = true;
+              defaultAge = age;
+            }
+            totalConsumption[i] = Math.max(0, financialWealth[i]);
+            variableConsumption[i] = 0;
+          }
+        }
+      }
+    }
+
+    // Wealth accumulation
+    const savings = earnings[i] - totalConsumption[i];
+
+    // Realized returns with shocks
+    const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+    cumStockReturn *= (1 + stockReturn);
+    cumulativeStockReturn[i] = cumStockReturn;
+
+    if (i < totalYears - 1) {
+      const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
+      const cashReturn = currentRate;
+
+      const portfolioReturn = stockWeight * stockReturn +
+                             bondWeight * bondReturn +
+                             cashWeight * cashReturn;
+
+      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savings);
+    }
+  }
+
+  return {
+    ages,
+    financialWealth,
+    totalWealth: totalWealthArr,
+    totalConsumption,
+    subsistenceConsumption,
+    variableConsumption,
+    rate: rateHistory,
+    defaulted,
+    defaultAge,
+    terminalWealth: financialWealth[financialWealth.length - 1],
+    cumulativeStockReturn,
+    interestRate: rateHistory,
+  };
+}
+
+function runScenarioComparison(
+  params: Params,
+  numRuns: number = 50,
+  baseSeed: number = 42,
+  badReturnsEarly: boolean = false,
+  rateShockAge: number = 0,
+  rateShockMagnitude: number = 0
+): { adaptive: ScenarioResult[]; fourPercent: ScenarioResult[] } {
+  const adaptiveRuns: ScenarioResult[] = [];
+  const fourPercentRuns: ScenarioResult[] = [];
+
+  for (let run = 0; run < numRuns; run++) {
+    const rand = mulberry32(baseSeed + run * 1000);
+
+    // Run adaptive scenario first
+    const adaptiveScenario: ScenarioParams = {
+      consumptionRule: 'adaptive',
+      rateShockAge,
+      rateShockMagnitude,
+      badReturnsEarly,
+    };
+    const adaptiveResult = computeScenarioPath(params, adaptiveScenario, rand);
+    adaptiveRuns.push(adaptiveResult);
+
+    // Run 4% rule with same random seed AND same pre-retirement consumption
+    // This ensures both arrive at retirement with identical wealth
+    const rand2 = mulberry32(baseSeed + run * 1000);
+    const fourPercentScenario: ScenarioParams = {
+      consumptionRule: 'fourPercent',
+      rateShockAge,
+      rateShockMagnitude,
+      badReturnsEarly,
+    };
+    // Pass the adaptive consumption for working years so 4% rule has same starting point
+    fourPercentRuns.push(computeScenarioPath(params, fourPercentScenario, rand2, adaptiveResult.totalConsumption));
+  }
+
+  return { adaptive: adaptiveRuns, fourPercent: fourPercentRuns };
+}
+
+// =============================================================================
+// Strategy Comparison: Optimal vs Rule of Thumb
+// =============================================================================
+
+function computeOptimalStrategy(
+  params: Params,
+  rand: () => number,
+  badReturnsEarly: boolean = false
+): StrategyResult {
+  const totalYears = params.endAge - params.startAge;
+  const workingYears = params.retirementAge - params.startAge;
+
+  const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
+  const earnings = Array(totalYears).fill(0);
+  const expenses = Array(totalYears).fill(0);
+
+  const earningsProfile = computeEarningsProfile(params);
+  const expenseProfile = computeExpenseProfile(params);
+
+  for (let i = 0; i < workingYears; i++) {
+    earnings[i] = earningsProfile[i];
+    expenses[i] = expenseProfile.working[i];
+  }
+  for (let i = workingYears; i < totalYears; i++) {
+    expenses[i] = expenseProfile.retirement[i - workingYears];
+  }
+
+  let latentRate = params.rBar;  // Latent rate follows pure random walk
+  let currentRate = params.rBar; // Observed rate = capped latent rate
+  const phi = params.phi;
+
+  const financialWealth = Array(totalYears).fill(0);
+  const subsistenceConsumption = [...expenses];
+  const variableConsumption = Array(totalYears).fill(0);
+  const totalConsumption = Array(totalYears).fill(0);
+  const stockWeightArr = Array(totalYears).fill(0);
+  const bondWeightArr = Array(totalYears).fill(0);
+  const cashWeightArr = Array(totalYears).fill(0);
+  const savingsArr = Array(totalYears).fill(0);
+  const cumulativeStockReturn = Array(totalYears).fill(1);
+  const interestRateArr = Array(totalYears).fill(params.rBar);
+
+  financialWealth[0] = params.initialWealth;
+
+  let defaulted = false;
+  let defaultAge: number | null = null;
+  let cumStockReturn = 1;
+
+  for (let i = 0; i < totalYears; i++) {
+    let [stockShock, rateShock] = generateCorrelatedShocks(rand, params.rho);
+
+    if (badReturnsEarly && i >= workingYears && i < workingYears + 10) {
+      stockShock = -Math.abs(stockShock) * 0.5 - 0.3; // Force moderately negative (~-5% avg/year)
+    }
+
+    // Update latent rate with pure random walk (no mean reversion)
+    latentRate = latentRate + params.sigmaR * rateShock;
+    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
+    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    interestRateArr[i] = currentRate;
+
+    // Compute PVs for optimal strategy
+    let remainingEarnings: number[] = [];
+    if (i < workingYears) {
+      remainingEarnings = earnings.slice(i, workingYears);
+    }
+    const remainingExpenses = expenses.slice(i);
+
+    const pvEarnings = computePresentValue(remainingEarnings, currentRate, phi, params.rBar);
+    const pvExpenses = computePresentValue(remainingExpenses, currentRate, phi, params.rBar);
+    const durationEarnings = computeDuration(remainingEarnings, currentRate, phi, params.rBar);
+
+    const humanCapital = pvEarnings;
+
+    // HC decomposition
+    const hcStock = humanCapital * params.stockBetaHC;
+    const nonStockHC = humanCapital * (1 - params.stockBetaHC);
+    let hcBond = 0;
+    let hcCash = 0;
+    if (params.bondDuration > 0 && nonStockHC > 0) {
+      const bondFraction = Math.min(1, durationEarnings / params.bondDuration);
+      hcBond = nonStockHC * bondFraction;
+      hcCash = nonStockHC * (1 - bondFraction);
+    } else {
+      hcCash = nonStockHC;
+    }
+
+    // Optimal allocation
+    const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+      params.muStock, computeMuBond(params), params.sigmaS, params.sigmaR,
+      params.rho, params.bondDuration, params.gamma
+    );
+
+    const totalWealth = financialWealth[i] + humanCapital;
+
+    // Portfolio weights
+    let stockWeight = targetStock;
+    let bondWeight = targetBond;
+    let cashWeight = targetCash;
+
+    const fw = financialWealth[i];
+    if (fw > 1e-6) {
+      const targetFinStocks = targetStock * totalWealth - hcStock;
+      const targetFinBonds = targetBond * totalWealth - hcBond;
+      const targetFinCash = targetCash * totalWealth - hcCash;
+
+      let wStock = targetFinStocks / fw;
+      let wBond = targetFinBonds / fw;
+      let wCash = targetFinCash / fw;
+
+      let equity = Math.max(0, wStock);
+      let fixedIncome = Math.max(0, wBond + wCash);
+
+      const totalAgg = equity + fixedIncome;
+      if (totalAgg > 0) {
+        equity /= totalAgg;
+        fixedIncome /= totalAgg;
+      }
+
+      if (wBond > 0 && wCash > 0) {
+        const fiTotal = wBond + wCash;
+        bondWeight = fixedIncome * (wBond / fiTotal);
+        cashWeight = fixedIncome * (wCash / fiTotal);
+      } else if (wBond > 0) {
+        bondWeight = fixedIncome;
+        cashWeight = 0;
+      } else {
+        bondWeight = 0;
+        cashWeight = fixedIncome;
+      }
+      stockWeight = equity;
+    }
+
+    stockWeightArr[i] = stockWeight;
+    bondWeightArr[i] = bondWeight;
+    cashWeightArr[i] = cashWeight;
+
+    // Adaptive consumption
+    const netWorth = humanCapital + financialWealth[i] - pvExpenses;
+    const expectedReturn = currentRate + stockWeight * params.muStock;
+    const consumptionRate = expectedReturn + 0.01;
+
+    variableConsumption[i] = Math.max(0, consumptionRate * netWorth);
+    totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
+
+    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
+      // Working years: cap consumption at earnings (can't borrow against HC)
+      totalConsumption[i] = earnings[i];
+      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+    } else if (earnings[i] === 0) {
+      // Retirement: cap consumption at financial wealth
+      const fw = financialWealth[i];
+      if (subsistenceConsumption[i] > fw) {
+        // Bankruptcy: can't even meet subsistence
+        if (!defaulted) {
+          defaulted = true;
+          defaultAge = params.startAge + i;
+        }
+        // Consume whatever wealth remains
+        totalConsumption[i] = fw;
+        subsistenceConsumption[i] = fw;
+        variableConsumption[i] = 0;
+      } else if (totalConsumption[i] > fw) {
+        // Can meet subsistence but not variable consumption
+        totalConsumption[i] = fw;
+        variableConsumption[i] = fw - subsistenceConsumption[i];
+      }
+    }
+
+    savingsArr[i] = earnings[i] - totalConsumption[i];
+
+    // Wealth accumulation
+    const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+    cumStockReturn *= (1 + stockReturn);
+    cumulativeStockReturn[i] = cumStockReturn;
+
+    if (i < totalYears - 1) {
+      const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
+      const cashReturn = currentRate;
+
+      const portfolioReturn = stockWeight * stockReturn +
+                             bondWeight * bondReturn +
+                             cashWeight * cashReturn;
+
+      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savingsArr[i]);
+    }
+  }
+
+  return {
+    ages,
+    financialWealth,
+    totalConsumption,
+    subsistenceConsumption,
+    variableConsumption,
+    stockWeight: stockWeightArr,
+    bondWeight: bondWeightArr,
+    cashWeight: cashWeightArr,
+    savings: savingsArr,
+    defaulted,
+    defaultAge,
+    terminalWealth: financialWealth[financialWealth.length - 1],
+    cumulativeStockReturn,
+    interestRate: interestRateArr,
+  };
+}
+
+function computeRuleOfThumbStrategy(
+  params: Params,
+  rand: () => number,
+  badReturnsEarly: boolean = false
+): StrategyResult {
+  const totalYears = params.endAge - params.startAge;
+  const workingYears = params.retirementAge - params.startAge;
+
+  const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
+  const earnings = Array(totalYears).fill(0);
+  const expenses = Array(totalYears).fill(0);
+
+  const earningsProfile = computeEarningsProfile(params);
+  const expenseProfile = computeExpenseProfile(params);
+
+  for (let i = 0; i < workingYears; i++) {
+    earnings[i] = earningsProfile[i];
+    expenses[i] = expenseProfile.working[i];
+  }
+  for (let i = workingYears; i < totalYears; i++) {
+    expenses[i] = expenseProfile.retirement[i - workingYears];
+  }
+
+  let latentRate = params.rBar;  // Latent rate follows pure random walk
+  let currentRate = params.rBar; // Observed rate = capped latent rate
+
+  const financialWealth = Array(totalYears).fill(0);
+  const subsistenceConsumption = [...expenses];
+  const variableConsumption = Array(totalYears).fill(0);
+  const totalConsumption = Array(totalYears).fill(0);
+  const stockWeightArr = Array(totalYears).fill(0);
+  const bondWeightArr = Array(totalYears).fill(0);
+  const cashWeightArr = Array(totalYears).fill(0);
+  const savingsArr = Array(totalYears).fill(0);
+  const cumulativeStockReturn = Array(totalYears).fill(1);
+  const interestRateArr = Array(totalYears).fill(params.rBar);
+
+  financialWealth[0] = params.initialWealth;
+
+  let defaulted = false;
+  let defaultAge: number | null = null;
+  let fourPercentWithdrawal = 0;
+  let retirementAllocation = { stock: 0, bond: 0, cash: 0 };
+  let cumStockReturn = 1;
+
+  for (let i = 0; i < totalYears; i++) {
+    const age = params.startAge + i;
+
+    let [stockShock, rateShock] = generateCorrelatedShocks(rand, params.rho);
+
+    if (badReturnsEarly && i >= workingYears && i < workingYears + 10) {
+      stockShock = -Math.abs(stockShock) * 0.5 - 0.3; // Force moderately negative (~-5% avg/year)
+    }
+
+    // Update latent rate with pure random walk (no mean reversion)
+    latentRate = latentRate + params.sigmaR * rateShock;
+    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
+    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    interestRateArr[i] = currentRate;
+
+    // Rule of Thumb allocation: (100 - age)% stocks, rest split 50/50 cash/bonds
+    let stockWeight: number;
+    let bondWeight: number;
+    let cashWeight: number;
+
+    if (i < workingYears) {
+      // During working years: 100 - age in stocks
+      stockWeight = Math.max(0, Math.min(1, (100 - age) / 100));
+      const fixedIncome = 1 - stockWeight;
+      bondWeight = fixedIncome * 0.5;  // Half in long-term bonds
+      cashWeight = fixedIncome * 0.5;  // Half in cash
+    } else {
+      // At retirement: freeze allocation
+      if (i === workingYears) {
+        retirementAllocation.stock = Math.max(0, Math.min(1, (100 - age) / 100));
+        const fixedIncome = 1 - retirementAllocation.stock;
+        retirementAllocation.bond = fixedIncome * 0.5;
+        retirementAllocation.cash = fixedIncome * 0.5;
+        // Set 4% withdrawal
+        fourPercentWithdrawal = 0.04 * financialWealth[i];
+      }
+      stockWeight = retirementAllocation.stock;
+      bondWeight = retirementAllocation.bond;
+      cashWeight = retirementAllocation.cash;
+    }
+
+    stockWeightArr[i] = stockWeight;
+    bondWeightArr[i] = bondWeight;
+    cashWeightArr[i] = cashWeight;
+
+    // Consumption
+    if (i < workingYears) {
+      // Save 20% of income, consume the rest
+      const targetSavings = 0.20 * earnings[i];
+      totalConsumption[i] = earnings[i] - targetSavings;
+      variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
+      savingsArr[i] = targetSavings;
+    } else {
+      // 4% rule in retirement
+      totalConsumption[i] = fourPercentWithdrawal;
+      variableConsumption[i] = Math.max(0, fourPercentWithdrawal - subsistenceConsumption[i]);
+
+      // Check if we can meet the withdrawal
+      if (financialWealth[i] < fourPercentWithdrawal) {
+        totalConsumption[i] = Math.max(0, financialWealth[i]);
+        variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
+
+        if (financialWealth[i] < subsistenceConsumption[i]) {
+          if (!defaulted) {
+            defaulted = true;
+            defaultAge = age;
+          }
+          totalConsumption[i] = Math.max(0, financialWealth[i]);
+          variableConsumption[i] = 0;
+        }
+      }
+
+      savingsArr[i] = -totalConsumption[i]; // Negative savings = withdrawal
+    }
+
+    // Wealth accumulation
+    const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+    cumStockReturn *= (1 + stockReturn);
+    cumulativeStockReturn[i] = cumStockReturn;
+
+    if (i < totalYears - 1) {
+      const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
+      const cashReturn = currentRate;
+
+      const portfolioReturn = stockWeight * stockReturn +
+                             bondWeight * bondReturn +
+                             cashWeight * cashReturn;
+
+      if (i < workingYears) {
+        financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savingsArr[i]);
+      } else {
+        financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) - totalConsumption[i]);
+      }
+    }
+  }
+
+  return {
+    ages,
+    financialWealth,
+    totalConsumption,
+    subsistenceConsumption,
+    variableConsumption,
+    stockWeight: stockWeightArr,
+    bondWeight: bondWeightArr,
+    cashWeight: cashWeightArr,
+    savings: savingsArr,
+    defaulted,
+    defaultAge,
+    terminalWealth: financialWealth[financialWealth.length - 1],
+    cumulativeStockReturn,
+    interestRate: interestRateArr,
+  };
+}
+
+function runStrategyComparison(
+  params: Params,
+  numRuns: number = 50,
+  baseSeed: number = 42,
+  badReturnsEarly: boolean = false
+): { optimal: StrategyResult[]; ruleOfThumb: StrategyResult[] } {
+  const optimalRuns: StrategyResult[] = [];
+  const ruleOfThumbRuns: StrategyResult[] = [];
+
+  for (let run = 0; run < numRuns; run++) {
+    const rand1 = mulberry32(baseSeed + run * 1000);
+    const rand2 = mulberry32(baseSeed + run * 1000);
+
+    optimalRuns.push(computeOptimalStrategy(params, rand1, badReturnsEarly));
+    ruleOfThumbRuns.push(computeRuleOfThumbStrategy(params, rand2, badReturnsEarly));
+  }
+
+  return { optimal: optimalRuns, ruleOfThumb: ruleOfThumbRuns };
 }
 
 // =============================================================================
@@ -572,13 +1788,17 @@ const COLORS = {
 };
 
 // Number formatters
+const formatDollarM = (value: number) => `$${(value / 1000).toFixed(2)}M`;
+const formatDollarK = (value: number) => `$${Math.round(value)}k`;
 const formatDollar = (value: number) => Math.round(value).toLocaleString();
-const formatPercent = (value: number) => Math.round(value);
+const formatPercent = (value: number) => `${Math.round(value)}`;
 const formatYears = (value: number) => value.toFixed(1);
 
-const dollarTooltipFormatter = (value: number) => `$${formatDollar(value)}k`;
-const percentTooltipFormatter = (value: number) => `${formatPercent(value)}%`;
-const yearsTooltipFormatter = (value: number) => `${formatYears(value)} yrs`;
+const dollarMTooltipFormatter = (value: number | undefined) => value !== undefined ? formatDollarM(value) : '';
+const dollarKTooltipFormatter = (value: number | undefined) => value !== undefined ? formatDollarK(value) : '';
+const dollarTooltipFormatter = (value: number | undefined) => value !== undefined ? `$${formatDollar(value)}k` : '';
+const percentTooltipFormatter = (value: number | undefined) => value !== undefined ? `${Math.round(value)}%` : '';
+const yearsTooltipFormatter = (value: number | undefined) => value !== undefined ? `${formatYears(value)} yrs` : '';
 
 function ChartSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -615,6 +1835,9 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
 // =============================================================================
 
 export default function LifecycleVisualizer() {
+  // Page navigation
+  const [currentPage, setCurrentPage] = useState<PageType>('base');
+
   // Default parameters
   const [params, setParams] = useState<Params>({
     startAge: 25,
@@ -628,16 +1851,15 @@ export default function LifecycleVisualizer() {
     expenseGrowth: 0.01,
     retirementExpenses: 80,
     stockBetaHC: 0.1,
-    bondDurationBenchmark: 20,
     gamma: 2,
     initialWealth: 1,
     rBar: 0.02,
-    muStock: 0.04,
-    muBond: 0.005,
+    muStock: 0.03,
+    bondSharpe: 0.10,
     sigmaS: 0.18,
-    sigmaR: 0.012,
-    rho: -0.2,
-    bondDuration: 7,
+    sigmaR: 0.006,
+    rho: 0.0,
+    bondDuration: 20,
     phi: 1.0,
   });
 
@@ -648,6 +1870,160 @@ export default function LifecycleVisualizer() {
   // Compute lifecycle results
   const result = useMemo(() => computeLifecycleMedianPath(params), [params]);
 
+  // Compute Monte Carlo results (only when on that page for performance)
+  const mcResult = useMemo(() => {
+    if (currentPage !== 'monteCarlo') return null;
+    return computeMonteCarloSimulation(params, 50);
+  }, [params, currentPage]);
+
+  // Scenario state
+  const [scenarioType, setScenarioType] = useState<'sequenceRisk' | 'rateShock' | 'optimalVsRuleOfThumb'>('optimalVsRuleOfThumb');
+  const [rateShockAge, setRateShockAge] = useState(50);
+  const [rateShockMagnitude, setRateShockMagnitude] = useState(-0.02);
+  const [scenarioRetirementAge, setScenarioRetirementAge] = useState(params.retirementAge);
+  const [scenarioEndAge, setScenarioEndAge] = useState(params.endAge);
+  // scenarioBadReturns is handled by the scenarioType - sequenceRisk forces bad returns
+
+  // Create modified params for scenarios with custom ages
+  const scenarioParams = useMemo(() => ({
+    ...params,
+    retirementAge: scenarioRetirementAge,
+    endAge: scenarioEndAge,
+  }), [params, scenarioRetirementAge, scenarioEndAge]);
+
+  // Compute scenario comparisons
+  const scenarioResults = useMemo(() => {
+    if (currentPage !== 'scenarios') return null;
+
+    if (scenarioType === 'sequenceRisk') {
+      // Compare adaptive vs 4% rule with bad early returns
+      return runScenarioComparison(scenarioParams, 50, 42, true, 0, 0);
+    } else if (scenarioType === 'rateShock') {
+      // Rate shock scenario
+      return runScenarioComparison(scenarioParams, 50, 42, false, rateShockAge, rateShockMagnitude);
+    }
+    return null;
+  }, [scenarioParams, currentPage, scenarioType, rateShockAge, rateShockMagnitude]);
+
+  // Strategy comparison (Optimal vs Rule of Thumb) - Normal market conditions
+  const strategyResults = useMemo(() => {
+    if (currentPage !== 'scenarios' || scenarioType !== 'optimalVsRuleOfThumb') return null;
+    return runStrategyComparison(scenarioParams, 50, 42, false); // Normal market, no forced bad returns
+  }, [scenarioParams, currentPage, scenarioType]);
+
+  // Compute percentile data for scenario charts (fan charts instead of 50 lines)
+  const scenarioPercentileData = useMemo(() => {
+    if (!scenarioResults) return null;
+    return scenarioResults.adaptive[0].ages.map((age, i) => {
+      const returns = scenarioResults.adaptive.map(r => Math.log(r.cumulativeStockReturn[i]));
+      const rates = scenarioResults.adaptive.map(r => r.interestRate[i] * 100);
+
+      // Financial wealth - Adaptive
+      const fwAdaptive = scenarioResults.adaptive.map(r => r.financialWealth[i]);
+      const fw_adapt_p05 = computePercentile(fwAdaptive, 5);
+      const fw_adapt_p25 = computePercentile(fwAdaptive, 25);
+      const fw_adapt_p50 = computePercentile(fwAdaptive, 50);
+      const fw_adapt_p75 = computePercentile(fwAdaptive, 75);
+      const fw_adapt_p95 = computePercentile(fwAdaptive, 95);
+
+      // Financial wealth - 4% Rule
+      const fw4Pct = scenarioResults.fourPercent.map(r => r.financialWealth[i]);
+      const fw_4pct_p05 = computePercentile(fw4Pct, 5);
+      const fw_4pct_p25 = computePercentile(fw4Pct, 25);
+      const fw_4pct_p50 = computePercentile(fw4Pct, 50);
+      const fw_4pct_p75 = computePercentile(fw4Pct, 75);
+      const fw_4pct_p95 = computePercentile(fw4Pct, 95);
+
+      // Total wealth - Adaptive
+      const twAdaptive = scenarioResults.adaptive.map(r => r.totalWealth[i]);
+      const tw_adapt_p05 = computePercentile(twAdaptive, 5);
+      const tw_adapt_p25 = computePercentile(twAdaptive, 25);
+      const tw_adapt_p50 = computePercentile(twAdaptive, 50);
+      const tw_adapt_p75 = computePercentile(twAdaptive, 75);
+      const tw_adapt_p95 = computePercentile(twAdaptive, 95);
+
+      // Total wealth - 4% Rule
+      const tw4Pct = scenarioResults.fourPercent.map(r => r.totalWealth[i]);
+      const tw_4pct_p05 = computePercentile(tw4Pct, 5);
+      const tw_4pct_p25 = computePercentile(tw4Pct, 25);
+      const tw_4pct_p50 = computePercentile(tw4Pct, 50);
+      const tw_4pct_p75 = computePercentile(tw4Pct, 75);
+      const tw_4pct_p95 = computePercentile(tw4Pct, 95);
+
+      // Consumption - Adaptive
+      const consAdaptive = scenarioResults.adaptive.map(r => r.totalConsumption[i]);
+      const cons_adapt_p05 = computePercentile(consAdaptive, 5);
+      const cons_adapt_p25 = computePercentile(consAdaptive, 25);
+      const cons_adapt_p50 = computePercentile(consAdaptive, 50);
+      const cons_adapt_p75 = computePercentile(consAdaptive, 75);
+      const cons_adapt_p95 = computePercentile(consAdaptive, 95);
+
+      // Consumption - 4% Rule
+      const cons4Pct = scenarioResults.fourPercent.map(r => r.totalConsumption[i]);
+      const cons_4pct_p05 = computePercentile(cons4Pct, 5);
+      const cons_4pct_p25 = computePercentile(cons4Pct, 25);
+      const cons_4pct_p50 = computePercentile(cons4Pct, 50);
+      const cons_4pct_p75 = computePercentile(cons4Pct, 75);
+      const cons_4pct_p95 = computePercentile(cons4Pct, 95);
+
+      return {
+        age,
+        // Stock return percentiles (log scale)
+        sr_p05: computePercentile(returns, 5),
+        sr_p25: computePercentile(returns, 25),
+        sr_p50: computePercentile(returns, 50),
+        sr_p75: computePercentile(returns, 75),
+        sr_p95: computePercentile(returns, 95),
+        // Bands for stacking
+        sr_band_5_25: computePercentile(returns, 25) - computePercentile(returns, 5),
+        sr_band_25_75: computePercentile(returns, 75) - computePercentile(returns, 25),
+        sr_band_75_95: computePercentile(returns, 95) - computePercentile(returns, 75),
+        // Interest rate percentiles
+        rate_p05: computePercentile(rates, 5),
+        rate_p25: computePercentile(rates, 25),
+        rate_p50: computePercentile(rates, 50),
+        rate_p75: computePercentile(rates, 75),
+        rate_p95: computePercentile(rates, 95),
+        // Bands
+        rate_band_5_25: computePercentile(rates, 25) - computePercentile(rates, 5),
+        rate_band_25_75: computePercentile(rates, 75) - computePercentile(rates, 25),
+        rate_band_75_95: computePercentile(rates, 95) - computePercentile(rates, 75),
+        // Financial Wealth - Adaptive
+        fw_adapt_p05, fw_adapt_p25, fw_adapt_p50, fw_adapt_p75, fw_adapt_p95,
+        fw_adapt_band_5_25: fw_adapt_p25 - fw_adapt_p05,
+        fw_adapt_band_25_75: fw_adapt_p75 - fw_adapt_p25,
+        fw_adapt_band_75_95: fw_adapt_p95 - fw_adapt_p75,
+        // Financial Wealth - 4% Rule
+        fw_4pct_p05, fw_4pct_p25, fw_4pct_p50, fw_4pct_p75, fw_4pct_p95,
+        fw_4pct_band_5_25: fw_4pct_p25 - fw_4pct_p05,
+        fw_4pct_band_25_75: fw_4pct_p75 - fw_4pct_p25,
+        fw_4pct_band_75_95: fw_4pct_p95 - fw_4pct_p75,
+        // Total Wealth - Adaptive
+        tw_adapt_p05, tw_adapt_p25, tw_adapt_p50, tw_adapt_p75, tw_adapt_p95,
+        tw_adapt_band_5_25: tw_adapt_p25 - tw_adapt_p05,
+        tw_adapt_band_25_75: tw_adapt_p75 - tw_adapt_p25,
+        tw_adapt_band_75_95: tw_adapt_p95 - tw_adapt_p75,
+        // Total Wealth - 4% Rule
+        tw_4pct_p05, tw_4pct_p25, tw_4pct_p50, tw_4pct_p75, tw_4pct_p95,
+        tw_4pct_band_5_25: tw_4pct_p25 - tw_4pct_p05,
+        tw_4pct_band_25_75: tw_4pct_p75 - tw_4pct_p25,
+        tw_4pct_band_75_95: tw_4pct_p95 - tw_4pct_p75,
+        // Consumption - Adaptive
+        cons_adapt_p05, cons_adapt_p25, cons_adapt_p50, cons_adapt_p75, cons_adapt_p95,
+        cons_adapt_band_5_25: cons_adapt_p25 - cons_adapt_p05,
+        cons_adapt_band_25_75: cons_adapt_p75 - cons_adapt_p25,
+        cons_adapt_band_75_95: cons_adapt_p95 - cons_adapt_p75,
+        // Consumption - 4% Rule
+        cons_4pct_p05, cons_4pct_p25, cons_4pct_p50, cons_4pct_p75, cons_4pct_p95,
+        cons_4pct_band_5_25: cons_4pct_p25 - cons_4pct_p05,
+        cons_4pct_band_25_75: cons_4pct_p75 - cons_4pct_p25,
+        cons_4pct_band_75_95: cons_4pct_p95 - cons_4pct_p75,
+        // Subsistence floor (same for both strategies)
+        subsistence: scenarioResults.adaptive[0].subsistenceConsumption[i],
+      };
+    });
+  }, [scenarioResults]);
+
   // Prepare chart data
   const chartData = useMemo(() => {
     return result.ages.map((age, i) => ({
@@ -655,14 +2031,19 @@ export default function LifecycleVisualizer() {
       earnings: result.earnings[i],
       expenses: result.expenses[i],
       pvEarnings: result.pvEarnings[i],
-      pvExpenses: result.pvExpenses[i],
+      pvExpenses: -result.pvExpenses[i],
       durationEarnings: result.durationEarnings[i],
-      durationExpenses: result.durationExpenses[i],
+      durationExpenses: -result.durationExpenses[i],
       humanCapital: result.humanCapital[i],
       financialWealth: result.financialWealth[i],
       hcStock: result.hcStock[i],
       hcBond: result.hcBond[i],
       hcCash: result.hcCash[i],
+      expBond: -result.expBond[i],
+      expCash: -result.expCash[i],
+      netStock: result.hcStock[i],
+      netBond: result.hcBond[i] - result.expBond[i],
+      netCash: result.hcCash[i] - result.expCash[i],
       stockWeight: result.stockWeight[i] * 100,
       bondWeight: result.bondWeight[i] * 100,
       cashWeight: result.cashWeight[i] * 100,
@@ -671,6 +2052,69 @@ export default function LifecycleVisualizer() {
       totalConsumption: result.totalConsumption[i],
     }));
   }, [result]);
+
+  // Prepare Monte Carlo chart data with band ranges for proper stacking
+  const mcChartData = useMemo(() => {
+    if (!mcResult) return [];
+    return mcResult.ages.map((age, i) => ({
+      age,
+      // Consumption percentiles and bands
+      consumption_p05: mcResult.consumption_p05[i],
+      consumption_p25: mcResult.consumption_p25[i],
+      consumption_p50: mcResult.consumption_p50[i],
+      consumption_p75: mcResult.consumption_p75[i],
+      consumption_p95: mcResult.consumption_p95[i],
+      // Band ranges for proper area rendering
+      consumption_band_5_25: mcResult.consumption_p25[i] - mcResult.consumption_p05[i],
+      consumption_band_25_75: mcResult.consumption_p75[i] - mcResult.consumption_p25[i],
+      consumption_band_75_95: mcResult.consumption_p95[i] - mcResult.consumption_p75[i],
+      // Financial wealth percentiles and bands
+      fw_p05: mcResult.financialWealth_p05[i],
+      fw_p25: mcResult.financialWealth_p25[i],
+      fw_p50: mcResult.financialWealth_p50[i],
+      fw_p75: mcResult.financialWealth_p75[i],
+      fw_p95: mcResult.financialWealth_p95[i],
+      fw_band_5_25: mcResult.financialWealth_p25[i] - mcResult.financialWealth_p05[i],
+      fw_band_25_75: mcResult.financialWealth_p75[i] - mcResult.financialWealth_p25[i],
+      fw_band_75_95: mcResult.financialWealth_p95[i] - mcResult.financialWealth_p75[i],
+      // Total wealth percentiles (FW + HC)
+      tw_p05: mcResult.totalWealth_p05[i],
+      tw_p25: mcResult.totalWealth_p25[i],
+      tw_p50: mcResult.totalWealth_p50[i],
+      tw_p75: mcResult.totalWealth_p75[i],
+      tw_p95: mcResult.totalWealth_p95[i],
+      tw_band_5_25: mcResult.totalWealth_p25[i] - mcResult.totalWealth_p05[i],
+      tw_band_25_75: mcResult.totalWealth_p75[i] - mcResult.totalWealth_p25[i],
+      tw_band_75_95: mcResult.totalWealth_p95[i] - mcResult.totalWealth_p75[i],
+      // Net Worth percentiles (HC + FW - expenses)
+      nw_p05: mcResult.netWorth_p05[i],
+      nw_p25: mcResult.netWorth_p25[i],
+      nw_p50: mcResult.netWorth_p50[i],
+      nw_p75: mcResult.netWorth_p75[i],
+      nw_p95: mcResult.netWorth_p95[i],
+      nw_band_5_25: mcResult.netWorth_p25[i] - mcResult.netWorth_p05[i],
+      nw_band_25_75: mcResult.netWorth_p75[i] - mcResult.netWorth_p25[i],
+      nw_band_75_95: mcResult.netWorth_p95[i] - mcResult.netWorth_p75[i],
+      // Stock return percentiles (cumulative, using log scale for bands)
+      sr_p05: Math.log(mcResult.stockReturn_p05[i]),
+      sr_p25: Math.log(mcResult.stockReturn_p25[i]),
+      sr_p50: Math.log(mcResult.stockReturn_p50[i]),
+      sr_p75: Math.log(mcResult.stockReturn_p75[i]),
+      sr_p95: Math.log(mcResult.stockReturn_p95[i]),
+      sr_band_5_25: Math.log(mcResult.stockReturn_p25[i]) - Math.log(mcResult.stockReturn_p05[i]),
+      sr_band_25_75: Math.log(mcResult.stockReturn_p75[i]) - Math.log(mcResult.stockReturn_p25[i]),
+      sr_band_75_95: Math.log(mcResult.stockReturn_p95[i]) - Math.log(mcResult.stockReturn_p75[i]),
+      // Interest rate percentiles (in percentage)
+      ir_p05: mcResult.interestRate_p05[i] * 100,
+      ir_p25: mcResult.interestRate_p25[i] * 100,
+      ir_p50: mcResult.interestRate_p50[i] * 100,
+      ir_p75: mcResult.interestRate_p75[i] * 100,
+      ir_p95: mcResult.interestRate_p95[i] * 100,
+      ir_band_5_25: (mcResult.interestRate_p25[i] - mcResult.interestRate_p05[i]) * 100,
+      ir_band_25_75: (mcResult.interestRate_p75[i] - mcResult.interestRate_p25[i]) * 100,
+      ir_band_75_95: (mcResult.interestRate_p95[i] - mcResult.interestRate_p75[i]) * 100,
+    }));
+  }, [mcResult]);
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
@@ -687,6 +2131,45 @@ export default function LifecycleVisualizer() {
           Parameters
         </h2>
 
+        <ParamGroup title="Retirement Planning">
+          <StepperInput
+            label="Current Age"
+            value={params.startAge}
+            onChange={(v) => updateParam('startAge', v)}
+            min={20} max={60} step={1} suffix="" decimals={0}
+          />
+          <StepperInput
+            label="Retirement Age"
+            value={params.retirementAge}
+            onChange={(v) => updateParam('retirementAge', v)}
+            min={params.startAge + 5} max={80} step={1} suffix="" decimals={0}
+          />
+          <StepperInput
+            label="End Age"
+            value={params.endAge}
+            onChange={(v) => updateParam('endAge', v)}
+            min={params.retirementAge + 5} max={100} step={1} suffix="" decimals={0}
+          />
+          <StepperInput
+            label="Current Wealth"
+            value={params.initialWealth}
+            onChange={(v) => updateParam('initialWealth', v)}
+            min={0} max={5000} step={10} suffix="$k" decimals={0}
+          />
+          {/* Retirement Summary Box */}
+          <div style={{
+            background: '#e8f5e9',
+            padding: '8px',
+            borderRadius: '4px',
+            fontSize: '11px',
+            marginTop: '8px',
+          }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#2e7d32' }}>Timeline Summary</div>
+            <div>Years Until Retirement: <strong>{params.retirementAge - params.startAge}</strong> years</div>
+            <div>Retirement Duration: <strong>{params.endAge - params.retirementAge}</strong> years</div>
+          </div>
+        </ParamGroup>
+
         <ParamGroup title="Returns & Market">
           <StepperInput
             label="Risk-free rate"
@@ -701,10 +2184,10 @@ export default function LifecycleVisualizer() {
             min={0} max={8} step={0.5} suffix="%" decimals={1}
           />
           <StepperInput
-            label="Bond excess return"
-            value={params.muBond * 100}
-            onChange={(v) => updateParam('muBond', v / 100)}
-            min={0} max={2} step={0.1} suffix="%" decimals={2}
+            label="Bond Sharpe ratio"
+            value={params.bondSharpe}
+            onChange={(v) => updateParam('bondSharpe', v)}
+            min={0} max={0.5} step={0.05} suffix="" decimals={2}
           />
           <StepperInput
             label="Stock volatility (σ)"
@@ -787,12 +2270,6 @@ export default function LifecycleVisualizer() {
             onChange={(v) => updateParam('stockBetaHC', v)}
             min={0} max={0.5} step={0.05} suffix="" decimals={2}
           />
-          <StepperInput
-            label="HC duration benchmark"
-            value={params.bondDurationBenchmark}
-            onChange={(v) => updateParam('bondDurationBenchmark', v)}
-            min={5} max={30} step={1} suffix="yrs" decimals={0}
-          />
         </ParamGroup>
 
         {/* Target allocation summary */}
@@ -816,31 +2293,77 @@ export default function LifecycleVisualizer() {
         overflowY: 'auto',
         background: '#f5f5f5',
       }}>
-        <h1 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', color: '#2c3e50' }}>
-          Lifecycle Path Visualizer
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '16px' }}>
+          <h1 style={{ fontSize: '18px', fontWeight: 'bold', color: '#2c3e50', margin: 0 }}>
+            Lifecycle Path Visualizer
+          </h1>
 
+          {/* Tab Navigation */}
+          <div style={{ display: 'flex', gap: '4px', background: '#e0e0e0', padding: '4px', borderRadius: '8px' }}>
+            <button
+              onClick={() => setCurrentPage('base')}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: currentPage === 'base' ? 'bold' : 'normal',
+                background: currentPage === 'base' ? '#fff' : 'transparent',
+                color: currentPage === 'base' ? '#2c3e50' : '#666',
+                cursor: 'pointer',
+                boxShadow: currentPage === 'base' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              }}
+            >
+              Base Case
+            </button>
+            <button
+              onClick={() => setCurrentPage('monteCarlo')}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: currentPage === 'monteCarlo' ? 'bold' : 'normal',
+                background: currentPage === 'monteCarlo' ? '#fff' : 'transparent',
+                color: currentPage === 'monteCarlo' ? '#2c3e50' : '#666',
+                cursor: 'pointer',
+                boxShadow: currentPage === 'monteCarlo' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              }}
+            >
+              Monte Carlo (50 runs)
+            </button>
+            <button
+              onClick={() => setCurrentPage('scenarios')}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: currentPage === 'scenarios' ? 'bold' : 'normal',
+                background: currentPage === 'scenarios' ? '#fff' : 'transparent',
+                color: currentPage === 'scenarios' ? '#2c3e50' : '#666',
+                cursor: 'pointer',
+                boxShadow: currentPage === 'scenarios' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              }}
+            >
+              Teaching Scenarios
+            </button>
+          </div>
+        </div>
+
+        {currentPage === 'base' && (
+          <>
         {/* Section 1: Assumptions */}
         <ChartSection title="Section 1: Assumptions">
-          <ChartCard title="Earnings Profile ($k)">
+          <ChartCard title="Earnings & Expenses Profile ($k)">
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
                 <YAxis fontSize={10} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '10px' }} />
                 <Line type="monotone" dataKey="earnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Earnings" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
-
-          <ChartCard title="Expense Profile ($k)">
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
-                <Tooltip formatter={dollarTooltipFormatter} />
                 <Line type="monotone" dataKey="expenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Expenses" />
               </LineChart>
             </ResponsiveContainer>
@@ -908,6 +2431,35 @@ export default function LifecycleVisualizer() {
               </AreaChart>
             </ResponsiveContainer>
           </ChartCard>
+
+          <ChartCard title="Expense Liability Decomposition ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={10} />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Area type="monotone" dataKey="expCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Expense Cash" />
+                <Area type="monotone" dataKey="expBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Expense Bond" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Net HC minus Expenses ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={10} />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Area type="monotone" dataKey="netCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Net Cash" />
+                <Area type="monotone" dataKey="netBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Net Bond" />
+                <Area type="monotone" dataKey="netStock" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Net Stock" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </ChartSection>
 
         {/* Section 4: Choices */}
@@ -941,6 +2493,1102 @@ export default function LifecycleVisualizer() {
             </ResponsiveContainer>
           </ChartCard>
         </ChartSection>
+          </>
+        )}
+
+        {currentPage === 'monteCarlo' && mcResult && (
+          <>
+            <div style={{
+              background: '#e8f4f8',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              marginBottom: '24px',
+              fontSize: '13px',
+              color: '#2c3e50',
+            }}>
+              <strong>Monte Carlo Simulation:</strong> 50 independent runs with stochastic shocks to interest rates and returns.
+              Shocks affect rates, which change forward-looking PVs and durations, affecting consumption and portfolio decisions.
+              Charts show percentile lines: 5th, 25th, median (50th), 75th, and 95th percentiles.
+            </div>
+
+            {/* Consumption Fan Chart */}
+            <ChartSection title="Consumption Evolution">
+              <ChartCard title="Total Consumption Distribution ($k)">
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarKTooltipFormatter} />
+                    <Line type="monotone" dataKey="consumption_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="consumption_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="consumption_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="consumption_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="consumption_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Financial Wealth Fan Chart */}
+            <ChartSection title="Financial Wealth Evolution">
+              <ChartCard title="Financial Wealth Distribution ($M)">
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="fw_p05" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="fw_p25" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="fw_p50" stroke={COLORS.fw} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="fw_p75" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="fw_p95" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Net Worth Fan Chart */}
+            <ChartSection title="Net Worth Evolution (HC + FW - Expenses)">
+              <ChartCard title="Net Worth Distribution ($M)">
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="nw_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="nw_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="nw_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="nw_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="nw_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Terminal Wealth Distribution */}
+            <ChartSection title={`Terminal Values (Age ${params.endAge - 1})`}>
+              <ChartCard title="Terminal Financial Wealth Distribution">
+                <div style={{ padding: '16px' }}>
+                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
+                    Distribution of financial wealth at age {params.endAge - 1} across 50 runs:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p05[mcResult.financialWealth_p05.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p25[mcResult.financialWealth_p25.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>Median</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p50[mcResult.financialWealth_p50.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p75[mcResult.financialWealth_p75.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p95[mcResult.financialWealth_p95.length - 1])}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '24px' }}>
+                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
+                      Runs depleted (FW &lt; $10k): {mcResult.runs.filter(r => r.financialWealth[r.financialWealth.length - 1] < 10).length} of 50
+                    </div>
+                  </div>
+                </div>
+              </ChartCard>
+
+              <ChartCard title="Terminal Consumption Distribution">
+                <div style={{ padding: '16px' }}>
+                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
+                    Distribution of annual consumption at age {params.endAge - 1} across 50 runs:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p05[mcResult.consumption_p05.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p25[mcResult.consumption_p25.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>Median</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p50[mcResult.consumption_p50.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p75[mcResult.consumption_p75.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p95[mcResult.consumption_p95.length - 1])}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Market Conditions Charts */}
+            <ChartSection title="Market Conditions">
+              <ChartCard title="Cumulative Stock Returns - Percentile Bands (Log Scale)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={(v) => `${(Math.exp(v) * 100).toFixed(0)}%`} domain={['auto', 'auto']} />
+                    <Tooltip formatter={(v) => v !== undefined ? [`${(Math.exp(v as number) * 100).toFixed(0)}%`, 'Cumulative Return'] : ['', '']} />
+                    <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
+                    <Area type="monotone" dataKey="sr_p05" stackId="sr" fill="transparent" stroke="transparent" />
+                    <Area type="monotone" dataKey="sr_band_5_25" stackId="sr" fill={COLORS.stock} fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                    <Area type="monotone" dataKey="sr_band_25_75" stackId="sr" fill={COLORS.stock} fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                    <Area type="monotone" dataKey="sr_band_75_95" stackId="sr" fill={COLORS.stock} fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                    <Line type="monotone" dataKey="sr_p50" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Median" />
+                    <Line type="monotone" dataKey="sr_p25" stroke={COLORS.stock} strokeWidth={1} strokeDasharray="4 4" dot={false} name="25th %ile" />
+                    <Line type="monotone" dataKey="sr_p75" stroke={COLORS.stock} strokeWidth={1} strokeDasharray="4 4" dot={false} name="75th %ile" />
+                  </AreaChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                  Cumulative stock returns across 50 Monte Carlo runs. Y-axis: 100% = starting value.
+                </div>
+              </ChartCard>
+
+              <ChartCard title="Interest Rate Paths - Percentile Bands">
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={(v) => `${v.toFixed(1)}%`} domain={['auto', 'auto']} />
+                    <Tooltip formatter={(v) => v !== undefined ? [`${(v as number).toFixed(2)}%`, 'Interest Rate'] : ['', '']} />
+                    <Area type="monotone" dataKey="ir_p05" stackId="ir" fill="transparent" stroke="transparent" />
+                    <Area type="monotone" dataKey="ir_band_5_25" stackId="ir" fill={COLORS.bond} fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                    <Area type="monotone" dataKey="ir_band_25_75" stackId="ir" fill={COLORS.bond} fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                    <Area type="monotone" dataKey="ir_band_75_95" stackId="ir" fill={COLORS.bond} fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                    <Line type="monotone" dataKey="ir_p50" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Median" />
+                    <Line type="monotone" dataKey="ir_p25" stroke={COLORS.bond} strokeWidth={1} strokeDasharray="4 4" dot={false} name="25th %ile" />
+                    <Line type="monotone" dataKey="ir_p75" stroke={COLORS.bond} strokeWidth={1} strokeDasharray="4 4" dot={false} name="75th %ile" />
+                  </AreaChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                  Interest rate paths showing how rates evolve stochastically over time.
+                </div>
+              </ChartCard>
+            </ChartSection>
+          </>
+        )}
+
+        {currentPage === 'scenarios' && (
+          <>
+            {/* Scenario Selection */}
+            <div style={{
+              background: '#fff',
+              border: '1px solid #e0e0e0',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '24px',
+            }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px', color: '#2c3e50' }}>
+                Optimal vs Rule of Thumb
+              </div>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
+                Comparing lifecycle-optimal strategy vs common "rules of thumb" (save 20%, 100-age in stocks, 4% withdrawal)
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <button
+                  onClick={() => setScenarioType('optimalVsRuleOfThumb')}
+                  style={{
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderBottom: scenarioType === 'optimalVsRuleOfThumb' ? '3px solid #3498db' : '3px solid transparent',
+                    background: scenarioType === 'optimalVsRuleOfThumb' ? '#e8f4f8' : 'transparent',
+                    cursor: 'pointer',
+                    fontWeight: scenarioType === 'optimalVsRuleOfThumb' ? 'bold' : 'normal',
+                    color: scenarioType === 'optimalVsRuleOfThumb' ? '#2c3e50' : '#666',
+                  }}
+                >
+                  Normal Market
+                </button>
+                <button
+                  onClick={() => setScenarioType('sequenceRisk')}
+                  style={{
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderBottom: scenarioType === 'sequenceRisk' ? '3px solid #e74c3c' : '3px solid transparent',
+                    background: scenarioType === 'sequenceRisk' ? '#ffebee' : 'transparent',
+                    cursor: 'pointer',
+                    fontWeight: scenarioType === 'sequenceRisk' ? 'bold' : 'normal',
+                    color: scenarioType === 'sequenceRisk' ? '#c0392b' : '#666',
+                  }}
+                >
+                  Bad Early Returns
+                </button>
+                <button
+                  onClick={() => setScenarioType('rateShock')}
+                  style={{
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderBottom: scenarioType === 'rateShock' ? '3px solid #f39c12' : '3px solid transparent',
+                    background: scenarioType === 'rateShock' ? '#fff8e1' : 'transparent',
+                    cursor: 'pointer',
+                    fontWeight: scenarioType === 'rateShock' ? 'bold' : 'normal',
+                    color: scenarioType === 'rateShock' ? '#d68910' : '#666',
+                  }}
+                >
+                  Interest Rate Shock
+                </button>
+              </div>
+
+              {/* Age Controls */}
+              <div style={{ display: 'flex', gap: '24px', padding: '12px', background: '#f5f5f5', borderRadius: '6px', marginBottom: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Retirement Age:</div>
+                  <input
+                    type="number"
+                    value={scenarioRetirementAge}
+                    onChange={(e) => setScenarioRetirementAge(parseInt(e.target.value) || 65)}
+                    min={params.startAge + 10}
+                    max={scenarioEndAge - 5}
+                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>End Age (Death):</div>
+                  <input
+                    type="number"
+                    value={scenarioEndAge}
+                    onChange={(e) => setScenarioEndAge(parseInt(e.target.value) || 85)}
+                    min={scenarioRetirementAge + 5}
+                    max={100}
+                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                  />
+                </div>
+                {scenarioType === 'sequenceRisk' && (
+                  <div style={{ fontSize: '12px', color: '#c0392b', fontStyle: 'italic' }}>
+                    Stocks return ~-5% avg/year for first 10 years of retirement.
+                  </div>
+                )}
+              </div>
+
+              {scenarioType === 'rateShock' && (
+                <div style={{ display: 'flex', gap: '24px', padding: '12px', background: '#fff3cd', borderRadius: '6px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Rate shock at age:</div>
+                    <input
+                      type="number"
+                      value={rateShockAge}
+                      onChange={(e) => setRateShockAge(parseInt(e.target.value) || 50)}
+                      min={params.startAge}
+                      max={scenarioEndAge - 1}
+                      style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Rate change (%):</div>
+                    <input
+                      type="number"
+                      value={rateShockMagnitude * 100}
+                      onChange={(e) => setRateShockMagnitude((parseFloat(e.target.value) || 0) / 100)}
+                      step={0.5}
+                      style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Concept Explanation */}
+            {scenarioType === 'optimalVsRuleOfThumb' && (
+              <div style={{
+                background: '#e3f2fd',
+                border: '1px solid #2196f3',
+                borderRadius: '8px',
+                padding: '16px',
+                marginBottom: '24px',
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#1565c0' }}>
+                  Comparing Two Strategies
+                </div>
+                <div style={{ fontSize: '13px', color: '#1565c0', lineHeight: 1.5 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>Optimal Strategy:</p>
+                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
+                        <li>Adaptive consumption based on net worth</li>
+                        <li>Portfolio accounts for human capital</li>
+                        <li>Duration matching for liabilities</li>
+                        <li>Never defaults on subsistence</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>Rule of Thumb:</p>
+                      <ul style={{ margin: 0, paddingLeft: '16px' }}>
+                        <li>Save 20% of income</li>
+                        <li>(100 - age)% in stocks</li>
+                        <li>Rest split 50/50 cash & bonds</li>
+                        <li>Freeze allocation at retirement</li>
+                        <li>4% withdrawal rule</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {scenarioType === 'sequenceRisk' && (
+              <div style={{
+                background: '#fff3cd',
+                border: '1px solid #ffc107',
+                borderRadius: '8px',
+                padding: '16px',
+                marginBottom: '24px',
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#856404' }}>
+                  Concept: Sequence of Returns Risk & the 4% Rule
+                </div>
+                <div style={{ fontSize: '13px', color: '#856404', lineHeight: 1.5 }}>
+                  <p style={{ margin: '0 0 8px 0' }}>
+                    <strong>Setup:</strong> Both strategies have identical behavior during working years (same consumption, same savings, same wealth at retirement).
+                    The only difference is what happens after retirement.
+                  </p>
+                  <p style={{ margin: '0 0 8px 0' }}>
+                    <strong>The 4% Rule:</strong> At retirement, calculate 4% of your financial portfolio. Withdraw that fixed dollar amount each year, regardless of how the market performs.
+                  </p>
+                  <p style={{ margin: '0 0 8px 0' }}>
+                    <strong>The Problem:</strong> If markets perform poorly in the first years of retirement, you're withdrawing fixed amounts from a shrinking portfolio.
+                    This "sequence of returns risk" means even if returns recover later, you may have already depleted too much capital.
+                  </p>
+                  <p style={{ margin: 0 }}>
+                    <strong>Adaptive Consumption:</strong> By adjusting consumption based on current net worth, you protect subsistence spending.
+                    When wealth drops, variable consumption drops too—but you never default on essentials.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {scenarioType === 'rateShock' && (
+              <div style={{
+                background: '#d4edda',
+                border: '1px solid #28a745',
+                borderRadius: '8px',
+                padding: '16px',
+                marginBottom: '24px',
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#155724' }}>
+                  Concept: Duration Matching & Interest Rate Risk
+                </div>
+                <div style={{ fontSize: '13px', color: '#155724', lineHeight: 1.5 }}>
+                  <p style={{ margin: '0 0 8px 0' }}>
+                    <strong>When rates fall:</strong> The present value of your future expenses increases (you need more money now to fund them).
+                  </p>
+                  <p style={{ margin: '0 0 8px 0' }}>
+                    <strong>Without duration matching:</strong> If you hold short-duration assets (cash), they don't appreciate enough to offset the increased cost of future liabilities.
+                  </p>
+                  <p style={{ margin: 0 }}>
+                    <strong>With duration matching:</strong> Long-duration bonds rise in value when rates fall, offsetting the increased liability.
+                    Your net position is hedged against rate moves.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {scenarioType === 'optimalVsRuleOfThumb' && !strategyResults && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                Computing 50 simulation runs...
+              </div>
+            )}
+            {(scenarioType === 'sequenceRisk' || scenarioType === 'rateShock') && !scenarioResults && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                Computing 50 simulation runs...
+              </div>
+            )}
+
+            {/* Strategy Comparison: Optimal vs Rule of Thumb */}
+            {scenarioType === 'optimalVsRuleOfThumb' && strategyResults && (
+              <>
+                {/* Summary Statistics */}
+                <ChartSection title="Comparison Summary">
+                  <ChartCard title="Default Risk (Failure to Meet Subsistence)">
+                    <div style={{ padding: '24px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                        <div style={{ textAlign: 'center', padding: '20px', background: '#e8f5e9', borderRadius: '8px' }}>
+                          <div style={{ fontSize: '13px', color: '#2e7d32', marginBottom: '8px' }}>Optimal Strategy</div>
+                          <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#1b5e20' }}>
+                            {strategyResults.optimal.filter(r => r.defaulted).length}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#388e3c' }}>of 50 runs defaulted</div>
+                        </div>
+                        <div style={{ textAlign: 'center', padding: '20px', background: strategyResults.ruleOfThumb.filter(r => r.defaulted).length > 0 ? '#ffebee' : '#e8f5e9', borderRadius: '8px' }}>
+                          <div style={{ fontSize: '13px', color: strategyResults.ruleOfThumb.filter(r => r.defaulted).length > 0 ? '#c62828' : '#2e7d32', marginBottom: '8px' }}>Rule of Thumb</div>
+                          <div style={{ fontSize: '36px', fontWeight: 'bold', color: strategyResults.ruleOfThumb.filter(r => r.defaulted).length > 0 ? '#b71c1c' : '#1b5e20' }}>
+                            {strategyResults.ruleOfThumb.filter(r => r.defaulted).length}
+                          </div>
+                          <div style={{ fontSize: '12px', color: strategyResults.ruleOfThumb.filter(r => r.defaulted).length > 0 ? '#d32f2f' : '#388e3c' }}>of 50 runs defaulted</div>
+                          {strategyResults.ruleOfThumb.filter(r => r.defaulted).length > 0 && (
+                            <div style={{ fontSize: '11px', color: '#666', marginTop: '8px' }}>
+                              Avg default age: {Math.round(
+                                strategyResults.ruleOfThumb
+                                  .filter(r => r.defaulted && r.defaultAge !== null)
+                                  .reduce((sum, r) => sum + (r.defaultAge || 0), 0) /
+                                Math.max(1, strategyResults.ruleOfThumb.filter(r => r.defaulted).length)
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </ChartCard>
+
+                  <ChartCard title="Lifetime Consumption Comparison">
+                    <div style={{ padding: '24px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '12px', color: COLORS.hc }}>Optimal - Total Consumption</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '12px' }}>
+                            <div>
+                              <div style={{ color: '#999' }}>5th %ile</div>
+                              <div style={{ fontWeight: 'bold' }}>${formatDollar(computePercentile(strategyResults.optimal.map(r => r.totalConsumption.reduce((a, b) => a + b, 0)), 5))}k</div>
+                            </div>
+                            <div>
+                              <div style={{ color: '#999' }}>Median</div>
+                              <div style={{ fontWeight: 'bold' }}>${formatDollar(computePercentile(strategyResults.optimal.map(r => r.totalConsumption.reduce((a, b) => a + b, 0)), 50))}k</div>
+                            </div>
+                            <div>
+                              <div style={{ color: '#999' }}>95th %ile</div>
+                              <div style={{ fontWeight: 'bold' }}>${formatDollar(computePercentile(strategyResults.optimal.map(r => r.totalConsumption.reduce((a, b) => a + b, 0)), 95))}k</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '12px', color: COLORS.expenses }}>Rule of Thumb - Total Consumption</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '12px' }}>
+                            <div>
+                              <div style={{ color: '#999' }}>5th %ile</div>
+                              <div style={{ fontWeight: 'bold' }}>${formatDollar(computePercentile(strategyResults.ruleOfThumb.map(r => r.totalConsumption.reduce((a, b) => a + b, 0)), 5))}k</div>
+                            </div>
+                            <div>
+                              <div style={{ color: '#999' }}>Median</div>
+                              <div style={{ fontWeight: 'bold' }}>${formatDollar(computePercentile(strategyResults.ruleOfThumb.map(r => r.totalConsumption.reduce((a, b) => a + b, 0)), 50))}k</div>
+                            </div>
+                            <div>
+                              <div style={{ color: '#999' }}>95th %ile</div>
+                              <div style={{ fontWeight: 'bold' }}>${formatDollar(computePercentile(strategyResults.ruleOfThumb.map(r => r.totalConsumption.reduce((a, b) => a + b, 0)), 95))}k</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Financial Wealth Paths */}
+                <ChartSection title="Financial Wealth Over Time">
+                  <ChartCard title="Optimal Strategy - Financial Wealth ($M)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={strategyResults.optimal[0].ages.map((age, i) => {
+                        const fwValues = strategyResults.optimal.map(r => r.financialWealth[i]);
+                        const p05 = computePercentile(fwValues, 5);
+                        const p25 = computePercentile(fwValues, 25);
+                        const p50 = computePercentile(fwValues, 50);
+                        const p75 = computePercentile(fwValues, 75);
+                        const p95 = computePercentile(fwValues, 95);
+                        return { age, fw_p05: p05, fw_p25: p25, fw_p50: p50, fw_p75: p75, fw_p95: p95 };
+                      })}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                        <Tooltip formatter={dollarMTooltipFormatter} />
+                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="fw_p05" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                        <Line type="monotone" dataKey="fw_p25" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="fw_p50" stroke={COLORS.hc} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="fw_p75" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                        <Line type="monotone" dataKey="fw_p95" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+
+                  <ChartCard title="Rule of Thumb - Financial Wealth ($M)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={strategyResults.ruleOfThumb[0].ages.map((age, i) => {
+                        const fwValues = strategyResults.ruleOfThumb.map(r => r.financialWealth[i]);
+                        const p05 = computePercentile(fwValues, 5);
+                        const p25 = computePercentile(fwValues, 25);
+                        const p50 = computePercentile(fwValues, 50);
+                        const p75 = computePercentile(fwValues, 75);
+                        const p95 = computePercentile(fwValues, 95);
+                        return { age, fw_p05: p05, fw_p25: p25, fw_p50: p50, fw_p75: p75, fw_p95: p95 };
+                      })}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                        <Tooltip formatter={dollarMTooltipFormatter} />
+                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="fw_p05" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                        <Line type="monotone" dataKey="fw_p25" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="fw_p50" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="fw_p75" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                        <Line type="monotone" dataKey="fw_p95" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Total Wealth (Net Worth) = HC + FW - Expenses */}
+                <ChartSection title="Total Wealth Over Time (HC + FW - Expenses)">
+                  <ChartCard title="Optimal Strategy - Total Wealth ($M)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={strategyResults.optimal[0].ages.map((age, i) => {
+                        const fwValues = strategyResults.optimal.map(r => r.financialWealth[i]);
+                        const p05 = computePercentile(fwValues, 5);
+                        const p25 = computePercentile(fwValues, 25);
+                        const p50 = computePercentile(fwValues, 50);
+                        const p75 = computePercentile(fwValues, 75);
+                        const p95 = computePercentile(fwValues, 95);
+                        return { age, tw_p05: p05, tw_p25: p25, tw_p50: p50, tw_p75: p75, tw_p95: p95 };
+                      })}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                        <Tooltip formatter={dollarMTooltipFormatter} />
+                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="tw_p05" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                        <Line type="monotone" dataKey="tw_p25" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="tw_p50" stroke={COLORS.hc} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="tw_p75" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                        <Line type="monotone" dataKey="tw_p95" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                      Total wealth stays positive - optimal strategy prevents bankruptcy.
+                    </div>
+                  </ChartCard>
+
+                  <ChartCard title="Rule of Thumb - Total Wealth ($M)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={strategyResults.ruleOfThumb[0].ages.map((age, i) => {
+                        const fwValues = strategyResults.ruleOfThumb.map(r => r.financialWealth[i]);
+                        const p05 = computePercentile(fwValues, 5);
+                        const p25 = computePercentile(fwValues, 25);
+                        const p50 = computePercentile(fwValues, 50);
+                        const p75 = computePercentile(fwValues, 75);
+                        const p95 = computePercentile(fwValues, 95);
+                        return { age, tw_p05: p05, tw_p25: p25, tw_p50: p50, tw_p75: p75, tw_p95: p95 };
+                      })}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                        <Tooltip formatter={dollarMTooltipFormatter} />
+                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="tw_p05" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                        <Line type="monotone" dataKey="tw_p25" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="tw_p50" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="tw_p75" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                        <Line type="monotone" dataKey="tw_p95" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#e74c3c', textAlign: 'center', marginTop: '8px' }}>
+                      Note: 5th percentile can go negative - total wealth bankruptcy risk.
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Consumption Paths */}
+                <ChartSection title="Consumption Over Time">
+                  <ChartCard title="Optimal Strategy - Consumption Distribution ($k)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={strategyResults.optimal[0].ages.map((age, i) => {
+                        const consumptionValues = strategyResults.optimal.map(r => r.totalConsumption[i]);
+                        const p05 = computePercentile(consumptionValues, 5);
+                        const p25 = computePercentile(consumptionValues, 25);
+                        const p50 = computePercentile(consumptionValues, 50);
+                        const p75 = computePercentile(consumptionValues, 75);
+                        const p95 = computePercentile(consumptionValues, 95);
+                        return {
+                          age,
+                          subsistence: strategyResults.optimal[0].subsistenceConsumption[i],
+                          c_p05: p05,
+                          c_p25: p25,
+                          c_p50: p50,
+                          c_p75: p75,
+                          c_p95: p95,
+                        };
+                      })}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                        <Tooltip formatter={dollarKTooltipFormatter} />
+                        <Line type="monotone" dataKey="subsistence" stroke="#999" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Subsistence Floor" />
+                        <Line type="monotone" dataKey="c_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                        <Line type="monotone" dataKey="c_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="c_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="c_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                        <Line type="monotone" dataKey="c_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                      Consumption adjusts with wealth. Shows percentile distribution across 50 runs.
+                    </div>
+                  </ChartCard>
+
+                  <ChartCard title="Rule of Thumb - Consumption Distribution ($k)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={strategyResults.ruleOfThumb[0].ages.map((age, i) => {
+                        const consumptionValues = strategyResults.ruleOfThumb.map(r => r.totalConsumption[i]);
+                        const p05 = computePercentile(consumptionValues, 5);
+                        const p25 = computePercentile(consumptionValues, 25);
+                        const p50 = computePercentile(consumptionValues, 50);
+                        const p75 = computePercentile(consumptionValues, 75);
+                        const p95 = computePercentile(consumptionValues, 95);
+                        return {
+                          age,
+                          subsistence: strategyResults.ruleOfThumb[0].subsistenceConsumption[i],
+                          c_p05: p05,
+                          c_p25: p25,
+                          c_p50: p50,
+                          c_p75: p75,
+                          c_p95: p95,
+                        };
+                      })}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                        <Tooltip formatter={dollarKTooltipFormatter} />
+                        <Line type="monotone" dataKey="subsistence" stroke="#999" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Subsistence Floor" />
+                        <Line type="monotone" dataKey="c_p05" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                        <Line type="monotone" dataKey="c_p25" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="c_p50" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="c_p75" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                        <Line type="monotone" dataKey="c_p95" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                      Fixed 4% withdrawal. Shows percentile distribution across 50 runs.
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Portfolio Allocation Comparison */}
+                <ChartSection title="Portfolio Allocation (Single Run Example)">
+                  <ChartCard title="Optimal Strategy - Allocation (%)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <AreaChart data={strategyResults.optimal[0].ages.map((age, i) => ({
+                        age,
+                        cash: strategyResults.optimal[0].cashWeight[i] * 100,
+                        bonds: strategyResults.optimal[0].bondWeight[i] * 100,
+                        stocks: strategyResults.optimal[0].stockWeight[i] * 100,
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} domain={[0, 100]} tickFormatter={formatPercent} />
+                        <Tooltip formatter={percentTooltipFormatter} />
+                        <Legend wrapperStyle={{ fontSize: '10px' }} />
+                        <Area type="monotone" dataKey="cash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Cash" />
+                        <Area type="monotone" dataKey="bonds" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Bonds" />
+                        <Area type="monotone" dataKey="stocks" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Stocks" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                      Accounts for human capital. Young = more bonds (HC is stock-like), Old = more stocks.
+                    </div>
+                  </ChartCard>
+
+                  <ChartCard title="Rule of Thumb - Allocation (%)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <AreaChart data={strategyResults.ruleOfThumb[0].ages.map((age, i) => ({
+                        age,
+                        cash: strategyResults.ruleOfThumb[0].cashWeight[i] * 100,
+                        bonds: strategyResults.ruleOfThumb[0].bondWeight[i] * 100,
+                        stocks: strategyResults.ruleOfThumb[0].stockWeight[i] * 100,
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} domain={[0, 100]} tickFormatter={formatPercent} />
+                        <Tooltip formatter={percentTooltipFormatter} />
+                        <Legend wrapperStyle={{ fontSize: '10px' }} />
+                        <Area type="monotone" dataKey="cash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Cash" />
+                        <Area type="monotone" dataKey="bonds" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Bonds" />
+                        <Area type="monotone" dataKey="stocks" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Stocks" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                      (100 - age)% stocks, rest split 50/50 cash & bonds. Frozen at retirement.
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Key Takeaways */}
+                <div style={{
+                  background: '#2c3e50',
+                  color: '#fff',
+                  borderRadius: '8px',
+                  padding: '20px',
+                  marginTop: '24px',
+                }}>
+                  <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px' }}>
+                    Key Takeaways: Optimal vs Rule of Thumb
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: 1.6 }}>
+                    <li><strong>Adaptive consumption eliminates default risk</strong> — by adjusting spending to wealth, you never fail to meet subsistence</li>
+                    <li><strong>Human capital matters for allocation</strong> — young workers have bond-like future earnings, so their financial portfolio should hold more stocks</li>
+                    <li><strong>Duration matching hedges interest rate risk</strong> — optimal strategy matches asset duration to liability duration</li>
+                    <li><strong>Rule of thumb ignores personal circumstances</strong> — it doesn't account for earnings profile, expenses, or risk preferences</li>
+                    <li><strong>4% rule fails under bad sequence</strong> — fixed withdrawals from a falling portfolio can lead to ruin</li>
+                  </ul>
+                </div>
+              </>
+            )}
+
+            {/* Scenario-specific visualizations */}
+            {(scenarioType === 'sequenceRisk' || scenarioType === 'rateShock') && scenarioResults && (
+              <>
+            {/* Market Conditions - Show what the scenario looks like */}
+            <ChartSection title={scenarioType === 'sequenceRisk' ? "Stock Return Paths (Log Scale)" : "Interest Rate Paths"}>
+              {scenarioType === 'sequenceRisk' ? (
+                <>
+                  <ChartCard title="Cumulative Stock Returns - Percentile Bands">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <AreaChart data={scenarioPercentileData || []}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={(v) => `${(Math.exp(v) * 100).toFixed(0)}%`} domain={['auto', 'auto']} />
+                        <Tooltip formatter={(v) => v !== undefined ? [`${(Math.exp(v as number) * 100).toFixed(0)}%`, 'Cumulative Return'] : ['', '']} />
+                        <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
+                        <Area type="monotone" dataKey="sr_p05" stackId="sr" fill="transparent" stroke="transparent" />
+                        <Area type="monotone" dataKey="sr_band_5_25" stackId="sr" fill={COLORS.stock} fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                        <Area type="monotone" dataKey="sr_band_25_75" stackId="sr" fill={COLORS.stock} fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                        <Area type="monotone" dataKey="sr_band_75_95" stackId="sr" fill={COLORS.stock} fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                        <Line type="monotone" dataKey="sr_p50" stroke={COLORS.stock} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="sr_p25" stroke={COLORS.stock} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="sr_p75" stroke={COLORS.stock} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#c0392b', textAlign: 'center', marginTop: '8px' }}>
+                      Stocks averaging ~-5%/year for first 10 years of retirement. Y-axis: cumulative return (100% = starting value).
+                    </div>
+                  </ChartCard>
+                  <ChartCard title="Cumulative Return Distribution at Retirement+10">
+                    <div style={{ padding: '24px' }}>
+                      {(() => {
+                        const retirementIdx = scenarioRetirementAge - params.startAge;
+                        const idx10 = Math.min(retirementIdx + 10, scenarioResults.adaptive[0].ages.length - 1);
+                        const returns = scenarioResults.adaptive.map(r => r.cumulativeStockReturn[idx10]);
+                        return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.stock }}>{(computePercentile(returns, 5) * 100).toFixed(0)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.stock }}>{(computePercentile(returns, 25) * 100).toFixed(0)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>Median</div><div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.stock }}>{(computePercentile(returns, 50) * 100).toFixed(0)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.stock }}>{(computePercentile(returns, 75) * 100).toFixed(0)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.stock }}>{(computePercentile(returns, 95) * 100).toFixed(0)}%</div></div>
+                          </div>
+                        );
+                      })()}
+                      <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '16px' }}>
+                        Cumulative stock return after 10 years of forced bad returns. 100% = no change from start.
+                      </div>
+                    </div>
+                  </ChartCard>
+                </>
+              ) : (
+                <>
+                  <ChartCard title="Interest Rate Paths - Percentile Bands">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <AreaChart data={scenarioPercentileData || []}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={(v) => `${v.toFixed(1)}%`} domain={['auto', 'auto']} />
+                        <Tooltip formatter={(v) => v !== undefined ? [`${(v as number).toFixed(2)}%`, 'Interest Rate'] : ['', '']} />
+                        <ReferenceLine x={rateShockAge} stroke="#e74c3c" strokeWidth={2} strokeDasharray="5 5" />
+                        <Area type="monotone" dataKey="rate_p05" stackId="rate" fill="transparent" stroke="transparent" />
+                        <Area type="monotone" dataKey="rate_band_5_25" stackId="rate" fill={COLORS.bond} fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                        <Area type="monotone" dataKey="rate_band_25_75" stackId="rate" fill={COLORS.bond} fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                        <Area type="monotone" dataKey="rate_band_75_95" stackId="rate" fill={COLORS.bond} fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                        <Line type="monotone" dataKey="rate_p50" stroke={COLORS.bond} strokeWidth={2} dot={false} name="(3) Median" />
+                        <Line type="monotone" dataKey="rate_p25" stroke={COLORS.bond} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                        <Line type="monotone" dataKey="rate_p75" stroke={COLORS.bond} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#d68910', textAlign: 'center', marginTop: '8px' }}>
+                      Rate shock of {(rateShockMagnitude * 100).toFixed(1)}% at age {rateShockAge}. Red dashed line marks the shock.
+                    </div>
+                  </ChartCard>
+                  <ChartCard title="Interest Rate Distribution After Shock">
+                    <div style={{ padding: '24px' }}>
+                      {(() => {
+                        const shockIdx = Math.min(rateShockAge - params.startAge + 1, scenarioResults.adaptive[0].ages.length - 1);
+                        const rates = scenarioResults.adaptive.map(r => r.interestRate[shockIdx] * 100);
+                        return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.bond }}>{computePercentile(rates, 5).toFixed(2)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.bond }}>{computePercentile(rates, 25).toFixed(2)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>Median</div><div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.bond }}>{computePercentile(rates, 50).toFixed(2)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.bond }}>{computePercentile(rates, 75).toFixed(2)}%</div></div>
+                            <div><div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div><div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.bond }}>{computePercentile(rates, 95).toFixed(2)}%</div></div>
+                          </div>
+                        );
+                      })()}
+                      <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '16px' }}>
+                        Interest rate distribution immediately after the shock at age {rateShockAge}.
+                      </div>
+                    </div>
+                  </ChartCard>
+                </>
+              )}
+            </ChartSection>
+
+            {/* Default Risk and Consumption Comparison */}
+            <ChartSection title="Outcomes: Optimal vs Rule of Thumb">
+              <ChartCard title="Default Risk (Failure to Meet Subsistence)">
+                <div style={{ padding: '24px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                    <div style={{ textAlign: 'center', padding: '20px', background: '#e8f5e9', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '13px', color: '#2e7d32', marginBottom: '8px' }}>Optimal Strategy</div>
+                      <div style={{ fontSize: '48px', fontWeight: 'bold', color: '#1b5e20' }}>
+                        {scenarioResults.adaptive.filter(r => r.defaulted).length}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#388e3c' }}>of 50 runs defaulted</div>
+                    </div>
+                    <div style={{ textAlign: 'center', padding: '20px', background: '#ffebee', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '13px', color: '#c62828', marginBottom: '8px' }}>Rule of Thumb (4% Rule)</div>
+                      <div style={{ fontSize: '48px', fontWeight: 'bold', color: '#b71c1c' }}>
+                        {scenarioResults.fourPercent.filter(r => r.defaulted).length}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#d32f2f' }}>of 50 runs defaulted</div>
+                      {scenarioResults.fourPercent.filter(r => r.defaulted).length > 0 && (
+                        <div style={{ fontSize: '11px', color: '#666', marginTop: '8px' }}>
+                          Avg default age: {Math.round(
+                            scenarioResults.fourPercent
+                              .filter(r => r.defaulted && r.defaultAge !== null)
+                              .reduce((sum, r) => sum + (r.defaultAge || 0), 0) /
+                            Math.max(1, scenarioResults.fourPercent.filter(r => r.defaulted).length)
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </ChartCard>
+
+              <ChartCard title="Average Annual Consumption ($k)">
+                <div style={{ padding: '24px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '12px', color: COLORS.hc }}>Optimal Strategy</div>
+                      {(() => {
+                        const avgConsumption = scenarioResults.adaptive.map(r => r.totalConsumption.reduce((a, b) => a + b, 0) / r.totalConsumption.length);
+                        return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '12px' }}>
+                            <div><div style={{ color: '#999' }}>5th %ile</div><div style={{ fontWeight: 'bold' }}>{formatDollarK(computePercentile(avgConsumption, 5))}</div></div>
+                            <div><div style={{ color: '#999' }}>Median</div><div style={{ fontWeight: 'bold', fontSize: '14px' }}>{formatDollarK(computePercentile(avgConsumption, 50))}</div></div>
+                            <div><div style={{ color: '#999' }}>95th %ile</div><div style={{ fontWeight: 'bold' }}>{formatDollarK(computePercentile(avgConsumption, 95))}</div></div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '12px', color: COLORS.expenses }}>Rule of Thumb (4% Rule)</div>
+                      {(() => {
+                        const avgConsumption = scenarioResults.fourPercent.map(r => r.totalConsumption.reduce((a, b) => a + b, 0) / r.totalConsumption.length);
+                        return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', fontSize: '12px' }}>
+                            <div><div style={{ color: '#999' }}>5th %ile</div><div style={{ fontWeight: 'bold' }}>{formatDollarK(computePercentile(avgConsumption, 5))}</div></div>
+                            <div><div style={{ color: '#999' }}>Median</div><div style={{ fontWeight: 'bold', fontSize: '14px' }}>{formatDollarK(computePercentile(avgConsumption, 50))}</div></div>
+                            <div><div style={{ color: '#999' }}>95th %ile</div><div style={{ fontWeight: 'bold' }}>{formatDollarK(computePercentile(avgConsumption, 95))}</div></div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Financial Wealth Over Time */}
+            <ChartSection title="Financial Wealth Over Time">
+              <ChartCard title="Adaptive Strategy - Financial Wealth ($M)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={scenarioPercentileData || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="fw_adapt_p05" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="fw_adapt_p25" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="fw_adapt_p50" stroke={COLORS.hc} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="fw_adapt_p75" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="fw_adapt_p95" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                  Adaptive strategy adjusts consumption to preserve wealth.
+                </div>
+              </ChartCard>
+              <ChartCard title="4% Rule - Financial Wealth ($M)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={scenarioPercentileData || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="fw_4pct_p05" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="fw_4pct_p25" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="fw_4pct_p50" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="fw_4pct_p75" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="fw_4pct_p95" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#e74c3c', textAlign: 'center', marginTop: '8px' }}>
+                  Fixed 4% withdrawal can deplete wealth faster in bad markets.
+                </div>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Total Wealth Over Time */}
+            <ChartSection title="Total Wealth Over Time (FW + Human Capital)">
+              <ChartCard title="Adaptive Strategy - Total Wealth ($M)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={scenarioPercentileData || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="tw_adapt_p05" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="tw_adapt_p25" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="tw_adapt_p50" stroke={COLORS.hc} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="tw_adapt_p75" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="tw_adapt_p95" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                  Total wealth = Financial wealth + Human capital. HC declines to zero at retirement.
+                </div>
+              </ChartCard>
+              <ChartCard title="4% Rule - Total Wealth ($M)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={scenarioPercentileData || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="tw_4pct_p05" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="tw_4pct_p25" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="tw_4pct_p50" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="tw_4pct_p75" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="tw_4pct_p95" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#e74c3c', textAlign: 'center', marginTop: '8px' }}>
+                  Total wealth can approach zero, indicating bankruptcy risk.
+                </div>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Consumption Over Time */}
+            <ChartSection title="Consumption Over Time">
+              <ChartCard title="Adaptive Strategy - Consumption ($k)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={scenarioPercentileData || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarKTooltipFormatter} />
+                    <Line type="monotone" dataKey="subsistence" stroke="#999" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Subsistence Floor" />
+                    <Line type="monotone" dataKey="cons_adapt_p05" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="cons_adapt_p25" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="cons_adapt_p50" stroke={COLORS.hc} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="cons_adapt_p75" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="cons_adapt_p95" stroke={COLORS.hc} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
+                  Adaptive consumption stays above subsistence floor. Gray dashed line = subsistence level.
+                </div>
+              </ChartCard>
+              <ChartCard title="4% Rule - Consumption ($k)">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={scenarioPercentileData || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarKTooltipFormatter} />
+                    <Line type="monotone" dataKey="subsistence" stroke="#999" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Subsistence Floor" />
+                    <Line type="monotone" dataKey="cons_4pct_p05" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="cons_4pct_p25" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="cons_4pct_p50" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="cons_4pct_p75" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="cons_4pct_p95" stroke={COLORS.expenses} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: '11px', color: '#e74c3c', textAlign: 'center', marginTop: '8px' }}>
+                  4% Rule can force consumption below subsistence when wealth depletes.
+                </div>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Key Takeaways */}
+            <div style={{
+              background: '#2c3e50',
+              color: '#fff',
+              borderRadius: '8px',
+              padding: '20px',
+              marginTop: '24px',
+            }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px' }}>
+                Key Takeaways
+              </div>
+              {scenarioType === 'sequenceRisk' ? (
+                <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: 1.6 }}>
+                  <li><strong>4% Rule ignores market conditions</strong> — withdrawing fixed amounts from a falling portfolio accelerates depletion</li>
+                  <li><strong>Sequence matters</strong> — even with the same average returns, bad early years can be catastrophic</li>
+                  <li><strong>Adaptive consumption protects subsistence</strong> — by reducing variable spending when wealth drops, the floor is always met</li>
+                  <li><strong>Trade-off:</strong> Adaptive may mean lower consumption in good times, but eliminates default risk</li>
+                </ul>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: 1.6 }}>
+                  <li><strong>Rate drops increase liability PV</strong> — future expenses cost more in present value terms</li>
+                  <li><strong>Duration matching hedges this risk</strong> — long bonds appreciate when rates fall, offsetting the liability increase</li>
+                  <li><strong>Cash/short bonds leave you exposed</strong> — they don't appreciate enough to cover the increased cost of future spending</li>
+                  <li><strong>The portfolio already accounts for human capital</strong> — young workers have bond-like future earnings that offset some rate risk</li>
+                </ul>
+              )}
+            </div>
+              </>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
