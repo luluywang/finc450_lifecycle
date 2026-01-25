@@ -7,6 +7,9 @@ This module provides the foundational components for lifecycle investment analys
 - Simulation engines: Monte Carlo, strategy comparison (simulation.py)
 """
 
+# Constants
+from .params import DEFAULT_RISKY_BETA
+
 # Parameter dataclasses
 from .params import (
     EconomicParams,
@@ -104,6 +107,8 @@ from .simulation import (
 )
 
 __all__ = [
+    # Constants
+    'DEFAULT_RISKY_BETA',
     # Params
     'EconomicParams',
     'BondParams',

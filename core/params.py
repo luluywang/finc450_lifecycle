@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# Global Constants
+# =============================================================================
+
+# Default beta for "risky" human capital scenarios (middle ground between
+# bond-like HC at beta=0 and stock-like HC at beta=1)
+DEFAULT_RISKY_BETA = 0.2
+
+
+# =============================================================================
 # Economic Environment Parameters
 # =============================================================================
 
@@ -63,7 +72,7 @@ class LifecycleParams:
     end_age: int = 95            # Planning horizon (death or planning end)
 
     # Income parameters (in $000s for cleaner numbers)
-    initial_earnings: float = 150    # Starting annual earnings ($150k)
+    initial_earnings: float = 200    # Starting annual earnings ($200k)
     earnings_growth: float = 0.0     # Real earnings growth rate (flat)
     earnings_hump_age: int = 65      # Age at peak earnings (at retirement = flat)
     earnings_decline: float = 0.0    # Decline rate after peak
@@ -316,6 +325,9 @@ class SimulationResult:
 
     # Optional metadata for scenarios
     description: str = ""
+
+    # Earnings (after wage shocks applied, if any)
+    earnings: np.ndarray = None
 
     @property
     def n_sims(self) -> int:

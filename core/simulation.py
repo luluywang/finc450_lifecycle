@@ -382,18 +382,23 @@ def simulate_with_strategy(
     else:
         bond_return_paths = rate_paths[:, :-1] + econ_params.mu_bond
 
-    # Get earnings and expenses profiles
+    # Get BASE earnings and expenses profiles (deterministic)
     earnings_profile = compute_earnings_profile(params)
     working_exp, retirement_exp = compute_expense_profile(params)
 
-    earnings = np.zeros(total_years)
+    base_earnings = np.zeros(total_years)
     expenses = np.zeros(total_years)
-    earnings[:working_years] = earnings_profile
+    base_earnings[:working_years] = earnings_profile
     expenses[:working_years] = working_exp
     expenses[working_years:] = retirement_exp
 
     r_bar = econ_params.r_bar
     phi = econ_params.phi
+
+    # Initialize wage shock tracking (for risky human capital)
+    # log_wage_level tracks cumulative permanent shocks to wage level
+    log_wage_level = np.zeros((n_sims, total_years))
+    actual_earnings_paths = np.zeros((n_sims, total_years))
 
     # Initialize output arrays
     financial_wealth_paths = np.zeros((n_sims, total_years))
@@ -431,13 +436,29 @@ def simulate_with_strategy(
             current_rate = rate_paths[sim, t]
             age = params.start_age + t
 
+            # Apply cumulative wage shock (permanent effect on wage level)
+            # Wage shocks are correlated with stock returns via stock_beta_human_capital
+            if t > 0 and params.stock_beta_human_capital != 0:
+                # Previous period's stock shock affects this period's wage level
+                # Beta scales stock returns (sigma_s * shock), not raw shock
+                log_wage_level[sim, t] = (
+                    log_wage_level[sim, t - 1] +
+                    params.stock_beta_human_capital * econ_params.sigma_s * stock_shocks[sim, t - 1]
+                )
+
+            wage_multiplier = np.exp(log_wage_level[sim, t])
+            current_earnings = base_earnings[t] * wage_multiplier if is_working else 0.0
+            actual_earnings_paths[sim, t] = current_earnings
+
             # Compute PV values at current rate (dynamic revaluation)
             remaining_expenses = expenses[t:]
             pv_exp = compute_present_value(remaining_expenses, current_rate, phi, r_bar)
             duration_exp = compute_duration(remaining_expenses, current_rate, phi, r_bar)
 
             if is_working:
-                remaining_earnings = earnings[t:working_years]
+                # Scale remaining earnings by current wage level (permanent shock)
+                remaining_base = base_earnings[t:working_years]
+                remaining_earnings = remaining_base * wage_multiplier
                 hc = compute_present_value(remaining_earnings, current_rate, phi, r_bar)
                 duration_hc = compute_duration(remaining_earnings, current_rate, phi, r_bar)
             else:
@@ -487,7 +508,7 @@ def simulate_with_strategy(
                 pv_expenses=pv_exp,
                 net_worth=net_worth,
                 total_wealth=total_wealth,
-                earnings=earnings[t],
+                earnings=current_earnings,
                 expenses=expenses[t],
                 current_rate=current_rate,
                 hc_stock_component=hc_stock,
@@ -527,7 +548,7 @@ def simulate_with_strategy(
             total_consumption_paths[sim, t] = actions.total_consumption
             subsistence_consumption_paths[sim, t] = actions.subsistence_consumption
             variable_consumption_paths[sim, t] = actions.variable_consumption
-            savings_paths[sim, t] = earnings[t] - actions.total_consumption
+            savings_paths[sim, t] = current_earnings - actions.total_consumption
 
             stock_weight_paths[sim, t] = actions.stock_weight
             bond_weight_paths[sim, t] = actions.bond_weight
@@ -544,7 +565,7 @@ def simulate_with_strategy(
                     actions.bond_weight * bond_ret +
                     actions.cash_weight * cash_ret
                 )
-                savings = earnings[t] - actions.total_consumption
+                savings = current_earnings - actions.total_consumption
                 financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
 
     # Compute ages array
@@ -570,6 +591,7 @@ def simulate_with_strategy(
             cash_weight=cash_weight_paths.squeeze(0),
             interest_rates=rate_paths.squeeze(0),
             stock_returns=stock_return_paths.squeeze(0),
+            earnings=actual_earnings_paths.squeeze(0),
             defaulted=default_flags[0],
             default_age=default_ages[0],
             final_wealth=final_wealth[0],
@@ -588,6 +610,7 @@ def simulate_with_strategy(
         cash_weight=cash_weight_paths,
         interest_rates=rate_paths,
         stock_returns=stock_return_paths,
+        earnings=actual_earnings_paths,
         defaulted=default_flags,
         default_age=default_ages,
         final_wealth=final_wealth,
@@ -664,13 +687,13 @@ def simulate_paths(
         # If no duration, bond returns are just yield + spread
         bond_return_paths = rate_paths[:, :-1] + econ_params.mu_bond
 
-    # Get earnings and expenses profiles
+    # Get BASE earnings and expenses profiles (deterministic)
     earnings_profile = compute_earnings_profile(params)
     working_exp, retirement_exp = compute_expense_profile(params)
 
-    earnings = np.zeros(total_years)
+    base_earnings = np.zeros(total_years)
     expenses = np.zeros(total_years)
-    earnings[:working_years] = earnings_profile
+    base_earnings[:working_years] = earnings_profile
     expenses[:working_years] = working_exp
     expenses[working_years:] = retirement_exp
 
@@ -680,7 +703,7 @@ def simulate_paths(
 
     # Use DRY helper functions for PV and decomposition calculations
     pv_earnings_static, pv_expenses_static, duration_earnings, duration_expenses = compute_static_pvs(
-        earnings, expenses, working_years, total_years, r, phi
+        base_earnings, expenses, working_years, total_years, r, phi
     )
 
     # Compute HC decomposition (static, based on r_bar)
@@ -726,6 +749,10 @@ def simulate_paths(
     default_flags = np.zeros(n_sims, dtype=bool)
     default_ages = np.full(n_sims, np.nan)
 
+    # Initialize wage shock tracking (for risky human capital)
+    log_wage_level = np.zeros((n_sims, total_years))
+    actual_earnings_paths = np.zeros((n_sims, total_years))
+
     # Set initial wealth
     financial_wealth_paths[:, 0] = params.initial_wealth
 
@@ -737,6 +764,18 @@ def simulate_paths(
             fw = financial_wealth_paths[sim, t]
             is_working = t < working_years
 
+            # Apply cumulative wage shock (permanent effect on wage level)
+            if t > 0 and params.stock_beta_human_capital != 0:
+                # Beta scales stock returns (sigma_s * shock), not raw shock
+                log_wage_level[sim, t] = (
+                    log_wage_level[sim, t - 1] +
+                    params.stock_beta_human_capital * econ_params.sigma_s * stock_shocks[sim, t - 1]
+                )
+
+            wage_multiplier = np.exp(log_wage_level[sim, t])
+            current_earnings = base_earnings[t] * wage_multiplier if is_working else 0.0
+            actual_earnings_paths[sim, t] = current_earnings
+
             # Compute PV values (dynamic or static)
             if use_dynamic_revaluation:
                 current_rate = rate_paths[sim, t]
@@ -744,14 +783,17 @@ def simulate_paths(
                 pv_exp = compute_dynamic_pv(remaining_expenses, current_rate, phi, r)
 
                 if is_working:
-                    remaining_earnings = earnings[t:working_years]
+                    # Scale remaining earnings by current wage level (permanent shock)
+                    remaining_base = base_earnings[t:working_years]
+                    remaining_earnings = remaining_base * wage_multiplier
                     hc = compute_dynamic_pv(remaining_earnings, current_rate, phi, r)
                 else:
                     hc = 0.0
             else:
                 current_rate = r
                 pv_exp = pv_expenses_static[t]
-                hc = pv_earnings_static[t]
+                # Static HC uses base earnings scaled by current wage level
+                hc = pv_earnings_static[t] * wage_multiplier if is_working else 0.0
 
             human_capital_paths[sim, t] = hc
             pv_expenses_paths[sim, t] = pv_exp
@@ -765,7 +807,7 @@ def simulate_paths(
             variable = max(0, consumption_rate * net_worth)
 
             total_cons, subsistence, variable, defaulted = apply_consumption_constraints(
-                subsistence, variable, earnings[t], fw, is_working, defaulted
+                subsistence, variable, current_earnings, fw, is_working, defaulted
             )
 
             if defaulted and not default_flags[sim]:
@@ -775,7 +817,7 @@ def simulate_paths(
             total_consumption_paths[sim, t] = total_cons
             subsistence_consumption_paths[sim, t] = subsistence
             variable_consumption_paths[sim, t] = variable
-            savings_paths[sim, t] = earnings[t] - total_cons
+            savings_paths[sim, t] = current_earnings - total_cons
 
             # Compute portfolio weights
             # Target financial holdings = target total - HC component + expense component
@@ -794,7 +836,8 @@ def simulate_paths(
 
                 # Recalculate HC hedge components at current rate (if working)
                 if is_working and hc > 0:
-                    remaining_earnings = earnings[t:working_years]
+                    remaining_base = base_earnings[t:working_years]
+                    remaining_earnings = remaining_base * wage_multiplier
                     duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
                     hc_stock_t = hc * params.stock_beta_human_capital
                     non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
@@ -843,7 +886,7 @@ def simulate_paths(
                 cash_ret = rate_paths[sim, t]
 
                 portfolio_return = w_s * stock_ret + w_b * bond_ret + w_c * cash_ret
-                savings = earnings[t] - total_cons
+                savings = current_earnings - total_cons
                 financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
 
     # Compute total holdings
@@ -883,7 +926,8 @@ def simulate_paths(
         'default_flags': default_flags,
         'default_ages': default_ages,
         # Reference arrays (static)
-        'earnings': earnings,
+        'base_earnings': base_earnings,
+        'actual_earnings_paths': actual_earnings_paths,
         'expenses': expenses,
         'pv_earnings_static': pv_earnings_static,
         'pv_expenses_static': pv_expenses_static,
@@ -1027,7 +1071,7 @@ def compute_lifecycle_median_path(
 
     return LifecycleResult(
         ages=ages,
-        earnings=result['earnings'],
+        earnings=result['actual_earnings_paths'][0],
         expenses=result['expenses'],
         savings=savings,
         pv_earnings=result['pv_earnings_static'],
