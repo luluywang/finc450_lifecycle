@@ -15,54 +15,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Optional
-from lifecycle_strategy import (
+
+# Import from core module (primary source of truth)
+from core import (
     LifecycleParams,
+    EconomicParams,
     LifecycleResult,
     compute_lifecycle_median_path,
     compute_mv_optimal_allocation,
 )
-from retirement_simulation import EconomicParams
 
+# Import helpers from visualization module
+from visualization import (
+    COLORS,
+    setup_figure,
+    add_retirement_line,
+    apply_standard_style,
+)
 
-# Consistent style for all figures
-plt.style.use('seaborn-v0_8-whitegrid')
-plt.rcParams.update({
-    'font.size': 14,
-    'axes.titlesize': 16,
-    'axes.labelsize': 14,
-    'legend.fontsize': 11,
-    'figure.titlesize': 18,
-})
-
-# Color scheme
-COLORS = {
-    'earnings': '#27ae60',   # Green
-    'expenses': '#e74c3c',   # Red
-    'savings': '#27ae60',    # Green (same as earnings)
-    'drawdown': '#e74c3c',   # Red (same as expenses)
-    'hc': '#e67e22',         # Orange - Human Capital
-    'fw': '#2ecc71',         # Light Green - Financial Wealth
-    'tw': '#3498db',         # Blue - Total Wealth
-    'stock': '#3498db',      # Blue
-    'bond': '#9b59b6',       # Purple
-    'cash': '#f1c40f',       # Yellow
-    'subsistence': '#95a5a6', # Gray
-    'variable': '#e74c3c',   # Red
-    'pv_earnings': '#27ae60',
-    'pv_expenses': '#e74c3c',
-}
-
-
-def setup_figure(figsize=(10, 6)):
-    """Create a figure with consistent styling."""
-    fig, ax = plt.subplots(figsize=figsize)
-    return fig, ax
-
-
-def add_retirement_line(ax, retirement_x, use_years=True):
-    """Add a vertical line at retirement."""
-    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.7,
-               label='Retirement', linewidth=1.5)
+# Apply consistent style for all figures
+apply_standard_style()
 
 
 def get_x_axis(result, params, use_years=True):

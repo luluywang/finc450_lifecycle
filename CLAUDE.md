@@ -12,6 +12,89 @@ Install all required packages:
 pip install -r requirements.txt
 ```
 
+## Module Structure
+
+```
+finc450_lifecycle/
+├── core/                           # Core module (SINGLE SOURCE OF TRUTH)
+│   ├── __init__.py                 # Public API exports
+│   ├── params.py                   # All dataclasses (LifecycleParams, EconomicParams, ScenarioResult, etc.)
+│   ├── economics.py                # Bond pricing, PV calculations, MV optimization
+│   └── simulation.py               # Monte Carlo engines, strategy comparison
+│
+├── visualization/                  # Consolidated matplotlib visualization code
+│   ├── __init__.py                 # Public API exports
+│   ├── styles.py                   # Colors, fonts, style constants
+│   ├── helpers.py                  # Plot utilities (apply_wealth_log_scale, setup_figure, etc.)
+│   ├── lifecycle_plots.py          # Median path charts (earnings, wealth, allocations)
+│   ├── monte_carlo_plots.py        # Fan charts, distributions, teaching scenarios
+│   ├── comparison_plots.py         # Strategy comparisons (LDI vs RoT)
+│   └── sensitivity_plots.py        # Parameter sensitivity (beta, gamma, volatility)
+│
+├── deprecated/                     # Deprecated modules (backward compatibility only)
+│   ├── __init__.py
+│   ├── retirement_simulation.py    # Use core/ instead
+│   └── visualizations.py           # Use visualization/ instead
+│
+├── lifecycle_strategy.py           # PDF generation entry point
+├── dashboard.py                    # Strategy comparison dashboard
+├── generate_lecture_figures.py     # Educational figure generation
+├── retirement_simulation.py        # Stub → deprecated/retirement_simulation.py
+└── visualizations.py               # Stub → deprecated/visualizations.py
+```
+
+### Core Module
+
+The `core/` module is the single source of truth for all simulation logic:
+
+```python
+from core import (
+    LifecycleParams,
+    EconomicParams,
+    ScenarioResult,
+    compute_lifecycle_median_path,
+    run_strategy_comparison,
+)
+```
+
+### Visualization Module
+
+The `visualization/` module consolidates all matplotlib plotting code:
+
+```python
+from visualization import (
+    # Styles and helpers
+    COLORS,
+    apply_wealth_log_scale,
+    setup_figure,
+
+    # Lifecycle plots
+    create_lifecycle_figure,
+    plot_earnings_expenses_profile,
+
+    # Monte Carlo plots
+    create_monte_carlo_fan_chart,
+    create_teaching_scenarios_figure,
+
+    # Comparison plots
+    create_strategy_comparison_figure,
+    create_median_path_comparison_figure,
+
+    # Sensitivity plots
+    create_beta_comparison_figure,
+    create_gamma_comparison_figure,
+)
+```
+
+### Deprecated Modules
+
+The following modules are deprecated and maintained only for backward compatibility:
+
+- `retirement_simulation.py` → Use `from core import ...` instead
+- `visualizations.py` → Use `from visualization import ...` instead
+
+These stub files redirect to `deprecated/` and emit deprecation warnings on import.
+
 ## Generating PDFs
 
 To regenerate the lifecycle strategy PDF:
@@ -29,3 +112,15 @@ python3 lifecycle_strategy.py -o custom.pdf --initial-earnings 120 --stock-beta 
 ```
 
 Run `python3 lifecycle_strategy.py --help` for all available options.
+
+## Other Entry Points
+
+Generate strategy comparison dashboard:
+```bash
+python3 dashboard.py
+```
+
+Generate lecture figures:
+```bash
+python3 generate_lecture_figures.py --output-dir figures/
+```

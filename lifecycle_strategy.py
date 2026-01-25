@@ -11,7 +11,6 @@ Author: FINC 450 Life Cycle Investing
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-from dataclasses import dataclass
 from typing import Tuple, Optional, List
 from core import (
     # Dataclasses
@@ -23,6 +22,7 @@ from core import (
     RuleOfThumbResult,
     StrategyComparisonResult,
     MedianPathComparisonResult,
+    ScenarioResult,  # Now imported from core
     # Economic functions
     effective_duration,
     zero_coupon_price,
@@ -45,22 +45,45 @@ from core import (
     run_strategy_comparison,
 )
 
+# Import visualization functions from the consolidated visualization module
+from visualization import (
+    # Styles and helpers
+    COLORS,
+    apply_wealth_log_scale,
+    # Lifecycle plots
+    plot_earnings_expenses_profile,
+    plot_forward_present_values,
+    plot_durations,
+    plot_human_vs_financial_wealth,
+    plot_hc_decomposition,
+    plot_target_financial_holdings,
+    plot_portfolio_shares,
+    plot_total_wealth_holdings,
+    plot_consumption_dollars,
+    plot_consumption_breakdown,
+    create_lifecycle_figure,
+    # Monte Carlo plots
+    create_monte_carlo_fan_chart,
+    create_monte_carlo_detailed_view,
+    create_teaching_scenarios_figure,
+    create_sequence_of_returns_figure,
+    # Comparison plots
+    create_strategy_comparison_figure,
+    create_median_path_comparison_figure,
+    # Sensitivity plots
+    create_beta_comparison_figure,
+    create_gamma_comparison_figure,
+    create_initial_wealth_comparison_figure,
+    create_consumption_boost_comparison_figure,
+    create_equity_premium_comparison_figure,
+    create_income_comparison_figure,
+    create_volatility_comparison_figure,
+)
+
 
 # =============================================================================
 # Teaching Scenario Analysis
 # =============================================================================
-
-@dataclass
-class ScenarioResult:
-    """Results from a teaching scenario simulation."""
-    name: str
-    description: str
-    ages: np.ndarray
-    financial_wealth: np.ndarray
-    total_consumption: np.ndarray
-    stock_weight: np.ndarray
-    stock_returns: np.ndarray
-    cumulative_consumption: np.ndarray
 
 
 def create_teaching_scenario(

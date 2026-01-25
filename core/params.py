@@ -370,3 +370,16 @@ class MedianPathResult:
     lb_weight: np.ndarray              # (n_periods,) long bond allocation
     liability_pv: np.ndarray           # (n_periods + 1,) present value of liabilities
     funded_ratio: np.ndarray           # (n_periods + 1,) funded status
+
+
+@dataclass
+class ScenarioResult:
+    """Results from a teaching scenario simulation."""
+    name: str
+    description: str
+    ages: np.ndarray
+    financial_wealth: np.ndarray
+    total_consumption: np.ndarray
+    stock_weight: np.ndarray
+    stock_returns: np.ndarray
+    cumulative_consumption: np.ndarray

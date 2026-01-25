@@ -27,6 +27,7 @@ from .params import (
     MedianPathComparisonResult,
     SimulationResult,
     MedianPathResult,
+    ScenarioResult,
 )
 
 # Economic primitives
@@ -102,6 +103,7 @@ __all__ = [
     'MedianPathComparisonResult',
     'SimulationResult',
     'MedianPathResult',
+    'ScenarioResult',
     # Economics
     'effective_duration',
     'effective_duration_vectorized',

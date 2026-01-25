@@ -7,20 +7,16 @@ Shows distribution of net worth (FW + HC - PV Expenses) over time.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from lifecycle_strategy import (
+
+# Import from new core module (primary source of truth)
+from core import (
     LifecycleParams,
     EconomicParams,
-    compute_lifecycle_median_path,
-    compute_rule_of_thumb_strategy,
-    compute_pv_consumption,
-    compute_present_value,
     run_strategy_comparison,
-    generate_correlated_shocks,
-    simulate_interest_rates,
-    simulate_stock_returns,
-    compute_mv_optimal_allocation,
+    compute_lifecycle_median_path,
+    compute_present_value,
+    compute_pv_consumption,
 )
-from retirement_simulation import generate_correlated_shocks, simulate_interest_rates, simulate_stock_returns
 
 
 def run_net_worth_comparison(
@@ -36,148 +32,49 @@ def run_net_worth_comparison(
     Run Monte Carlo comparison tracking net worth for both strategies.
 
     Net Worth = Financial Wealth + Human Capital - PV(Future Expenses)
+
+    This function delegates to run_strategy_comparison from core.simulation,
+    then computes net worth paths using dynamic revaluation.
     """
     if params is None:
         params = LifecycleParams()
     if econ_params is None:
         econ_params = EconomicParams()
 
-    total_years = params.end_age - params.start_age
-    working_years = params.retirement_age - params.start_age
-    ages = np.arange(params.start_age, params.end_age)
+    # Delegate to core simulation engine (SINGLE SOURCE OF TRUTH)
+    comparison = run_strategy_comparison(
+        params=params,
+        econ_params=econ_params,
+        n_simulations=n_simulations,
+        random_seed=random_seed,
+        rot_savings_rate=rot_savings_rate,
+        rot_target_duration=rot_target_duration,
+        rot_withdrawal_rate=rot_withdrawal_rate,
+    )
 
-    # Get median path for human capital and PV expenses (same for both strategies)
+    # Get median path for human capital and expenses
     median_result = compute_lifecycle_median_path(params, econ_params)
     human_capital = median_result.human_capital
     pv_expenses = median_result.pv_expenses
     earnings = median_result.earnings
     expenses = median_result.expenses
 
-    # Compute optimal target allocations
-    if params.gamma > 0:
-        target_stock, target_bond, target_cash = compute_mv_optimal_allocation(
-            mu_stock=econ_params.mu_excess,
-            mu_bond=econ_params.mu_bond,
-            sigma_s=econ_params.sigma_s,
-            sigma_r=econ_params.sigma_r,
-            rho=econ_params.rho,
-            duration=econ_params.bond_duration,
-            gamma=params.gamma
-        )
-    else:
-        target_stock = params.target_stock_allocation
-        target_bond = params.target_bond_allocation
-        target_cash = 1.0 - target_stock - target_bond
+    total_years = params.end_age - params.start_age
+    working_years = params.retirement_age - params.start_age
+    ages = comparison.ages
 
-    # Generate random shocks
-    rng = np.random.default_rng(random_seed)
-    rate_shocks, stock_shocks = generate_correlated_shocks(
-        total_years, n_simulations, econ_params.rho, rng
-    )
+    # Extract paths from comparison result
+    ldi_wealth_paths = comparison.optimal_wealth_paths
+    ldi_consumption_paths = comparison.optimal_consumption_paths
+    rot_wealth_paths = comparison.rot_wealth_paths
+    rot_consumption_paths = comparison.rot_consumption_paths
+    rate_paths = comparison.interest_rate_paths
 
-    # Simulate paths
-    initial_rate = econ_params.r_bar
-    rate_paths = simulate_interest_rates(
-        initial_rate, total_years, n_simulations, econ_params, rate_shocks
-    )
-    stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
-
-    # Initialize arrays
-    ldi_wealth_paths = np.zeros((n_simulations, total_years))
+    # Compute net worth paths with dynamic revaluation
     ldi_net_worth_paths = np.zeros((n_simulations, total_years))
-    ldi_consumption_paths = np.zeros((n_simulations, total_years))
-
-    rot_wealth_paths = np.zeros((n_simulations, total_years))
     rot_net_worth_paths = np.zeros((n_simulations, total_years))
-    rot_consumption_paths = np.zeros((n_simulations, total_years))
 
-    # Consumption rate for LDI
-    r = econ_params.r_bar
-    avg_median_return = (
-        target_stock * (r + econ_params.mu_excess) +
-        target_bond * r +
-        target_cash * r
-    )
-    consumption_rate = avg_median_return + params.consumption_boost
-
-    # Run simulations
     for sim in range(n_simulations):
-        # ---- LDI STRATEGY ----
-        ldi_wealth_paths[sim, 0] = params.initial_wealth
-        ldi_defaulted = False
-
-        for t in range(total_years):
-            fw = ldi_wealth_paths[sim, t]
-
-            # Dynamic revaluation using current simulated rate
-            current_rate = rate_paths[sim, t]
-
-            # PV of remaining expenses
-            remaining_expenses = expenses[t:]
-            pv_exp = compute_present_value(remaining_expenses, current_rate,
-                                           econ_params.phi, econ_params.r_bar)
-
-            # Human capital = PV of remaining earnings
-            if t < working_years:
-                remaining_earnings = earnings[t:working_years]
-                hc = compute_present_value(remaining_earnings, current_rate,
-                                           econ_params.phi, econ_params.r_bar)
-            else:
-                hc = 0.0
-
-            net_worth = hc + fw - pv_exp
-
-            ldi_net_worth_paths[sim, t] = net_worth
-
-            # Consumption
-            subsistence = expenses[t]
-            variable = max(0, consumption_rate * net_worth)
-            total_cons = subsistence + variable
-
-            if t < working_years:
-                if total_cons > earnings[t]:
-                    total_cons = earnings[t]
-            else:
-                if ldi_defaulted:
-                    total_cons = 0
-                elif fw <= 0:
-                    ldi_defaulted = True
-                    total_cons = 0
-                elif total_cons > fw:
-                    total_cons = fw
-
-            ldi_consumption_paths[sim, t] = total_cons
-
-            # Evolve wealth
-            if t < total_years - 1 and not ldi_defaulted:
-                savings = earnings[t] - total_cons
-
-                stock_ret = stock_return_paths[sim, t]
-                bond_ret = rate_paths[sim, t] + econ_params.mu_bond
-                cash_ret = rate_paths[sim, t]
-
-                portfolio_return = (
-                    target_stock * stock_ret +
-                    target_bond * bond_ret +
-                    target_cash * cash_ret
-                )
-                ldi_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
-
-        # ---- RULE OF THUMB STRATEGY ----
-        rot_result = compute_rule_of_thumb_strategy(
-            params=params,
-            econ_params=econ_params,
-            savings_rate=rot_savings_rate,
-            withdrawal_rate=rot_withdrawal_rate,
-            target_duration=rot_target_duration,
-            stock_returns=stock_return_paths[sim, :],
-            interest_rates=rate_paths[sim, :],
-        )
-
-        rot_wealth_paths[sim, :] = rot_result.financial_wealth
-        rot_consumption_paths[sim, :] = rot_result.total_consumption
-
-        # Compute net worth for RoT with dynamic revaluation
         for t in range(total_years):
             current_rate = rate_paths[sim, t]
 
@@ -194,7 +91,9 @@ def run_net_worth_comparison(
             else:
                 hc = 0.0
 
-            rot_net_worth_paths[sim, t] = rot_result.financial_wealth[t] + hc - pv_exp
+            # Net worth for both strategies
+            ldi_net_worth_paths[sim, t] = ldi_wealth_paths[sim, t] + hc - pv_exp
+            rot_net_worth_paths[sim, t] = rot_wealth_paths[sim, t] + hc - pv_exp
 
     return {
         'ages': ages,
@@ -231,8 +130,6 @@ def create_dashboard(results, figsize=(16, 12)):
     color_ldi = '#2ecc71'
     color_rot = '#3498db'
     alpha_fan = 0.25
-
-    percentiles = [5, 25, 50, 75, 95]
 
     # Helper function for fan charts
     def plot_fan(ax, paths, color, label):
@@ -355,7 +252,7 @@ def create_dashboard(results, figsize=(16, 12)):
 
     summary = f"""
 Summary Statistics (n={n_sims} simulations)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{'='*40}
                     LDI         RoT
 Median PV Cons:   ${np.median(ldi_pv):,.0f}k    ${np.median(rot_pv):,.0f}k
 Median Final FW:  ${np.median(ldi_final):,.0f}k    ${np.median(rot_final):,.0f}k
@@ -390,7 +287,7 @@ if __name__ == '__main__':
     print("Creating dashboard...")
     fig = create_dashboard(results)
 
-    # Save to file
-    fig.savefig('strategy_dashboard.png', dpi=150, bbox_inches='tight')
+    # Save to PDF
+    fig.savefig('strategy_dashboard.pdf', bbox_inches='tight')
     plt.close(fig)
-    print("Dashboard saved to strategy_dashboard.png")
+    print("Dashboard saved to strategy_dashboard.pdf")
