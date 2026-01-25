@@ -53,6 +53,7 @@ from .economics import (
     # Present value and duration
     compute_present_value,
     compute_pv_consumption,
+    compute_pv_consumption_realized,
     compute_duration,
     liability_pv,
     liability_pv_vectorized,
@@ -139,6 +140,7 @@ __all__ = [
     'compute_duration_approx_returns',
     'compute_present_value',
     'compute_pv_consumption',
+    'compute_pv_consumption_realized',
     'compute_duration',
     'liability_pv',
     'liability_pv_vectorized',

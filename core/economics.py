@@ -230,6 +230,36 @@ def compute_pv_consumption(consumption: np.ndarray, rate: float) -> float:
     return pv
 
 
+def compute_pv_consumption_realized(consumption: np.ndarray, rates: np.ndarray) -> float:
+    """
+    Compute PV of consumption using realized rate path.
+
+    Instead of using a constant discount rate, this uses the actual realized
+    interest rate path to compute present value. This is more accurate for
+    comparing strategies under stochastic interest rates.
+
+    Formula: PV = sum(C_t / prod_{s=0}^{t-1}(1 + r_s))
+
+    Args:
+        consumption: Array of consumption values over time
+        rates: Array of realized interest rates over time
+
+    Returns:
+        Present value of total lifetime consumption at time 0
+    """
+    T = len(consumption)
+    r = rates[:T] if len(rates) > T else rates
+
+    # Cumulative discount factors
+    discount_factors = np.ones(T)
+    cumulative_growth = 1.0
+    for t in range(1, T):
+        cumulative_growth *= (1 + r[t-1])
+        discount_factors[t] = cumulative_growth
+
+    return np.sum(consumption / discount_factors)
+
+
 def compute_duration(
     cashflows: np.ndarray,
     rate: float,
