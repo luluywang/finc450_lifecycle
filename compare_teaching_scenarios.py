@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 from core import (
+    DEFAULT_RISKY_BETA,
     LifecycleParams,
     EconomicParams,
     simulate_with_strategy,
@@ -67,7 +68,7 @@ SCENARIOS = {
     'rate_shock': ScenarioConfig(
         name='rate_shock',
         title='Pre-Retirement Rate Shock',
-        description='Interest rate drop (~6% cumulative) in 5 years before retirement'
+        description='Interest rate drop (~4% cumulative) in 5 years before retirement'
     ),
 }
 
@@ -118,8 +119,8 @@ def create_scenario_shocks(
         # This affects bond valuations and discount rates
         shock_start = max(0, working_years - 5)
         shock_end = working_years
-        # Force rate decline: eps ~ -2 sigma per year (cumulative ~6% rate drop)
-        rate_shocks[:, shock_start:shock_end] = -2.0
+        # Force rate decline: eps ~ -1.33 sigma per year (cumulative ~4% rate drop)
+        rate_shocks[:, shock_start:shock_end] = -1.33
 
     return rate_shocks, stock_shocks
 
@@ -132,6 +133,7 @@ def create_scenario_shocks(
 class ScenarioResult:
     """Results from running a scenario with both strategies."""
     scenario: str
+    stock_beta: float  # Human capital stock beta used in this scenario
     ages: np.ndarray
 
     # LDI results
@@ -160,6 +162,7 @@ def run_teaching_scenario(
     econ_params: EconomicParams,
     base_rate_shocks: np.ndarray,
     base_stock_shocks: np.ndarray,
+    stock_beta: float = 0.0,
 ) -> ScenarioResult:
     """
     Run both LDI and RoT strategies under a specific scenario.
@@ -170,6 +173,7 @@ def run_teaching_scenario(
         econ_params: Economic parameters
         base_rate_shocks: Baseline rate shocks (shared across scenarios for fair comparison)
         base_stock_shocks: Baseline stock shocks
+        stock_beta: Human capital stock beta (default 0.0 = bond-like)
 
     Returns:
         ScenarioResult with paths and statistics for both strategies
@@ -178,6 +182,12 @@ def run_teaching_scenario(
     working_years = params.retirement_age - params.start_age
     n_sims = base_rate_shocks.shape[0]
     ages = np.arange(params.start_age, params.end_age)
+
+    # Create params with specified stock beta
+    params_with_beta = LifecycleParams(
+        **{k: v for k, v in params.__dict__.items() if k != 'stock_beta_human_capital'},
+        stock_beta_human_capital=stock_beta
+    )
 
     # Apply scenario-specific shock modifications
     rate_shocks, stock_shocks = create_scenario_shocks(
@@ -191,12 +201,12 @@ def run_teaching_scenario(
 
     # Run LDI strategy
     ldi_result = simulate_with_strategy(
-        ldi_strategy, params, econ_params, rate_shocks, stock_shocks
+        ldi_strategy, params_with_beta, econ_params, rate_shocks, stock_shocks
     )
 
     # Run RoT strategy
     rot_result = simulate_with_strategy(
-        rot_strategy, params, econ_params, rate_shocks, stock_shocks
+        rot_strategy, params_with_beta, econ_params, rate_shocks, stock_shocks
     )
 
     # Compute PV consumption for each simulation using realized rate paths
@@ -220,6 +230,7 @@ def run_teaching_scenario(
 
     return ScenarioResult(
         scenario=scenario,
+        stock_beta=stock_beta,
         ages=ages,
         # LDI
         ldi_financial_wealth_paths=ldi_result.financial_wealth,
@@ -245,31 +256,47 @@ def run_all_teaching_scenarios(
     econ_params: EconomicParams = None,
     n_simulations: int = 500,
     random_seed: int = 42,
-) -> Dict[str, ScenarioResult]:
+    beta_values: List[float] = None,
+) -> Dict[str, Dict[float, ScenarioResult]]:
     """
-    Run all three teaching scenarios.
+    Run all teaching scenarios for each beta value.
 
     Uses the same baseline shocks for all scenarios to ensure fair comparison.
+
+    Args:
+        params: Lifecycle parameters
+        econ_params: Economic parameters
+        n_simulations: Number of Monte Carlo simulations
+        random_seed: Random seed for reproducibility
+        beta_values: List of human capital stock betas to run (default: [0.0, DEFAULT_RISKY_BETA])
+
+    Returns:
+        Nested dict: {scenario_name: {beta: ScenarioResult}}
     """
     if params is None:
         params = LifecycleParams()
     if econ_params is None:
         econ_params = EconomicParams()
+    if beta_values is None:
+        beta_values = [0.0, DEFAULT_RISKY_BETA]
 
     total_years = params.end_age - params.start_age
     rng = np.random.default_rng(random_seed)
 
-    # Generate baseline shocks (shared across all scenarios)
+    # Generate baseline shocks (shared across all scenarios and betas)
     base_rate_shocks, base_stock_shocks = generate_correlated_shocks(
         total_years, n_simulations, econ_params.rho, rng
     )
 
     results = {}
     for scenario in ['baseline', 'sequence_risk', 'rate_shock']:
-        print(f"  Running {scenario} scenario...")
-        results[scenario] = run_teaching_scenario(
-            scenario, params, econ_params, base_rate_shocks, base_stock_shocks
-        )
+        results[scenario] = {}
+        for beta in beta_values:
+            print(f"  Running {scenario} scenario (beta={beta})...")
+            results[scenario][beta] = run_teaching_scenario(
+                scenario, params, econ_params, base_rate_shocks, base_stock_shocks,
+                stock_beta=beta
+            )
 
     return results
 
@@ -278,11 +305,11 @@ def run_all_teaching_scenarios(
 # Visualization
 # =============================================================================
 
-# Colors for strategies
-COLOR_LDI = '#2ecc71'   # Green
-COLOR_ROT = '#e74c3c'   # Red
-COLOR_RATES = '#3498db'  # Blue
-COLOR_STOCKS = '#9b59b6'  # Purple
+# Colors for strategies (colorblind-friendly)
+COLOR_LDI = '#1A759F'   # Deep blue (was green)
+COLOR_ROT = '#E9C46A'   # Amber (was red)
+COLOR_RATES = '#3498db'  # Blue (unchanged)
+COLOR_STOCKS = '#9b59b6'  # Purple (unchanged)
 
 
 def plot_dodged_histogram(
@@ -357,7 +384,8 @@ def create_scenario_figure(
     - (2,1): PV Consumption distribution (Realized Rates)
     """
     fig, axes = plt.subplots(3, 2, figsize=figsize)
-    fig.suptitle(f'{config.title}\n{config.description}', fontsize=14, fontweight='bold')
+    beta_label = f"(β={result.stock_beta})" if result.stock_beta > 0 else "(β=0, Bond-like HC)"
+    fig.suptitle(f'{config.title} {beta_label}\n{config.description}', fontsize=14, fontweight='bold')
 
     x = np.arange(len(result.ages))
     retirement_x = params.retirement_age - params.start_age
@@ -501,20 +529,17 @@ def create_scenario_figure(
     return fig
 
 
-def create_summary_figure(
-    results: Dict[str, ScenarioResult],
+def _create_single_beta_summary(
+    results: Dict[str, Dict[float, ScenarioResult]],
+    beta: float,
     figsize: Tuple[int, int] = (14, 8),
 ) -> plt.Figure:
     """
-    Create a summary comparison figure across all three scenarios.
-
-    Shows:
-    - Default rates by scenario and strategy
-    - Median PV consumption by scenario and strategy
-    - Median terminal wealth by scenario and strategy
+    Create a simple summary figure for single-beta case (LDI vs RoT comparison).
     """
     fig, axes = plt.subplots(1, 3, figsize=figsize)
-    fig.suptitle('Teaching Scenarios: LDI vs Rule-of-Thumb Summary Comparison',
+    beta_label = f"(β={beta})" if beta > 0 else "(β=0, Bond-like HC)"
+    fig.suptitle(f'Teaching Scenarios: LDI vs Rule-of-Thumb Summary {beta_label}',
                  fontsize=14, fontweight='bold')
 
     scenarios = ['baseline', 'sequence_risk', 'rate_shock']
@@ -531,7 +556,7 @@ def create_summary_figure(
     rot_median_terminal = []
 
     for scenario in scenarios:
-        r = results[scenario]
+        r = results[scenario][beta]
         ldi_default_rates.append(np.mean(r.ldi_default_flags) * 100)
         rot_default_rates.append(np.mean(r.rot_default_flags) * 100)
         ldi_median_pv.append(np.median(r.ldi_pv_consumption))
@@ -539,7 +564,7 @@ def create_summary_figure(
         ldi_median_terminal.append(np.median(r.ldi_financial_wealth_paths[:, -1]))
         rot_median_terminal.append(np.median(r.rot_financial_wealth_paths[:, -1]))
 
-    # ---- Panel 1: Default Rates ----
+    # Panel 1: Default Rates
     ax = axes[0]
     bars1 = ax.bar(x - width/2, ldi_default_rates, width, label='LDI', color=COLOR_LDI, alpha=0.8)
     bars2 = ax.bar(x + width/2, rot_default_rates, width, label='RoT', color=COLOR_ROT, alpha=0.8)
@@ -549,8 +574,6 @@ def create_summary_figure(
     ax.set_xticklabels(scenario_labels)
     ax.legend()
     ax.grid(True, alpha=0.3, axis='y')
-
-    # Add value labels
     for bars in [bars1, bars2]:
         for bar in bars:
             height = bar.get_height()
@@ -560,7 +583,7 @@ def create_summary_figure(
                             xytext=(0, 3), textcoords="offset points",
                             ha='center', va='bottom', fontsize=9)
 
-    # ---- Panel 2: Median PV Consumption ----
+    # Panel 2: Median PV Consumption
     ax = axes[1]
     bars1 = ax.bar(x - width/2, ldi_median_pv, width, label='LDI', color=COLOR_LDI, alpha=0.8)
     bars2 = ax.bar(x + width/2, rot_median_pv, width, label='RoT', color=COLOR_ROT, alpha=0.8)
@@ -570,8 +593,6 @@ def create_summary_figure(
     ax.set_xticklabels(scenario_labels)
     ax.legend()
     ax.grid(True, alpha=0.3, axis='y')
-
-    # Add value labels
     for bars in [bars1, bars2]:
         for bar in bars:
             height = bar.get_height()
@@ -580,7 +601,7 @@ def create_summary_figure(
                         xytext=(0, 3), textcoords="offset points",
                         ha='center', va='bottom', fontsize=8)
 
-    # ---- Panel 3: Median Terminal Wealth ----
+    # Panel 3: Median Terminal Wealth
     ax = axes[2]
     bars1 = ax.bar(x - width/2, ldi_median_terminal, width, label='LDI', color=COLOR_LDI, alpha=0.8)
     bars2 = ax.bar(x + width/2, rot_median_terminal, width, label='RoT', color=COLOR_ROT, alpha=0.8)
@@ -590,8 +611,6 @@ def create_summary_figure(
     ax.set_xticklabels(scenario_labels)
     ax.legend()
     ax.grid(True, alpha=0.3, axis='y')
-
-    # Add value labels
     for bars in [bars1, bars2]:
         for bar in bars:
             height = bar.get_height()
@@ -600,17 +619,132 @@ def create_summary_figure(
                         xytext=(0, 3), textcoords="offset points",
                         ha='center', va='bottom', fontsize=8)
 
-    # Add summary statistics text box
-    summary_text = "Key Takeaways:\n"
-    for i, scenario in enumerate(scenarios):
-        ldi_adv = ldi_median_pv[i] - rot_median_pv[i]
-        summary_text += f"\n{scenario_labels[i].replace(chr(10), ' ')}: "
-        summary_text += f"LDI PV +${ldi_adv:,.0f}k vs RoT"
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig
 
-    fig.text(0.5, 0.02, summary_text, ha='center', fontsize=10,
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
-    plt.tight_layout(rect=[0, 0.08, 1, 0.95])
+def create_summary_figure(
+    results: Dict[str, Dict[float, ScenarioResult]],
+    beta_values: List[float] = None,
+    figsize: Tuple[int, int] = (16, 12),
+) -> plt.Figure:
+    """
+    Create summary with two side-by-side comparison charts.
+
+    Layout: 3 rows x 2 columns
+    - Left column: LDI vs RoT at beta=0
+    - Right column: LDI vs RoT at beta=DEFAULT_RISKY_BETA
+    - Row 1: Default Rates comparison
+    - Row 2: Median PV Consumption comparison
+    - Row 3: Median Terminal Wealth comparison
+    """
+    if beta_values is None:
+        # Extract beta values from results
+        first_scenario = list(results.keys())[0]
+        beta_values = sorted(results[first_scenario].keys())
+
+    # Handle single-beta case (--no-risky-hc)
+    if len(beta_values) == 1:
+        return _create_single_beta_summary(results, beta_values[0], figsize)
+
+    fig, axes = plt.subplots(3, 2, figsize=figsize)
+    fig.suptitle('LDI vs Rule-of-Thumb: Strategy Comparison Across Scenarios',
+                 fontsize=14, fontweight='bold')
+
+    scenarios = ['baseline', 'sequence_risk', 'rate_shock']
+    scenario_labels = ['Baseline', 'Sequence\nRisk', 'Rate\nShock']
+    x = np.arange(len(scenarios))
+    width = 0.35
+
+    # Compute metrics for each scenario and beta
+    metrics = {beta: {
+        'ldi_default': [],
+        'rot_default': [],
+        'ldi_pv': [],
+        'rot_pv': [],
+        'ldi_terminal': [],
+        'rot_terminal': [],
+    } for beta in beta_values}
+
+    for scenario in scenarios:
+        for beta in beta_values:
+            r = results[scenario][beta]
+            metrics[beta]['ldi_default'].append(np.mean(r.ldi_default_flags) * 100)
+            metrics[beta]['rot_default'].append(np.mean(r.rot_default_flags) * 100)
+            metrics[beta]['ldi_pv'].append(np.median(r.ldi_pv_consumption))
+            metrics[beta]['rot_pv'].append(np.median(r.rot_pv_consumption))
+            metrics[beta]['ldi_terminal'].append(np.median(r.ldi_financial_wealth_paths[:, -1]))
+            metrics[beta]['rot_terminal'].append(np.median(r.rot_financial_wealth_paths[:, -1]))
+
+    # Process each beta value (column)
+    for col, beta in enumerate(beta_values[:2]):  # Only use first two beta values
+        beta_label = "β=0 (Bond-like HC)" if beta == 0 else f"β={beta} (Risky HC)"
+
+        # ---- Row 0: Default Rates ----
+        ax = axes[0, col]
+        bars1 = ax.bar(x - width/2, metrics[beta]['ldi_default'], width,
+                       label='LDI', color=COLOR_LDI, alpha=0.8)
+        bars2 = ax.bar(x + width/2, metrics[beta]['rot_default'], width,
+                       label='RoT', color=COLOR_ROT, alpha=0.8)
+        ax.set_ylabel('Default Rate (%)')
+        ax.set_title(f'Default Rates - {beta_label}', fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(scenario_labels)
+        ax.legend(loc='upper left', fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        # Add value annotations
+        for bars in [bars1, bars2]:
+            for bar in bars:
+                height = bar.get_height()
+                if height > 0.5:
+                    ax.annotate(f'{height:.1f}%',
+                                xy=(bar.get_x() + bar.get_width() / 2, height),
+                                xytext=(0, 3), textcoords="offset points",
+                                ha='center', va='bottom', fontsize=8)
+
+        # ---- Row 1: Median PV Consumption ----
+        ax = axes[1, col]
+        bars1 = ax.bar(x - width/2, metrics[beta]['ldi_pv'], width,
+                       label='LDI', color=COLOR_LDI, alpha=0.8)
+        bars2 = ax.bar(x + width/2, metrics[beta]['rot_pv'], width,
+                       label='RoT', color=COLOR_ROT, alpha=0.8)
+        ax.set_ylabel('Median PV Consumption ($k)')
+        ax.set_title(f'PV Lifetime Consumption - {beta_label}', fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(scenario_labels)
+        ax.legend(loc='upper left', fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        # Add value annotations
+        for bars in [bars1, bars2]:
+            for bar in bars:
+                height = bar.get_height()
+                ax.annotate(f'${height:,.0f}k',
+                            xy=(bar.get_x() + bar.get_width() / 2, height),
+                            xytext=(0, 3), textcoords="offset points",
+                            ha='center', va='bottom', fontsize=7)
+
+        # ---- Row 2: Median Terminal Wealth ----
+        ax = axes[2, col]
+        bars1 = ax.bar(x - width/2, metrics[beta]['ldi_terminal'], width,
+                       label='LDI', color=COLOR_LDI, alpha=0.8)
+        bars2 = ax.bar(x + width/2, metrics[beta]['rot_terminal'], width,
+                       label='RoT', color=COLOR_ROT, alpha=0.8)
+        ax.set_ylabel('Median Terminal Wealth ($k)')
+        ax.set_title(f'Terminal Wealth at Age 95 - {beta_label}', fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(scenario_labels)
+        ax.legend(loc='upper left', fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        # Add value annotations
+        for bars in [bars1, bars2]:
+            for bar in bars:
+                height = bar.get_height()
+                ax.annotate(f'${height:,.0f}k',
+                            xy=(bar.get_x() + bar.get_width() / 2, height),
+                            xytext=(0, 3), textcoords="offset points",
+                            ha='center', va='bottom', fontsize=7)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
     return fig
 
 
@@ -618,16 +752,27 @@ def generate_teaching_scenarios_pdf(
     output_path: str = 'output/teaching_scenarios.pdf',
     n_simulations: int = 500,
     random_seed: int = 42,
+    beta_values: List[float] = None,
+    include_risky_hc: bool = True,
 ) -> None:
     """
     Generate the complete teaching scenarios PDF.
 
-    PDF Contents:
-    1. Summary comparison figure
-    2. Baseline scenario figure
-    3. Sequence risk scenario figure
-    4. Rate shock scenario figure
+    PDF Contents (with risky HC enabled):
+    1. Summary comparison figure (all scenarios × both betas)
+    2-4. Low beta scenarios (baseline, sequence_risk, rate_shock) with β=0
+    5-7. High beta scenarios (baseline, sequence_risk, rate_shock) with β=DEFAULT_RISKY_BETA
+
+    Args:
+        output_path: Path for output PDF file
+        n_simulations: Number of Monte Carlo simulations
+        random_seed: Random seed for reproducibility
+        beta_values: List of human capital stock betas (default: [0.0, DEFAULT_RISKY_BETA])
+        include_risky_hc: If False, only run β=0 scenarios (4 pages total)
     """
+    if beta_values is None:
+        beta_values = [0.0, DEFAULT_RISKY_BETA] if include_risky_hc else [0.0]
+
     print("Running teaching scenario simulations...")
     params = LifecycleParams(consumption_boost=0.0)
     econ_params = EconomicParams()
@@ -637,25 +782,29 @@ def generate_teaching_scenarios_pdf(
         econ_params=econ_params,
         n_simulations=n_simulations,
         random_seed=random_seed,
+        beta_values=beta_values,
     )
 
     print("Creating PDF report...")
     with PdfPages(output_path) as pdf:
         # Page 1: Summary comparison
         print("  Creating summary figure...")
-        fig_summary = create_summary_figure(results)
+        fig_summary = create_summary_figure(results, beta_values)
         pdf.savefig(fig_summary, bbox_inches='tight')
         plt.close(fig_summary)
 
-        # Pages 2-4: Individual scenario figures
-        for scenario_name in ['baseline', 'sequence_risk', 'rate_shock']:
-            print(f"  Creating {scenario_name} scenario figure...")
-            config = SCENARIOS[scenario_name]
-            fig_scenario = create_scenario_figure(
-                results[scenario_name], config, params
-            )
-            pdf.savefig(fig_scenario, bbox_inches='tight')
-            plt.close(fig_scenario)
+        # Pages grouped by beta, then by scenario
+        for beta in beta_values:
+            beta_label = "Bond-like HC" if beta == 0 else f"Risky HC (β={beta})"
+            print(f"  Creating scenarios for {beta_label}...")
+            for scenario_name in ['baseline', 'sequence_risk', 'rate_shock']:
+                print(f"    Creating {scenario_name} scenario figure...")
+                config = SCENARIOS[scenario_name]
+                fig_scenario = create_scenario_figure(
+                    results[scenario_name][beta], config, params
+                )
+                pdf.savefig(fig_scenario, bbox_inches='tight')
+                plt.close(fig_scenario)
 
     print(f"Saved to {output_path}")
 
@@ -685,6 +834,17 @@ def main():
         default=42,
         help='Random seed for reproducibility (default: 42)'
     )
+    parser.add_argument(
+        '--risky-beta',
+        type=float,
+        default=DEFAULT_RISKY_BETA,
+        help=f'Stock beta for risky HC comparison (default: DEFAULT_RISKY_BETA={DEFAULT_RISKY_BETA})'
+    )
+    parser.add_argument(
+        '--no-risky-hc',
+        action='store_true',
+        help='Disable risky HC comparison (only run beta=0)'
+    )
 
     args = parser.parse_args()
 
@@ -692,10 +852,18 @@ def main():
     import os
     os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
 
+    # Determine beta values to run
+    if args.no_risky_hc:
+        beta_values = [0.0]
+    else:
+        beta_values = [0.0, args.risky_beta]
+
     generate_teaching_scenarios_pdf(
         output_path=args.output,
         n_simulations=args.n_simulations,
         random_seed=args.seed,
+        beta_values=beta_values,
+        include_risky_hc=not args.no_risky_hc,
     )
 
 

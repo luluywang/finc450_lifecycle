@@ -8,12 +8,15 @@ has been factored out to the core and visualization modules.
 Author: FINC 450 Life Cycle Investing
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 # Core computation imports
 from core import (
+    # Constants
+    DEFAULT_RISKY_BETA,
     # Dataclasses
     EconomicParams,
     LifecycleParams,
@@ -24,7 +27,6 @@ from core import (
     compute_lifecycle_median_path,
     compute_median_path_comparison,
     run_lifecycle_monte_carlo,
-    run_strategy_comparison,
 )
 
 # Visualization imports
@@ -34,8 +36,8 @@ from visualization import (
     create_monte_carlo_page,
     create_scenario_page,
     # Comparison plots
-    create_strategy_comparison_figure,
     create_median_path_comparison_figure,
+    create_allocation_comparison_page,
     # Sensitivity plots
     create_beta_comparison_figure,
     create_gamma_comparison_figure,
@@ -46,7 +48,7 @@ from visualization import (
 
 
 def generate_lifecycle_pdf(
-    output_path: str = 'lifecycle_strategy.pdf',
+    output_path: str = 'output/lifecycle_strategy.pdf',
     params: LifecycleParams = None,
     econ_params: EconomicParams = None,
     include_legacy_pages: bool = False,
@@ -59,10 +61,9 @@ def generate_lifecycle_pdf(
     Generate a PDF report showing lifecycle investment strategy.
 
     STRUCTURE:
-    - Pages 1-3: Deterministic Median Path for Beta = 0.0, 0.5, 1.0
+    - Pages 1-3: Deterministic Median Path for Beta = 0.0, DEFAULT_RISKY_BETA, 1.0
     - Page 4: Effect of Stock Beta comparison
-    - Page 5: LDI vs Rule-of-Thumb Median Path Comparison
-    - Page 6: Monte Carlo Strategy Comparison
+    - Page 5: Portfolio Allocation Comparison (LDI vs RoT for Beta=0 and Beta=risky)
 
     Args:
         output_path: Path for output PDF file
@@ -82,7 +83,12 @@ def generate_lifecycle_pdf(
     if econ_params is None:
         econ_params = EconomicParams()
 
-    beta_values = [0.0, 0.5, 1.0]
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    beta_values = [0.0, DEFAULT_RISKY_BETA, 1.0]
 
     with PdfPages(output_path) as pdf:
         # ====================================================================
@@ -142,49 +148,56 @@ def generate_lifecycle_pdf(
         plt.close(fig)
 
         # ====================================================================
-        # PAGE 5: LDI vs RULE-OF-THUMB MEDIAN PATH COMPARISON
+        # PAGE 5: PORTFOLIO ALLOCATION COMPARISON (Beta = 0 vs Beta = DEFAULT_RISKY_BETA)
         # ====================================================================
-        print("Generating Page 5: LDI vs Rule-of-Thumb Median Path Comparison...")
-        median_comparison = compute_median_path_comparison(
-            params=params,
-            econ_params=econ_params,
-            rot_savings_rate=rot_savings_rate,
-            rot_target_duration=rot_target_duration,
-            rot_withdrawal_rate=rot_withdrawal_rate,
-        )
-        fig = create_median_path_comparison_figure(
-            comparison_result=median_comparison,
-            params=params,
-            econ_params=econ_params,
-            figsize=(18, 14),
-            use_years=use_years,
-        )
-        fig.suptitle('PAGE 5: LDI vs Rule-of-Thumb (Deterministic Median Path)',
-                    fontsize=16, fontweight='bold', y=1.02)
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
+        print("Generating Page 5: Portfolio Allocation Comparison...")
 
-        # ====================================================================
-        # PAGE 6: MONTE CARLO STRATEGY COMPARISON
-        # ====================================================================
-        print("Generating Page 6: Monte Carlo Strategy Comparison...")
-        mc_comparison = run_strategy_comparison(
+        # Beta = 0 comparison
+        median_comparison_beta0 = compute_median_path_comparison(
             params=params,
             econ_params=econ_params,
-            n_simulations=100,
-            random_seed=42,
             rot_savings_rate=rot_savings_rate,
             rot_target_duration=rot_target_duration,
             rot_withdrawal_rate=rot_withdrawal_rate,
         )
-        fig = create_strategy_comparison_figure(
-            comparison_result=mc_comparison,
-            params=params,
-            figsize=(18, 12),
+
+        # Beta = DEFAULT_RISKY_BETA comparison
+        params_beta03 = LifecycleParams(
+            start_age=params.start_age,
+            retirement_age=params.retirement_age,
+            end_age=params.end_age,
+            initial_earnings=params.initial_earnings,
+            earnings_growth=params.earnings_growth,
+            earnings_hump_age=params.earnings_hump_age,
+            earnings_decline=params.earnings_decline,
+            base_expenses=params.base_expenses,
+            expense_growth=params.expense_growth,
+            retirement_expenses=params.retirement_expenses,
+            stock_beta_human_capital=DEFAULT_RISKY_BETA,
+            gamma=params.gamma,
+            target_stock_allocation=params.target_stock_allocation,
+            target_bond_allocation=params.target_bond_allocation,
+            risk_free_rate=params.risk_free_rate,
+            equity_premium=params.equity_premium,
+            initial_wealth=params.initial_wealth,
+            consumption_boost=params.consumption_boost,
+        )
+        median_comparison_beta03 = compute_median_path_comparison(
+            params=params_beta03,
+            econ_params=econ_params,
+            rot_savings_rate=rot_savings_rate,
+            rot_target_duration=rot_target_duration,
+            rot_withdrawal_rate=rot_withdrawal_rate,
+        )
+
+        fig = create_allocation_comparison_page(
+            comparison_beta0=median_comparison_beta0,
+            comparison_beta_risky=median_comparison_beta03,
+            params_beta0=params,
+            params_beta_risky=params_beta03,
+            figsize=(16, 10),
             use_years=use_years,
         )
-        fig.suptitle('PAGE 6: LDI vs Rule-of-Thumb (Monte Carlo Comparison)',
-                    fontsize=16, fontweight='bold', y=1.02)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
 
@@ -343,24 +356,29 @@ Target Allocation ({allocation_source}):
     plt.close(fig)
 
 
+# Default instances for CLI - single source of truth
+_DEFAULT_PARAMS = LifecycleParams()
+_DEFAULT_ECON = EconomicParams()
+
+
 def main(
-    output_path: str = 'lifecycle_strategy.pdf',
-    start_age: int = 25,
-    retirement_age: int = 65,
-    end_age: int = 85,
-    initial_earnings: float = 150,
-    stock_beta_hc: float = 0.0,
-    bond_duration: float = 20.0,
-    gamma: float = 2.0,
-    mu_excess: float = 0.04,
-    bond_sharpe: float = 0.0,
-    sigma_s: float = 0.18,
-    sigma_r: float = 0.006,
-    rho: float = 0.0,
-    r_bar: float = 0.02,
-    consumption_share: float = 0.05,
-    consumption_boost: float = 0.0,
-    initial_wealth: float = 100.0,
+    output_path: str = 'output/lifecycle_strategy.pdf',
+    start_age: int = None,
+    retirement_age: int = None,
+    end_age: int = None,
+    initial_earnings: float = None,
+    stock_beta_hc: float = None,
+    bond_duration: float = None,
+    gamma: float = None,
+    mu_excess: float = None,
+    bond_sharpe: float = None,
+    sigma_s: float = None,
+    sigma_r: float = None,
+    rho: float = None,
+    r_bar: float = None,
+    consumption_share: float = None,
+    consumption_boost: float = None,
+    initial_wealth: float = None,
     include_scenarios: bool = False,
     use_years: bool = True,
     verbose: bool = True,
@@ -396,6 +414,24 @@ def main(
         rot_target_duration: Rule-of-Thumb target duration
         rot_withdrawal_rate: Rule-of-Thumb withdrawal rate
     """
+    # Use dataclass defaults for any None values
+    start_age = start_age if start_age is not None else _DEFAULT_PARAMS.start_age
+    retirement_age = retirement_age if retirement_age is not None else _DEFAULT_PARAMS.retirement_age
+    end_age = end_age if end_age is not None else _DEFAULT_PARAMS.end_age
+    initial_earnings = initial_earnings if initial_earnings is not None else _DEFAULT_PARAMS.initial_earnings
+    stock_beta_hc = stock_beta_hc if stock_beta_hc is not None else _DEFAULT_PARAMS.stock_beta_human_capital
+    gamma = gamma if gamma is not None else _DEFAULT_PARAMS.gamma
+    consumption_share = consumption_share if consumption_share is not None else _DEFAULT_PARAMS.consumption_share
+    consumption_boost = consumption_boost if consumption_boost is not None else _DEFAULT_PARAMS.consumption_boost
+    initial_wealth = initial_wealth if initial_wealth is not None else _DEFAULT_PARAMS.initial_wealth
+    r_bar = r_bar if r_bar is not None else _DEFAULT_ECON.r_bar
+    mu_excess = mu_excess if mu_excess is not None else _DEFAULT_ECON.mu_excess
+    bond_sharpe = bond_sharpe if bond_sharpe is not None else _DEFAULT_ECON.bond_sharpe
+    sigma_s = sigma_s if sigma_s is not None else _DEFAULT_ECON.sigma_s
+    sigma_r = sigma_r if sigma_r is not None else _DEFAULT_ECON.sigma_r
+    rho = rho if rho is not None else _DEFAULT_ECON.rho
+    bond_duration = bond_duration if bond_duration is not None else _DEFAULT_ECON.bond_duration
+
     if verbose:
         print("Computing lifecycle investment strategy...")
 
@@ -471,43 +507,46 @@ def main(
 if __name__ == '__main__':
     import argparse
 
+    # Use dataclass defaults for help text
+    _p, _e = _DEFAULT_PARAMS, _DEFAULT_ECON
+
     parser = argparse.ArgumentParser(
         description='Generate lifecycle investment strategy PDF'
     )
-    parser.add_argument('-o', '--output', default='lifecycle_strategy.pdf',
+    parser.add_argument('-o', '--output', default='output/lifecycle_strategy.pdf',
                        help='Output PDF file path')
-    parser.add_argument('--start-age', type=int, default=25,
-                       help='Age at career start (default: 25)')
-    parser.add_argument('--retirement-age', type=int, default=65,
-                       help='Retirement age (default: 65)')
-    parser.add_argument('--end-age', type=int, default=85,
-                       help='Planning horizon end (default: 85)')
-    parser.add_argument('--initial-earnings', type=float, default=150,
-                       help='Initial earnings in $000s (default: 150)')
-    parser.add_argument('--stock-beta', type=float, default=0.0,
-                       help='Stock beta of human capital (default: 0.0)')
-    parser.add_argument('--bond-duration', type=float, default=20.0,
-                       help='Bond duration for MV optimization in years (default: 20)')
-    parser.add_argument('--gamma', type=float, default=2.0,
-                       help='Risk aversion for MV optimization (default: 2.0)')
-    parser.add_argument('--mu-excess', type=float, default=0.04,
-                       help='Equity risk premium (default: 0.04)')
-    parser.add_argument('--bond-sharpe', type=float, default=0.0,
-                       help='Bond Sharpe ratio (default: 0.0)')
-    parser.add_argument('--sigma', type=float, default=0.18,
-                       help='Stock return volatility (default: 0.18)')
-    parser.add_argument('--sigma-r', type=float, default=0.006,
-                       help='Interest rate shock volatility (default: 0.006)')
-    parser.add_argument('--rho', type=float, default=0.0,
-                       help='Correlation between rate and stock shocks (default: 0.0)')
-    parser.add_argument('--r-bar', type=float, default=0.02,
-                       help='Long-run real risk-free rate (default: 0.02)')
-    parser.add_argument('--consumption-share', type=float, default=0.05,
-                       help='Share of net worth consumed above subsistence (default: 0.05)')
-    parser.add_argument('--consumption-boost', type=float, default=0.0,
-                       help='Boost above median return for consumption rate (default: 0.0)')
-    parser.add_argument('--initial-wealth', type=float, default=100,
-                       help='Initial financial wealth in $000s (default: 100)')
+    parser.add_argument('--start-age', type=int,
+                       help=f'Age at career start (default: {_p.start_age})')
+    parser.add_argument('--retirement-age', type=int,
+                       help=f'Retirement age (default: {_p.retirement_age})')
+    parser.add_argument('--end-age', type=int,
+                       help=f'Planning horizon end (default: {_p.end_age})')
+    parser.add_argument('--initial-earnings', type=float,
+                       help=f'Initial earnings in $000s (default: {_p.initial_earnings})')
+    parser.add_argument('--stock-beta', type=float,
+                       help=f'Stock beta of human capital (default: {_p.stock_beta_human_capital})')
+    parser.add_argument('--bond-duration', type=float,
+                       help=f'Bond duration for MV optimization in years (default: {_e.bond_duration})')
+    parser.add_argument('--gamma', type=float,
+                       help=f'Risk aversion for MV optimization (default: {_p.gamma})')
+    parser.add_argument('--mu-excess', type=float,
+                       help=f'Equity risk premium (default: {_e.mu_excess})')
+    parser.add_argument('--bond-sharpe', type=float,
+                       help=f'Bond Sharpe ratio (default: {_e.bond_sharpe})')
+    parser.add_argument('--sigma', type=float,
+                       help=f'Stock return volatility (default: {_e.sigma_s})')
+    parser.add_argument('--sigma-r', type=float,
+                       help=f'Interest rate shock volatility (default: {_e.sigma_r})')
+    parser.add_argument('--rho', type=float,
+                       help=f'Correlation between rate and stock shocks (default: {_e.rho})')
+    parser.add_argument('--r-bar', type=float,
+                       help=f'Long-run real risk-free rate (default: {_e.r_bar})')
+    parser.add_argument('--consumption-share', type=float,
+                       help=f'Share of net worth consumed above subsistence (default: {_p.consumption_share})')
+    parser.add_argument('--consumption-boost', type=float,
+                       help=f'Boost above median return for consumption rate (default: {_p.consumption_boost})')
+    parser.add_argument('--initial-wealth', type=float,
+                       help=f'Initial financial wealth in $000s (default: {_p.initial_wealth})')
     parser.add_argument('--use-age', action='store_true',
                        help='Use age instead of years from start on x-axis')
     parser.add_argument('--include-legacy', action='store_true',

@@ -129,16 +129,16 @@ def create_dashboard(results, figsize=(16, 12)):
 
     fig, axes = plt.subplots(2, 3, figsize=figsize)
 
-    # Colors
-    color_ldi = '#2ecc71'
-    color_rot = '#3498db'
+    # Colors (colorblind-friendly)
+    color_ldi = '#1A759F'   # Deep blue (was green)
+    color_rot = '#E9C46A'   # Amber (was blue)
 
     # ---- (0,0): Net Worth Distribution ----
     ax = axes[0, 0]
     plot_fan_chart(ax, results['ldi_net_worth_paths'], x, color=color_ldi, label_prefix='LDI')
     plot_fan_chart(ax, results['rot_net_worth_paths'], x, color=color_rot, label_prefix='RoT')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, linewidth=1)
+    ax.axhline(y=0, color='#E07A5F', linestyle='--', alpha=0.5, linewidth=1)
     ax.set_xlabel('Years from Career Start')
     ax.set_ylabel('$ (000s)')
     ax.set_title('Net Worth (FW + HC - PV Expenses)')
@@ -151,7 +151,7 @@ def create_dashboard(results, figsize=(16, 12)):
     plot_fan_chart(ax, results['ldi_wealth_paths'], x, color=color_ldi, label_prefix='LDI')
     plot_fan_chart(ax, results['rot_wealth_paths'], x, color=color_rot, label_prefix='RoT')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, linewidth=1)
+    ax.axhline(y=0, color='#E07A5F', linestyle='--', alpha=0.5, linewidth=1)
     ax.set_xlabel('Years from Career Start')
     ax.set_ylabel('$ (000s)')
     ax.set_title('Financial Wealth')
@@ -174,7 +174,7 @@ def create_dashboard(results, figsize=(16, 12)):
     # ---- (1,0): Human Capital and PV Expenses (deterministic) ----
     ax = axes[1, 0]
     ax.fill_between(x, 0, results['human_capital'], alpha=0.5, color='#f39c12', label='Human Capital')
-    ax.fill_between(x, 0, -results['pv_expenses'], alpha=0.5, color='#e74c3c', label='PV Expenses (neg)')
+    ax.fill_between(x, 0, -results['pv_expenses'], alpha=0.5, color='#E07A5F', label='PV Expenses (neg)')
     ax.plot(x, results['human_capital'] - results['pv_expenses'],
             color='purple', linewidth=2, label='HC - PV Exp')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
