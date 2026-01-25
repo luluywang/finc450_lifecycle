@@ -26,7 +26,133 @@ from .economics import (
     generate_correlated_shocks,
     simulate_interest_rates,
     simulate_stock_returns,
+    compute_zero_coupon_returns,
 )
+
+
+# =============================================================================
+# DRY Helper Functions for PV and Decomposition (Single Source of Truth)
+# =============================================================================
+
+def compute_static_pvs(
+    earnings: np.ndarray,
+    expenses: np.ndarray,
+    working_years: int,
+    total_years: int,
+    r: float,
+    phi: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute static PV values and durations for earnings and expenses.
+
+    This is the single source of truth for PV calculations, replacing
+    duplicate loops in simulate_paths(), run_strategy_comparison(), and
+    compute_lifecycle_fixed_consumption().
+
+    Args:
+        earnings: Array of earnings over total_years
+        expenses: Array of expenses over total_years
+        working_years: Number of working years
+        total_years: Total years in simulation
+        r: Risk-free rate (r_bar)
+        phi: Mean reversion parameter
+
+    Returns:
+        Tuple of (pv_earnings, pv_expenses, duration_earnings, duration_expenses)
+        Each array has shape (total_years,)
+    """
+    pv_earnings = np.zeros(total_years)
+    pv_expenses = np.zeros(total_years)
+    duration_earnings = np.zeros(total_years)
+    duration_expenses = np.zeros(total_years)
+
+    for t in range(total_years):
+        if t < working_years:
+            remaining_earnings = earnings[t:working_years]
+        else:
+            remaining_earnings = np.array([])
+        remaining_expenses = expenses[t:]
+
+        pv_earnings[t] = compute_present_value(remaining_earnings, r, phi, r)
+        pv_expenses[t] = compute_present_value(remaining_expenses, r, phi, r)
+        duration_earnings[t] = compute_duration(remaining_earnings, r, phi, r)
+        duration_expenses[t] = compute_duration(remaining_expenses, r, phi, r)
+
+    return pv_earnings, pv_expenses, duration_earnings, duration_expenses
+
+
+def decompose_hc_to_components(
+    pv_earnings: np.ndarray,
+    duration_earnings: np.ndarray,
+    stock_beta: float,
+    bond_duration: float,
+    total_years: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Decompose human capital into stock, bond, and cash components.
+
+    This is the single source of truth for HC decomposition, replacing
+    duplicate loops in simulate_paths() and compute_lifecycle_fixed_consumption().
+
+    Args:
+        pv_earnings: PV of future earnings at each time
+        duration_earnings: Duration of future earnings at each time
+        stock_beta: Beta of human capital to stocks
+        bond_duration: Duration of bonds
+        total_years: Total years in simulation
+
+    Returns:
+        Tuple of (hc_stock_component, hc_bond_component, hc_cash_component)
+    """
+    hc_stock_component = pv_earnings * stock_beta
+    non_stock_hc = pv_earnings * (1.0 - stock_beta)
+    hc_bond_component = np.zeros(total_years)
+    hc_cash_component = np.zeros(total_years)
+
+    for t in range(total_years):
+        if bond_duration > 0 and non_stock_hc[t] > 0:
+            bond_fraction = duration_earnings[t] / bond_duration
+            hc_bond_component[t] = non_stock_hc[t] * bond_fraction
+            hc_cash_component[t] = non_stock_hc[t] * (1.0 - bond_fraction)
+        else:
+            hc_cash_component[t] = non_stock_hc[t]
+
+    return hc_stock_component, hc_bond_component, hc_cash_component
+
+
+def decompose_expenses_to_components(
+    pv_expenses: np.ndarray,
+    duration_expenses: np.ndarray,
+    bond_duration: float,
+    total_years: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Decompose expense liability into bond and cash components.
+
+    This is the single source of truth for expense decomposition, replacing
+    duplicate loops in simulate_paths() and compute_lifecycle_fixed_consumption().
+
+    Args:
+        pv_expenses: PV of future expenses at each time
+        duration_expenses: Duration of future expenses at each time
+        bond_duration: Duration of bonds
+        total_years: Total years in simulation
+
+    Returns:
+        Tuple of (exp_bond_component, exp_cash_component)
+    """
+    exp_bond_component = np.zeros(total_years)
+    exp_cash_component = np.zeros(total_years)
+
+    for t in range(total_years):
+        if bond_duration > 0 and pv_expenses[t] > 0:
+            bond_fraction = duration_expenses[t] / bond_duration
+            exp_bond_component[t] = pv_expenses[t] * bond_fraction
+            exp_cash_component[t] = pv_expenses[t] * (1.0 - bond_fraction)
+        else:
+            exp_cash_component[t] = pv_expenses[t]
+
+    return exp_bond_component, exp_cash_component
 
 
 # =============================================================================
@@ -67,12 +193,22 @@ def normalize_portfolio_weights(
     target_stock: float,
     target_bond: float,
     target_cash: float,
+    allow_leverage: bool = False,
 ) -> Tuple[float, float, float]:
     """
-    Normalize portfolio weights with no-short constraint.
+    Normalize portfolio weights with optional no-short constraint.
 
-    Takes target financial holdings and normalizes to valid weights [0, 1]
-    that sum to 1.0, preserving relative proportions where possible.
+    Takes target financial holdings and normalizes to valid weights.
+
+    When allow_leverage=False (default):
+        - Clips negative weights to 0
+        - Normalizes to sum to 1.0
+        - Preserves relative proportions where possible
+
+    When allow_leverage=True:
+        - Returns raw weights (can be negative or >1)
+        - Allows shorting and leveraged positions
+        - Properly sizes the LDI hedge regardless of financial wealth
 
     Returns (stock_weight, bond_weight, cash_weight).
     """
@@ -82,6 +218,10 @@ def normalize_portfolio_weights(
     w_stock = target_fin_stock / fw
     w_bond = target_fin_bond / fw
     w_cash = target_fin_cash / fw
+
+    # If leverage is allowed, return raw (unconstrained) weights
+    if allow_leverage:
+        return w_stock, w_bond, w_cash
 
     # Apply no-short constraint
     equity = max(0, w_stock)
@@ -227,6 +367,19 @@ def simulate_paths(
     )
     stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
 
+    # Pre-compute duration-based bond returns (includes capital gains/losses)
+    # This uses the zero-coupon bond return formula that accounts for
+    # price changes when rates move, not just yield
+    if econ_params.bond_duration > 0:
+        bond_return_paths = compute_zero_coupon_returns(
+            rate_paths, econ_params.bond_duration, econ_params
+        )
+        # Add bond spread to the duration-based returns
+        bond_return_paths = bond_return_paths + econ_params.mu_bond
+    else:
+        # If no duration, bond returns are just yield + spread
+        bond_return_paths = rate_paths[:, :-1] + econ_params.mu_bond
+
     # Get earnings and expenses profiles
     earnings_profile = compute_earnings_profile(params)
     working_exp, retirement_exp = compute_expense_profile(params)
@@ -241,48 +394,21 @@ def simulate_paths(
     r = econ_params.r_bar
     phi = econ_params.phi
 
-    pv_earnings_static = np.zeros(total_years)
-    pv_expenses_static = np.zeros(total_years)
-    duration_earnings = np.zeros(total_years)
-    duration_expenses = np.zeros(total_years)
-
-    for t in range(total_years):
-        if t < working_years:
-            remaining_earnings = earnings[t:working_years]
-        else:
-            remaining_earnings = np.array([])
-        remaining_expenses = expenses[t:]
-
-        pv_earnings_static[t] = compute_present_value(remaining_earnings, r, phi, r)
-        pv_expenses_static[t] = compute_present_value(remaining_expenses, r, phi, r)
-        duration_earnings[t] = compute_duration(remaining_earnings, r, phi, r)
-        duration_expenses[t] = compute_duration(remaining_expenses, r, phi, r)
+    # Use DRY helper functions for PV and decomposition calculations
+    pv_earnings_static, pv_expenses_static, duration_earnings, duration_expenses = compute_static_pvs(
+        earnings, expenses, working_years, total_years, r, phi
+    )
 
     # Compute HC decomposition (static, based on r_bar)
-    hc_stock_component = pv_earnings_static * params.stock_beta_human_capital
-    non_stock_hc = pv_earnings_static * (1.0 - params.stock_beta_human_capital)
-    hc_bond_component = np.zeros(total_years)
-    hc_cash_component = np.zeros(total_years)
-
-    for t in range(total_years):
-        if econ_params.bond_duration > 0 and non_stock_hc[t] > 0:
-            bond_fraction = duration_earnings[t] / econ_params.bond_duration
-            hc_bond_component[t] = non_stock_hc[t] * bond_fraction
-            hc_cash_component[t] = non_stock_hc[t] * (1.0 - bond_fraction)
-        else:
-            hc_cash_component[t] = non_stock_hc[t]
+    hc_stock_component, hc_bond_component, hc_cash_component = decompose_hc_to_components(
+        pv_earnings_static, duration_earnings, params.stock_beta_human_capital,
+        econ_params.bond_duration, total_years
+    )
 
     # Expense decomposition
-    exp_bond_component = np.zeros(total_years)
-    exp_cash_component = np.zeros(total_years)
-
-    for t in range(total_years):
-        if econ_params.bond_duration > 0 and pv_expenses_static[t] > 0:
-            bond_fraction = duration_expenses[t] / econ_params.bond_duration
-            exp_bond_component[t] = pv_expenses_static[t] * bond_fraction
-            exp_cash_component[t] = pv_expenses_static[t] * (1.0 - bond_fraction)
-        else:
-            exp_cash_component[t] = pv_expenses_static[t]
+    exp_bond_component, exp_cash_component = decompose_expenses_to_components(
+        pv_expenses_static, duration_expenses, econ_params.bond_duration, total_years
+    )
 
     # Consumption rate based on expected returns
     expected_stock_return = r + econ_params.mu_excess
@@ -369,9 +495,47 @@ def simulate_paths(
 
             # Compute portfolio weights
             # Target financial holdings = target total - HC component + expense component
-            target_fin_stock = target_stock * total_wealth - hc_stock_component[t]
-            target_fin_bond = target_bond * total_wealth - hc_bond_component[t] + exp_bond_component[t]
-            target_fin_cash = target_cash * total_wealth - hc_cash_component[t] + exp_cash_component[t]
+            # When using dynamic revaluation, recalculate hedge components at current rate
+            if use_dynamic_revaluation:
+                # Recalculate expense hedge components at current rate
+                remaining_expenses = expenses[t:]
+                duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
+                if econ_params.bond_duration > 0 and pv_exp > 0:
+                    exp_bond_frac = duration_exp_t / econ_params.bond_duration
+                    exp_bond_t = pv_exp * exp_bond_frac
+                    exp_cash_t = pv_exp * (1.0 - exp_bond_frac)
+                else:
+                    exp_bond_t = 0.0
+                    exp_cash_t = pv_exp
+
+                # Recalculate HC hedge components at current rate (if working)
+                if is_working and hc > 0:
+                    remaining_earnings = earnings[t:working_years]
+                    duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
+                    hc_stock_t = hc * params.stock_beta_human_capital
+                    non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
+                    if econ_params.bond_duration > 0:
+                        hc_bond_frac = duration_hc_t / econ_params.bond_duration
+                        hc_bond_t = non_stock_hc_t * hc_bond_frac
+                        hc_cash_t = non_stock_hc_t * (1.0 - hc_bond_frac)
+                    else:
+                        hc_bond_t = 0.0
+                        hc_cash_t = non_stock_hc_t
+                else:
+                    hc_stock_t = 0.0
+                    hc_bond_t = 0.0
+                    hc_cash_t = 0.0
+            else:
+                # Use static (pre-computed at r_bar) hedge components
+                exp_bond_t = exp_bond_component[t]
+                exp_cash_t = exp_cash_component[t]
+                hc_stock_t = hc_stock_component[t]
+                hc_bond_t = hc_bond_component[t]
+                hc_cash_t = hc_cash_component[t]
+
+            target_fin_stock = target_stock * total_wealth - hc_stock_t
+            target_fin_bond = target_bond * total_wealth - hc_bond_t + exp_bond_t
+            target_fin_cash = target_cash * total_wealth - hc_cash_t + exp_cash_t
 
             target_fin_stocks_paths[sim, t] = target_fin_stock
             target_fin_bonds_paths[sim, t] = target_fin_bond
@@ -379,7 +543,8 @@ def simulate_paths(
 
             w_s, w_b, w_c = normalize_portfolio_weights(
                 target_fin_stock, target_fin_bond, target_fin_cash, fw,
-                target_stock, target_bond, target_cash
+                target_stock, target_bond, target_cash,
+                allow_leverage=params.allow_leverage
             )
 
             stock_weight_paths[sim, t] = w_s
@@ -389,7 +554,8 @@ def simulate_paths(
             # Evolve wealth to next period
             if t < total_years - 1 and not defaulted:
                 stock_ret = stock_return_paths[sim, t]
-                bond_ret = rate_paths[sim, t] + econ_params.mu_bond
+                # Use duration-based bond returns (includes capital gains/losses from rate changes)
+                bond_ret = bond_return_paths[sim, t]
                 cash_ret = rate_paths[sim, t]
 
                 portfolio_return = w_s * stock_ret + w_b * bond_ret + w_c * cash_ret
@@ -428,6 +594,7 @@ def simulate_paths(
         # Market paths
         'rate_paths': rate_paths,
         'stock_return_paths': stock_return_paths,
+        'bond_return_paths': bond_return_paths,
         # Default tracking
         'default_flags': default_flags,
         'default_ages': default_ages,
@@ -620,6 +787,7 @@ def compute_rule_of_thumb_strategy(
     target_duration: float = 6.0,
     stock_returns: np.ndarray = None,
     interest_rates: np.ndarray = None,
+    bond_returns: np.ndarray = None,
 ) -> RuleOfThumbResult:
     """
     Compute lifecycle path using the classic "rule of thumb" financial advisor strategy.
@@ -668,6 +836,9 @@ def compute_rule_of_thumb_strategy(
         stock_returns = np.full(total_years, r + econ_params.mu_excess)
     if interest_rates is None:
         interest_rates = np.full(total_years, r)
+    if bond_returns is None:
+        # Default to yield + spread (for median path without duration effects)
+        bond_returns = interest_rates + econ_params.mu_bond
 
     defaulted = False
     default_age = None
@@ -756,7 +927,8 @@ def compute_rule_of_thumb_strategy(
                 sav = -total_consumption[t]
 
             stock_ret = stock_returns[t]
-            bond_ret = interest_rates[t] + econ_params.mu_bond
+            # Use duration-based bond returns if provided
+            bond_ret = bond_returns[t]
             cash_ret = interest_rates[t]
 
             portfolio_return = (
@@ -983,6 +1155,15 @@ def run_strategy_comparison(
     # Simulate stock return paths
     stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
 
+    # Pre-compute duration-based bond returns (includes capital gains/losses)
+    if econ_params.bond_duration > 0:
+        bond_return_paths = compute_zero_coupon_returns(
+            rate_paths, econ_params.bond_duration, econ_params
+        )
+        bond_return_paths = bond_return_paths + econ_params.mu_bond
+    else:
+        bond_return_paths = rate_paths[:, :-1] + econ_params.mu_bond
+
     # Apply bad returns early if requested
     if bad_returns_early:
         for sim in range(n_simulations):
@@ -993,6 +1174,14 @@ def run_strategy_comparison(
     median_result = compute_lifecycle_median_path(params, econ_params)
     earnings = median_result.earnings.copy()
     expenses = median_result.expenses.copy()
+
+    # Pre-compute static HC and expense decompositions (at r_bar) using DRY helper
+    r = econ_params.r_bar
+    phi = econ_params.phi
+
+    pv_earnings_static, pv_expenses_static, duration_earnings_static, duration_expenses_static = compute_static_pvs(
+        earnings, expenses, working_years, total_years, r, phi
+    )
 
     # Initialize output arrays
     optimal_wealth_paths = np.zeros((n_simulations, total_years))
@@ -1064,12 +1253,53 @@ def run_strategy_comparison(
             if t < total_years - 1 and not opt_defaulted:
                 savings = earnings[t] - total_cons
 
-                w_s = target_stock
-                w_b = target_bond
-                w_c = target_cash
+                # Compute LDI hedge: dynamic HC and expense decomposition at current rate
+                total_wealth = fw + hc
+
+                # Compute duration of remaining expenses at current rate
+                remaining_expenses = expenses[t:]
+                duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
+                if econ_params.bond_duration > 0 and pv_exp > 0:
+                    exp_bond_frac = duration_exp_t / econ_params.bond_duration
+                    exp_bond_t = pv_exp * exp_bond_frac
+                    exp_cash_t = pv_exp * (1.0 - exp_bond_frac)
+                else:
+                    exp_bond_t = 0.0
+                    exp_cash_t = pv_exp
+
+                # Compute HC decomposition at current rate (if working)
+                if t < working_years and hc > 0:
+                    remaining_earnings = earnings[t:working_years]
+                    duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
+                    hc_stock_t = hc * params.stock_beta_human_capital
+                    non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
+                    if econ_params.bond_duration > 0:
+                        hc_bond_frac = duration_hc_t / econ_params.bond_duration
+                        hc_bond_t = non_stock_hc_t * hc_bond_frac
+                        hc_cash_t = non_stock_hc_t * (1.0 - hc_bond_frac)
+                    else:
+                        hc_bond_t = 0.0
+                        hc_cash_t = non_stock_hc_t
+                else:
+                    hc_stock_t = 0.0
+                    hc_bond_t = 0.0
+                    hc_cash_t = 0.0
+
+                # Target financial holdings = target total - HC component + expense component
+                target_fin_stock = target_stock * total_wealth - hc_stock_t
+                target_fin_bond = target_bond * total_wealth - hc_bond_t + exp_bond_t
+                target_fin_cash = target_cash * total_wealth - hc_cash_t + exp_cash_t
+
+                # Normalize to portfolio weights (with no-short constraint)
+                w_s, w_b, w_c = normalize_portfolio_weights(
+                    target_fin_stock, target_fin_bond, target_fin_cash, fw,
+                    target_stock, target_bond, target_cash,
+                    allow_leverage=params.allow_leverage
+                )
 
                 stock_ret = stock_return_paths[sim, t]
-                bond_ret = rate_paths[sim, t] + econ_params.mu_bond
+                # Use duration-based bond returns (includes capital gains/losses from rate changes)
+                bond_ret = bond_return_paths[sim, t]
                 cash_ret = rate_paths[sim, t]
 
                 portfolio_return = w_s * stock_ret + w_b * bond_ret + w_c * cash_ret
@@ -1084,6 +1314,7 @@ def run_strategy_comparison(
             target_duration=rot_target_duration,
             stock_returns=stock_return_paths[sim, :],
             interest_rates=rate_paths[sim, :],
+            bond_returns=bond_return_paths[sim, :],
         )
 
         rot_wealth_paths[sim, :] = rot_result.financial_wealth
@@ -1230,52 +1461,24 @@ def compute_lifecycle_fixed_consumption(
     expenses[:working_years] = working_exp
     expenses[working_years:] = retirement_exp
 
-    # Forward-looking present values (same as optimal)
-    pv_earnings = np.zeros(total_years)
-    pv_expenses = np.zeros(total_years)
-    duration_earnings = np.zeros(total_years)
-    duration_expenses = np.zeros(total_years)
-
-    for i in range(total_years):
-        if i < working_years:
-            remaining_earnings = earnings[i:working_years]
-        else:
-            remaining_earnings = np.array([])
-        remaining_expenses = expenses[i:]
-
-        pv_earnings[i] = compute_present_value(remaining_earnings, r, phi, r)
-        pv_expenses[i] = compute_present_value(remaining_expenses, r, phi, r)
-        duration_earnings[i] = compute_duration(remaining_earnings, r, phi, r)
-        duration_expenses[i] = compute_duration(remaining_expenses, r, phi, r)
+    # Forward-looking present values using DRY helper
+    pv_earnings, pv_expenses, duration_earnings, duration_expenses = compute_static_pvs(
+        earnings, expenses, working_years, total_years, r, phi
+    )
 
     # Human capital
     human_capital = pv_earnings.copy()
 
-    # HC decomposition (unconstrained - bond fraction can exceed 1.0)
-    hc_stock_component = human_capital * params.stock_beta_human_capital
-    non_stock_hc = human_capital * (1.0 - params.stock_beta_human_capital)
-    hc_bond_component = np.zeros(total_years)
-    hc_cash_component = np.zeros(total_years)
+    # HC decomposition using DRY helper (unconstrained - bond fraction can exceed 1.0)
+    hc_stock_component, hc_bond_component, hc_cash_component = decompose_hc_to_components(
+        human_capital, duration_earnings, params.stock_beta_human_capital,
+        econ_params.bond_duration, total_years
+    )
 
-    for i in range(total_years):
-        if econ_params.bond_duration > 0 and non_stock_hc[i] > 0:
-            bond_fraction = duration_earnings[i] / econ_params.bond_duration
-            hc_bond_component[i] = non_stock_hc[i] * bond_fraction
-            hc_cash_component[i] = non_stock_hc[i] * (1.0 - bond_fraction)
-        else:
-            hc_cash_component[i] = non_stock_hc[i]
-
-    # Decompose expense liability into bond/cash components (unconstrained)
-    exp_bond_component = np.zeros(total_years)
-    exp_cash_component = np.zeros(total_years)
-
-    for i in range(total_years):
-        if econ_params.bond_duration > 0 and pv_expenses[i] > 0:
-            bond_fraction = duration_expenses[i] / econ_params.bond_duration
-            exp_bond_component[i] = pv_expenses[i] * bond_fraction
-            exp_cash_component[i] = pv_expenses[i] * (1.0 - bond_fraction)
-        else:
-            exp_cash_component[i] = pv_expenses[i]
+    # Decompose expense liability into bond/cash components using DRY helper
+    exp_bond_component, exp_cash_component = decompose_expenses_to_components(
+        pv_expenses, duration_expenses, econ_params.bond_duration, total_years
+    )
 
     # Financial wealth accumulation with FIXED consumption rule
     financial_wealth = np.zeros(total_years)
@@ -1360,40 +1563,17 @@ def compute_lifecycle_fixed_consumption(
     bond_weight_no_short = np.zeros(total_years)
     cash_weight_no_short = np.zeros(total_years)
 
+    # Use normalize_portfolio_weights helper for consistent weight normalization
     for i in range(total_years):
         fw = financial_wealth[i]
-        if fw > 1e-6:
-            w_stock = target_fin_stocks[i] / fw
-            w_bond = target_fin_bonds[i] / fw
-            w_cash = target_fin_cash[i] / fw
-
-            equity = max(0, w_stock)
-            fixed_income = max(0, w_bond + w_cash)
-            total_agg = equity + fixed_income
-            if total_agg > 0:
-                equity /= total_agg
-                fixed_income /= total_agg
-            else:
-                equity = target_stock
-                fixed_income = target_bond + target_cash
-
-            if w_bond > 0 and w_cash > 0:
-                fi_total = w_bond + w_cash
-                bond_weight_no_short[i] = fixed_income * (w_bond / fi_total)
-                cash_weight_no_short[i] = fixed_income * (w_cash / fi_total)
-            elif w_bond > 0:
-                bond_weight_no_short[i] = fixed_income
-            elif w_cash > 0:
-                cash_weight_no_short[i] = fixed_income
-            else:
-                target_fi = target_bond + target_cash
-                if target_fi > 0:
-                    bond_weight_no_short[i] = fixed_income * (target_bond / target_fi)
-                    cash_weight_no_short[i] = fixed_income * (target_cash / target_fi)
-                else:
-                    bond_weight_no_short[i] = fixed_income / 2
-                    cash_weight_no_short[i] = fixed_income / 2
-            stock_weight_no_short[i] = equity
+        w_s, w_b, w_c = normalize_portfolio_weights(
+            target_fin_stocks[i], target_fin_bonds[i], target_fin_cash[i], fw,
+            target_stock, target_bond, target_cash,
+            allow_leverage=False  # 4% rule uses no leverage
+        )
+        stock_weight_no_short[i] = w_s
+        bond_weight_no_short[i] = w_b
+        cash_weight_no_short[i] = w_c
 
     # Total holdings
     total_stocks = stock_weight_no_short * financial_wealth + hc_stock_component

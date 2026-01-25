@@ -31,6 +31,7 @@ from visualization import (
     setup_figure,
     add_retirement_line,
     apply_standard_style,
+    compute_x_axis_from_ages,  # DRY helper
 )
 
 # Apply consistent style for all figures
@@ -38,16 +39,10 @@ apply_standard_style()
 
 
 def get_x_axis(result, params, use_years=True):
-    """Get x-axis values and labels."""
-    if use_years:
-        x = np.arange(len(result.ages))
-        xlabel = 'Years from Career Start'
-        retirement_x = params.retirement_age - params.start_age
-    else:
-        x = result.ages
-        xlabel = 'Age'
-        retirement_x = params.retirement_age
-    return x, xlabel, retirement_x
+    """Get x-axis values and labels. Wrapper for compute_x_axis_from_ages."""
+    return compute_x_axis_from_ages(
+        result.ages, params.start_age, params.retirement_age, use_years
+    )
 
 
 # =============================================================================

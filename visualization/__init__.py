@@ -30,6 +30,12 @@ from .helpers import (
     format_currency_axis,
     set_standard_xlim,
     add_legend,
+    # New DRY helpers
+    plot_fan_chart,
+    plot_allocation_stack,
+    setup_comparison_axes,
+    compute_x_axis_from_ages,
+    add_standard_chart_elements,
 )
 
 # Import lifecycle plots
@@ -93,6 +99,12 @@ __all__ = [
     'format_currency_axis',
     'set_standard_xlim',
     'add_legend',
+    # New DRY helpers
+    'plot_fan_chart',
+    'plot_allocation_stack',
+    'setup_comparison_axes',
+    'compute_x_axis_from_ages',
+    'add_standard_chart_elements',
 
     # Lifecycle plots
     'plot_earnings_expenses_profile',

@@ -18,6 +18,9 @@ from core import (
     compute_pv_consumption,
 )
 
+# Import visualization helpers (DRY)
+from visualization import plot_fan_chart
+
 
 def run_net_worth_comparison(
     params: LifecycleParams = None,
@@ -129,26 +132,11 @@ def create_dashboard(results, figsize=(16, 12)):
     # Colors
     color_ldi = '#2ecc71'
     color_rot = '#3498db'
-    alpha_fan = 0.25
-
-    # Helper function for fan charts
-    def plot_fan(ax, paths, color, label):
-        p5 = np.percentile(paths, 5, axis=0)
-        p25 = np.percentile(paths, 25, axis=0)
-        p50 = np.percentile(paths, 50, axis=0)
-        p75 = np.percentile(paths, 75, axis=0)
-        p95 = np.percentile(paths, 95, axis=0)
-
-        ax.fill_between(x, p5, p95, alpha=alpha_fan, color=color)
-        ax.fill_between(x, p25, p75, alpha=alpha_fan + 0.15, color=color)
-        ax.plot(x, p50, color=color, linewidth=2, label=f'{label} Median')
-
-        return p50
 
     # ---- (0,0): Net Worth Distribution ----
     ax = axes[0, 0]
-    plot_fan(ax, results['ldi_net_worth_paths'], color_ldi, 'LDI')
-    plot_fan(ax, results['rot_net_worth_paths'], color_rot, 'RoT')
+    plot_fan_chart(ax, results['ldi_net_worth_paths'], x, color=color_ldi, label_prefix='LDI')
+    plot_fan_chart(ax, results['rot_net_worth_paths'], x, color=color_rot, label_prefix='RoT')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, linewidth=1)
     ax.set_xlabel('Years from Career Start')
@@ -160,8 +148,8 @@ def create_dashboard(results, figsize=(16, 12)):
 
     # ---- (0,1): Financial Wealth Distribution ----
     ax = axes[0, 1]
-    plot_fan(ax, results['ldi_wealth_paths'], color_ldi, 'LDI')
-    plot_fan(ax, results['rot_wealth_paths'], color_rot, 'RoT')
+    plot_fan_chart(ax, results['ldi_wealth_paths'], x, color=color_ldi, label_prefix='LDI')
+    plot_fan_chart(ax, results['rot_wealth_paths'], x, color=color_rot, label_prefix='RoT')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, linewidth=1)
     ax.set_xlabel('Years from Career Start')
@@ -173,8 +161,8 @@ def create_dashboard(results, figsize=(16, 12)):
 
     # ---- (0,2): Consumption Distribution ----
     ax = axes[0, 2]
-    plot_fan(ax, results['ldi_consumption_paths'], color_ldi, 'LDI')
-    plot_fan(ax, results['rot_consumption_paths'], color_rot, 'RoT')
+    plot_fan_chart(ax, results['ldi_consumption_paths'], x, color=color_ldi, label_prefix='LDI')
+    plot_fan_chart(ax, results['rot_consumption_paths'], x, color=color_rot, label_prefix='RoT')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.set_xlabel('Years from Career Start')
     ax.set_ylabel('$ (000s)')
@@ -274,6 +262,7 @@ LDI advantage in PV consumption: +${np.median(ldi_pv) - np.median(rot_pv):,.0f}k
 if __name__ == '__main__':
     print("Running strategy comparison simulations...")
 
+    # Note: allow_leverage=False by default
     params = LifecycleParams(consumption_boost=0.0)
     econ_params = EconomicParams()
 
