@@ -63,8 +63,17 @@ from .economics import (
 
 # Simulation engines
 from .simulation import (
+    # Helper functions
+    compute_target_allocations,
+    normalize_portfolio_weights,
+    apply_consumption_constraints,
+    compute_dynamic_pv,
+    # Unified simulation engine
+    simulate_paths,
+    # Profile generators
     compute_earnings_profile,
     compute_expense_profile,
+    # Strategy computations
     compute_lifecycle_median_path,
     compute_lifecycle_fixed_consumption,
     compute_rule_of_thumb_strategy,
@@ -117,6 +126,12 @@ __all__ = [
     'simulate_interest_rates_random_walk',
     'simulate_stock_returns',
     'compute_funded_ratio',
+    # Simulation helpers
+    'compute_target_allocations',
+    'normalize_portfolio_weights',
+    'apply_consumption_constraints',
+    'compute_dynamic_pv',
+    'simulate_paths',
     # Simulation
     'compute_earnings_profile',
     'compute_expense_profile',
