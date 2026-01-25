@@ -1,0 +1,420 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+
+% Theme and colors
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+% Packages
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tikz}
+
+% Custom colors
+\definecolor{darkblue}{RGB}{52, 73, 94}
+\definecolor{accent}{RGB}{41, 128, 185}
+\setbeamercolor{title}{fg=darkblue}
+\setbeamercolor{frametitle}{fg=darkblue}
+
+% Title information
+\title[Lifecycle Investing]{Lifecycle Investing: \\[0.3em] A Finance Theory Perspective}
+\subtitle{FINC 450}
+\author{}
+\date{}
+
+\begin{document}
+
+% =============================================================================
+% TITLE
+% =============================================================================
+\begin{frame}
+\titlepage
+\end{frame}
+
+% =============================================================================
+% OUTLINE
+% =============================================================================
+\begin{frame}{Today's Lecture}
+\tableofcontents
+\end{frame}
+
+% =============================================================================
+% SECTION 1: THE PROBLEM
+% =============================================================================
+\section{The Lifecycle Problem}
+
+\begin{frame}{The Fundamental Problem}
+\begin{center}
+\Large
+\textbf{Income and expenses don't match over time.}
+\end{center}
+
+\vspace{1em}
+
+\begin{itemize}
+    \item You earn during working years (ages 25--65)
+    \item You consume throughout your entire life (ages 25--85+)
+    \item This \textbf{mismatch} is THE problem lifecycle finance solves
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Income vs. Expenses Over the Lifecycle}
+\begin{center}
+\includegraphics[width=0.85\textwidth]{figures/01_income_expenses.png}
+\end{center}
+\end{frame}
+
+\begin{frame}{The Cash Flow Pattern}
+\begin{center}
+\includegraphics[width=0.85\textwidth]{figures/02_cash_flow.png}
+\end{center}
+
+\vspace{0.5em}
+\small
+\textbf{Key insight:} The pattern of cash flows determines the investment problem.
+\end{frame}
+
+% =============================================================================
+% SECTION 2: THE HIDDEN BALANCE SHEET
+% =============================================================================
+\section{Your Hidden Balance Sheet}
+
+\begin{frame}{Thinking in Present Values}
+\begin{center}
+\Large
+\textbf{Finance thinks in present values.}
+\end{center}
+
+\vspace{1em}
+
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\textbf{Assets:}
+\begin{itemize}
+    \item Financial wealth (savings)
+    \item \textcolor{accent}{\textbf{Human capital}} (PV of future earnings)
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\textbf{Liabilities:}
+\begin{itemize}
+    \item \textcolor{red}{\textbf{Expense liability}} (PV of future spending needs)
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{1em}
+\begin{center}
+\fbox{\textbf{Net Worth} = Human Capital + Financial Wealth $-$ PV(Expenses)}
+\end{center}
+\end{frame}
+
+\begin{frame}{Present Values: Your Hidden Balance Sheet}
+\begin{center}
+\includegraphics[width=0.85\textwidth]{figures/03_present_values.png}
+\end{center}
+\end{frame}
+
+\begin{frame}{Human Capital is Your Biggest Asset (Early On)}
+\begin{center}
+\includegraphics[width=0.85\textwidth]{figures/04_wealth_composition.png}
+\end{center}
+
+\vspace{0.5em}
+\small
+\textbf{Key insight:} At age 25, most of your wealth is human capital---you just can't see it in your brokerage account.
+\end{frame}
+
+% =============================================================================
+% SECTION 3: THE GAUGES FRAMEWORK
+% =============================================================================
+\section{The Four Gauges}
+
+\begin{frame}{Beyond the 401(k) Balance}
+\begin{center}
+\Large
+\textbf{It's not just about your retirement account.}
+\end{center}
+
+\vspace{1em}
+
+Traditional advice focuses on one number: your savings balance.
+
+\vspace{1em}
+
+Finance theory says you need to track \textbf{four gauges}:
+\begin{enumerate}
+    \item Human Capital (your future earning power)
+    \item Financial Wealth (your savings)
+    \item Expense Liability (what you owe your future self)
+    \item Net Worth (assets minus liabilities)
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{The Four Gauges of Lifecycle Finance}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{figures/05_gauges_dashboard.png}
+\end{center}
+\end{frame}
+
+\begin{frame}{Why Track All Four?}
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\textbf{Human Capital (Gauge 1):}
+\begin{itemize}
+    \item Depletes as you age
+    \item Affected by career risk
+    \item Has duration (interest rate sensitivity)
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{Financial Wealth (Gauge 2):}
+\begin{itemize}
+    \item What you control directly
+    \item Grows through savings + returns
+    \item Must replace HC over time
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\textbf{Expense Liability (Gauge 3):}
+\begin{itemize}
+    \item Your commitment to future self
+    \item Has duration too!
+    \item Determines ``fully funded'' status
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{Net Worth (Gauge 4):}
+\begin{itemize}
+    \item The bottom line
+    \item Drives consumption decisions
+    \item Should stay positive!
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+% =============================================================================
+% SECTION 4: WHY ALLOCATION CHANGES
+% =============================================================================
+\section{Why Portfolio Allocation Changes Over Life}
+
+\begin{frame}{The Key Insight}
+\begin{center}
+\Large
+\textbf{Human capital is like a bond.}
+\end{center}
+
+\vspace{1em}
+
+\begin{itemize}
+    \item Stable, predictable income stream (for most people)
+    \item Has \textbf{duration}: sensitive to interest rates
+    \item Beta to stock market $\approx 0$ for professors, consultants
+    \item Beta $> 0$ for entrepreneurs, tech workers
+\end{itemize}
+
+\vspace{1em}
+
+\begin{center}
+\fbox{
+\parbox{0.8\textwidth}{
+\centering
+\textbf{Implication:} To maintain target total risk, \\
+financial portfolio must adjust as HC depletes.
+}
+}
+\end{center}
+\end{frame}
+
+\begin{frame}{Why Portfolio Allocation Changes Over Life}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{figures/06_allocation_theory.png}
+\end{center}
+\end{frame}
+
+\begin{frame}{The Logic of the Glide Path}
+
+\textbf{Young investor (age 25):}
+\begin{itemize}
+    \item Total wealth = 90\% Human Capital + 10\% Financial Wealth
+    \item HC is bond-like $\Rightarrow$ already have implicit bond position
+    \item Financial portfolio should be \textbf{100\% stocks} to balance
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{Retiree (age 70):}
+\begin{itemize}
+    \item Total wealth = 0\% Human Capital + 100\% Financial Wealth
+    \item No implicit bond position from HC
+    \item Financial portfolio should match \textbf{target allocation} (e.g., 50/50)
+\end{itemize}
+
+\vspace{1em}
+
+\begin{center}
+\textcolor{accent}{\textbf{This is WHY target-date funds have a ``glide path''!}}
+\end{center}
+\end{frame}
+
+% =============================================================================
+% SECTION 5: LABOR INCOME RISK
+% =============================================================================
+\section{Labor Income Risk Matters}
+
+\begin{frame}{Not All Human Capital is the Same}
+\begin{center}
+\Large
+\textbf{Your job's riskiness matters.}
+\end{center}
+
+\vspace{1em}
+
+\begin{columns}
+\begin{column}{0.5\textwidth}
+\textbf{Low Beta ($\beta \approx 0$):}
+\begin{itemize}
+    \item Tenured professor
+    \item Government employee
+    \item Doctor, lawyer
+\end{itemize}
+HC is bond-like \\
+$\Rightarrow$ Hold \textbf{more} stocks
+\end{column}
+\begin{column}{0.5\textwidth}
+\textbf{High Beta ($\beta \approx 1$):}
+\begin{itemize}
+    \item Tech startup founder
+    \item Investment banker
+    \item Sales (commission-based)
+\end{itemize}
+HC is stock-like \\
+$\Rightarrow$ Hold \textbf{fewer} stocks
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Effect of Labor Income Risk on Portfolio Choice}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{figures/09_beta_comparison.png}
+\end{center}
+\end{frame}
+
+\begin{frame}{Practical Implications}
+
+\textbf{If your income is stable (professor, government):}
+\begin{itemize}
+    \item You can afford more risk in your portfolio
+    \item 100\% stocks early in career is reasonable
+    \item Your human capital provides diversification
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{If your income is risky (entrepreneur, tech):}
+\begin{itemize}
+    \item Be more conservative in your portfolio
+    \item Don't double down on market risk
+    \item Consider your company stock exposure carefully!
+\end{itemize}
+\end{frame}
+
+% =============================================================================
+% SECTION 6: DURATION AND INTEREST RATES
+% =============================================================================
+\section{Duration Matching}
+
+\begin{frame}{Interest Rate Risk on Your Balance Sheet}
+\begin{center}
+\includegraphics[width=0.85\textwidth]{figures/07_duration_matching.png}
+\end{center}
+
+\vspace{0.5em}
+\small
+\textbf{Duration} measures interest rate sensitivity. Match asset and liability durations to hedge rate risk.
+\end{frame}
+
+% =============================================================================
+% SECTION 7: CONSUMPTION
+% =============================================================================
+\section{Optimal Consumption}
+
+\begin{frame}{Consumption Smoothing}
+\begin{center}
+\includegraphics[width=0.85\textwidth]{figures/08_consumption_path.png}
+\end{center}
+
+\vspace{0.5em}
+\small
+\textbf{Optimal:} Consume a fraction of net worth. Automatically adjusts to market conditions.
+\end{frame}
+
+% =============================================================================
+% SUMMARY
+% =============================================================================
+\section{Summary}
+
+\begin{frame}{Key Takeaways}
+
+\begin{enumerate}
+    \item \textbf{The Problem:} Income and expenses don't match over time
+
+    \vspace{0.5em}
+
+    \item \textbf{Human Capital:} Your biggest asset early in life (but invisible)
+
+    \vspace{0.5em}
+
+    \item \textbf{Four Gauges:} Track HC, FW, Expenses, and Net Worth---not just your 401(k)
+
+    \vspace{0.5em}
+
+    \item \textbf{Glide Path Logic:} HC is bond-like $\Rightarrow$ young people should hold more stocks
+
+    \vspace{0.5em}
+
+    \item \textbf{Labor Risk Matters:} Risky job $\Rightarrow$ more conservative portfolio
+
+    \vspace{0.5em}
+
+    \item \textbf{Duration:} Match asset and liability durations to manage interest rate risk
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{The Merton Framework}
+
+\textbf{Optimal portfolio allocation:}
+\[
+w^* = \frac{1}{\gamma} \Sigma^{-1} \mu
+\]
+
+where:
+\begin{itemize}
+    \item $\gamma$ = risk aversion coefficient
+    \item $\Sigma$ = covariance matrix of asset returns
+    \item $\mu$ = vector of expected excess returns
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{Key extension for lifecycle:}
+\begin{itemize}
+    \item Human capital is an implicit asset in your portfolio
+    \item Financial portfolio adjusts to reach total wealth target
+    \item As HC depletes, financial portfolio converges to $w^*$
+\end{itemize}
+\end{frame}
+
+\begin{frame}{}
+\begin{center}
+\Huge
+\textbf{Questions?}
+\end{center}
+\end{frame}
+
+\end{document}
