@@ -12,36 +12,41 @@ Install all required packages:
 pip install -r requirements.txt
 ```
 
-## Module Structure
+## Directory Structure
 
 ```
 finc450_lifecycle/
-├── core/                           # Core module (SINGLE SOURCE OF TRUTH)
+├── core/                           # Core computation module
 │   ├── __init__.py                 # Public API exports
 │   ├── params.py                   # All dataclasses (LifecycleParams, EconomicParams, etc.)
 │   ├── economics.py                # Bond pricing, PV calculations, MV optimization
 │   ├── simulation.py               # Monte Carlo engines, strategy comparison
 │   └── strategies.py               # Generic strategy implementations (LDI, RoT, Fixed)
 │
-├── visualization/                  # Consolidated matplotlib visualization code
+├── visualization/                  # Matplotlib visualization code
 │   ├── __init__.py                 # Public API exports
 │   ├── styles.py                   # Colors, fonts, style constants
-│   ├── helpers.py                  # Plot utilities (apply_wealth_log_scale, setup_figure, etc.)
-│   ├── lifecycle_plots.py          # Median path charts (earnings, wealth, allocations)
-│   ├── monte_carlo_plots.py        # Fan charts, distributions, teaching scenarios
-│   ├── comparison_plots.py         # Strategy comparisons (LDI vs RoT)
-│   └── sensitivity_plots.py        # Parameter sensitivity (beta, gamma, volatility)
+│   ├── helpers.py                  # Plot utilities
+│   ├── lifecycle_plots.py          # Median path charts
+│   ├── monte_carlo_plots.py        # Fan charts, distributions
+│   ├── comparison_plots.py         # Strategy comparisons
+│   └── sensitivity_plots.py        # Parameter sensitivity
 │
-├── deprecated/                     # Deprecated modules (backward compatibility only)
-│   ├── __init__.py
-│   ├── retirement_simulation.py    # Use core/ instead
-│   └── visualizations.py           # Use visualization/ instead
+├── deprecated/                     # Backward compatibility stubs
 │
-├── lifecycle_strategy.py           # PDF generation entry point
+├── docs/                           # LaTeX documentation
+│   ├── model_specification.tex     # DGP specification
+│   └── lifecycle_lecture.tex       # Lecture slides
+│
+├── notebooks/                      # Jupyter notebooks
+├── data/                           # Data files
+├── output/                         # Generated figures and PDFs (gitignored)
+│
+├── lifecycle_strategy.py           # Main PDF generation
 ├── dashboard.py                    # Strategy comparison dashboard
-├── generate_lecture_figures.py     # Educational figure generation
-├── retirement_simulation.py        # Stub → deprecated/retirement_simulation.py
-└── visualizations.py               # Stub → deprecated/visualizations.py
+├── generate_lecture_figures.py     # Lecture figure generation
+├── Makefile                        # Build automation
+└── requirements.txt                # Python dependencies
 ```
 
 ### Core Module
@@ -131,32 +136,27 @@ The following modules are deprecated and maintained only for backward compatibil
 
 These stub files redirect to `deprecated/` and emit deprecation warnings on import.
 
-## Generating PDFs
+## Building
 
-To regenerate the lifecycle strategy PDF:
+Generate all outputs using Make:
 
 ```bash
-python3 lifecycle_strategy.py
+make              # Generate all figures and PDFs
+make figures      # Generate lecture figures only
+make pdfs         # Generate PDF reports only
+make clean        # Remove generated files
+make help         # Show available targets
 ```
 
-This creates `lifecycle_strategy.pdf` with the full lifecycle investment analysis.
+Outputs are written to `output/`:
+- `output/lifecycle_strategy.pdf` - Main lifecycle analysis
+- `output/strategy_dashboard.pdf` - Strategy comparison
+- `output/figures/` - Lecture figures (PNG)
 
 ### Custom Parameters
 
 ```bash
-python3 lifecycle_strategy.py -o custom.pdf --initial-earnings 120 --stock-beta 0.4 --bond-duration 5.0
+python3 lifecycle_strategy.py -o output/custom.pdf --initial-earnings 120 --stock-beta 0.4
 ```
 
 Run `python3 lifecycle_strategy.py --help` for all available options.
-
-## Other Entry Points
-
-Generate strategy comparison dashboard:
-```bash
-python3 dashboard.py
-```
-
-Generate lecture figures:
-```bash
-python3 generate_lecture_figures.py --output-dir figures/
-```
