@@ -68,6 +68,7 @@ from .comparison_plots import (
     create_optimal_vs_4pct_rule_comparison,
     create_strategy_comparison_figure,
     create_median_path_comparison_figure,
+    create_allocation_comparison_page,
     plot_duration_matching_intuition,
     plot_strategy_comparison_bars,
 )
@@ -89,6 +90,11 @@ from .sensitivity_plots import (
     create_equity_premium_comparison_figure,
     create_income_comparison_figure,
     create_volatility_comparison_figure,
+)
+
+# Import human capital plots
+from .human_capital_plots import (
+    create_hc_stock_sensitivity_figure,
 )
 
 __all__ = [
@@ -139,6 +145,7 @@ __all__ = [
     'create_optimal_vs_4pct_rule_comparison',
     'create_strategy_comparison_figure',
     'create_median_path_comparison_figure',
+    'create_allocation_comparison_page',
     'plot_duration_matching_intuition',
     'plot_strategy_comparison_bars',
 
@@ -156,4 +163,7 @@ __all__ = [
     'create_equity_premium_comparison_figure',
     'create_income_comparison_figure',
     'create_volatility_comparison_figure',
+
+    # Human capital plots
+    'create_hc_stock_sensitivity_figure',
 ]

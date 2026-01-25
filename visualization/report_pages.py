@@ -15,22 +15,22 @@ if TYPE_CHECKING:
 from .helpers import apply_wealth_log_scale
 
 
-# Standard color palette for charts
+# Standard color palette for charts (colorblind-friendly: blue-orange palette)
 REPORT_COLORS = {
-    'earnings': '#27ae60',
-    'expenses': '#e74c3c',
-    'stock': '#3498db',
-    'bond': '#9b59b6',
-    'cash': '#f1c40f',
-    'fw': '#2ecc71',
-    'hc': '#e67e22',
-    'subsistence': '#95a5a6',
-    'variable': '#e74c3c',
-    'consumption': '#e74c3c',
-    'nw': '#9b59b6',
-    'rate': '#f39c12',
-    'optimal': '#2ecc71',
-    'rot': '#3498db',
+    'earnings': '#0077B6',   # Teal-blue (was green)
+    'expenses': '#E07A5F',   # Burnt orange (was red)
+    'stock': '#F4A261',      # Coral (was blue)
+    'bond': '#9b59b6',       # Purple (unchanged)
+    'cash': '#f1c40f',       # Yellow (unchanged)
+    'fw': '#457B9D',         # Blue (was green)
+    'hc': '#e67e22',         # Orange (unchanged)
+    'subsistence': '#95a5a6', # Gray (unchanged)
+    'variable': '#2A9D8F',   # Teal (was red)
+    'consumption': '#2A9D8F', # Teal (was red)
+    'nw': '#9b59b6',         # Purple (unchanged)
+    'rate': '#f39c12',       # Amber (unchanged)
+    'optimal': '#1A759F',    # Deep blue (was green)
+    'rot': '#E9C46A',        # Amber (was blue)
 }
 
 
@@ -391,7 +391,7 @@ def create_scenario_page(
     use_years: bool = True,
     n_simulations: int = 50,
     random_seed: int = 42,
-    rate_shock_age: int = None,
+    rate_shock_years_before_retirement: int = 5,
     rate_shock_magnitude: float = -0.02,
 ) -> plt.Figure:
     """
@@ -417,7 +417,7 @@ def create_scenario_page(
         use_years: If True, x-axis shows years from career start
         n_simulations: Number of Monte Carlo simulations
         random_seed: Random seed for reproducibility
-        rate_shock_age: Age at which rate shock occurs (default: retirement_age)
+        rate_shock_years_before_retirement: Years before retirement to apply rate shock (default: 5)
         rate_shock_magnitude: Magnitude of rate shock (default: -2%)
 
     Returns:
@@ -430,9 +430,6 @@ def create_scenario_page(
         run_strategy_comparison,
         compute_pv_consumption,
     )
-
-    if rate_shock_age is None:
-        rate_shock_age = params.retirement_age
 
     fig = plt.figure(figsize=figsize)
     gs = fig.add_gridspec(3, 2, hspace=0.35, wspace=0.25)
@@ -463,11 +460,11 @@ def create_scenario_page(
     )
 
     if scenario_type == 'rateShock':
-        shock_year = rate_shock_age - params.start_age
-        if 0 <= shock_year < total_years:
-            for sim in range(n_simulations):
-                for t in range(shock_year, total_years):
-                    rate_paths[sim, t] += rate_shock_magnitude
+        shock_start = max(0, working_years - rate_shock_years_before_retirement)
+        shock_end = working_years
+        for sim in range(n_simulations):
+            for t in range(shock_start, shock_end):
+                rate_paths[sim, t] += rate_shock_magnitude
 
     stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
 
@@ -489,7 +486,7 @@ def create_scenario_page(
     scenario_titles = {
         'normal': 'Normal Market Conditions',
         'sequenceRisk': 'Sequence Risk (Bad Early Returns)',
-        'rateShock': f'Interest Rate Shock (at age {rate_shock_age})',
+        'rateShock': f'Pre-Retirement Rate Shock ({rate_shock_years_before_retirement} years before retirement)',
     }
 
     # Define percentiles for comparison
@@ -626,8 +623,8 @@ def create_scenario_page(
         ax.fill_between(x, pctls[1], pctls[3], alpha=0.3, color='#f39c12')
         ax.plot(x, pctls[2], color='#f39c12', linewidth=2, label='Median')
 
-        shock_x = rate_shock_age - params.start_age if use_years else rate_shock_age
-        ax.axvline(x=shock_x, color='red', linestyle='--', linewidth=2, label=f'Rate Shock ({rate_shock_magnitude*100:.0f}%)')
+        shock_start_x = working_years - rate_shock_years_before_retirement if use_years else params.retirement_age - rate_shock_years_before_retirement
+        ax.axvspan(shock_start_x, retirement_x, alpha=0.2, color='red', label=f'Rate Shock Period ({rate_shock_magnitude*100:.0f}%/yr)')
         ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
 
         ax.set_xlabel(xlabel)

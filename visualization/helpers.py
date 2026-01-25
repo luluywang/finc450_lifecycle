@@ -182,9 +182,9 @@ def plot_allocation_stack(
     """
     if colors is None:
         colors = {
-            'stock': '#e74c3c',  # Red
-            'bond': '#3498db',   # Blue
-            'cash': '#95a5a6',   # Gray
+            'stock': '#F4A261',  # Coral (colorblind-safe)
+            'bond': '#9b59b6',   # Purple (unchanged)
+            'cash': '#95a5a6',   # Gray (unchanged)
         }
 
     multiplier = 100 if as_percentage else 1

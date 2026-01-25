@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 def create_beta_comparison_figure(
-    beta_values: list = [0.0, 0.5, 1.0],
+    beta_values: list = None,
     base_params: 'LifecycleParams' = None,
     econ_params: 'EconomicParams' = None,
     figsize: Tuple[int, int] = (16, 12),
@@ -26,8 +26,10 @@ def create_beta_comparison_figure(
     Shows how portfolio allocation, human capital decomposition, and target
     holdings change as stock beta varies from 0 to 1.
     """
-    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path
+    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path, DEFAULT_RISKY_BETA
 
+    if beta_values is None:
+        beta_values = [0.0, DEFAULT_RISKY_BETA, 1.0]
     if base_params is None:
         base_params = LifecycleParams()
     if econ_params is None:
@@ -61,7 +63,7 @@ def create_beta_comparison_figure(
     fig, axes = plt.subplots(2, 3, figsize=figsize)
 
     # Colors for different beta values
-    beta_colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # blue, orange, green
+    beta_colors = ['#1A759F', '#E9C46A', '#2A9D8F']  # blue, amber, teal (colorblind-safe)
 
     # Get x-axis values
     result_0 = results[beta_values[0]]
@@ -353,7 +355,7 @@ def create_initial_wealth_comparison_figure(
     fig, axes = plt.subplots(2, 3, figsize=figsize)
 
     # Colors for different wealth levels
-    wealth_colors = plt.cm.RdYlGn(np.linspace(0.15, 0.85, len(wealth_values)))
+    wealth_colors = plt.cm.cividis(np.linspace(0.1, 0.9, len(wealth_values)))  # Colorblind-safe
 
     # Get x-axis values
     result_0 = results[wealth_values[0]]

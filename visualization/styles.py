@@ -9,43 +9,51 @@ import matplotlib.pyplot as plt
 # Set consistent style for all figures
 plt.style.use('seaborn-v0_8-whitegrid')
 
-# Main color scheme
+# Main color scheme (colorblind-friendly: blue-orange palette)
 COLORS = {
-    # Primary colors
-    'blue': '#1f77b4',
-    'orange': '#ff7f0e',
-    'green': '#2ca02c',
-    'red': '#d62728',
+    # Primary colors (colorblind-safe)
+    'blue': '#1A759F',
+    'orange': '#E07A5F',
+    'teal': '#2A9D8F',
+    'amber': '#E9C46A',
 
-    # Semantic colors
-    'earnings': '#27ae60',   # Green
-    'expenses': '#e74c3c',   # Red
-    'savings': '#27ae60',    # Green (same as earnings)
-    'drawdown': '#e74c3c',   # Red (same as expenses)
-    'hc': '#e67e22',         # Orange - Human Capital
-    'fw': '#2ecc71',         # Light Green - Financial Wealth
-    'tw': '#3498db',         # Blue - Total Wealth
-    'stock': '#3498db',      # Blue
-    'bond': '#9b59b6',       # Purple
-    'cash': '#f1c40f',       # Yellow
-    'subsistence': '#95a5a6', # Gray
-    'variable': '#e74c3c',   # Red
-    'pv_earnings': '#27ae60',
-    'pv_expenses': '#e74c3c',
+    # Legacy aliases for backward compatibility (map to colorblind-safe colors)
+    'green': '#2A9D8F',  # Maps to teal (colorblind-safe alternative to green)
+    'red': '#E07A5F',    # Maps to burnt orange (colorblind-safe alternative to red)
+
+    # Semantic colors - Income/Expense flows (blue=positive, orange=negative)
+    'earnings': '#0077B6',   # Teal-blue (was green)
+    'expenses': '#E07A5F',   # Burnt orange (was red)
+    'savings': '#0077B6',    # Match earnings
+    'drawdown': '#E07A5F',   # Match expenses
+    'hc': '#e67e22',         # Orange - Human Capital (unchanged)
+    'fw': '#457B9D',         # Blue - Financial Wealth (was green)
+    'tw': '#1D3557',         # Dark blue - Total Wealth
+    'stock': '#F4A261',      # Coral (was blue/red)
+    'bond': '#9b59b6',       # Purple (unchanged)
+    'cash': '#f1c40f',       # Yellow (unchanged)
+    'subsistence': '#95a5a6', # Gray (unchanged)
+    'variable': '#2A9D8F',   # Teal (was red)
+    'pv_earnings': '#0077B6',
+    'pv_expenses': '#E07A5F',
 
     # Strategy comparison colors
-    'optimal': '#2ecc71',    # Green
-    'rot': '#3498db',        # Blue (Rule of Thumb)
-    'color_4pct': '#e74c3c', # Red
+    'optimal': '#1A759F',    # Deep blue (was green)
+    'rot': '#E9C46A',        # Amber (was blue)
+    'color_4pct': '#E9C46A', # Amber (was red)
 
     # Rate/return colors
     'rate': '#f39c12',
     'nw': '#9b59b6',
-    'consumption': '#e74c3c',
+    'consumption': '#2A9D8F',
+
+    # Market conditions
+    'bull': '#264653',       # Deep teal (was green)
+    'bear': '#BC6C25',       # Rust (was red)
 }
 
-# Strategy comparison color list
-STRATEGY_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+# Strategy comparison color list (colorblind-safe)
+STRATEGY_COLORS = ['#1A759F', '#E9C46A', '#2A9D8F', '#BC6C25']
 
 
 def apply_standard_style():

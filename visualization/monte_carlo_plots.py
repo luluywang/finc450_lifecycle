@@ -66,11 +66,11 @@ def create_monte_carlo_fan_chart(
     ax.fill_between(x, fw_percentiles[0], fw_percentiles[4], alpha=0.2, color='blue', label='10-90th pctl')
     ax.fill_between(x, fw_percentiles[1], fw_percentiles[3], alpha=0.3, color='blue', label='25-75th pctl')
     ax.plot(x, fw_percentiles[2], color='darkblue', linewidth=2, label='Median')
-    ax.plot(x, mc_result.median_result.financial_wealth, color='green', linewidth=2,
+    ax.plot(x, mc_result.median_result.financial_wealth, color='#2A9D8F', linewidth=2,
             linestyle='--', label='Deterministic')
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='red', linestyle='-', alpha=0.3)
+    ax.axhline(y=0, color='#E07A5F', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
     ax.set_title('Financial Wealth: Monte Carlo Fan Chart')
@@ -87,7 +87,7 @@ def create_monte_carlo_fan_chart(
     ax.fill_between(x, cons_percentiles[0], cons_percentiles[4], alpha=0.2, color='orange', label='10-90th pctl')
     ax.fill_between(x, cons_percentiles[1], cons_percentiles[3], alpha=0.3, color='orange', label='25-75th pctl')
     ax.plot(x, cons_percentiles[2], color='darkorange', linewidth=2, label='Median')
-    ax.plot(x, mc_result.median_result.total_consumption, color='green', linewidth=2,
+    ax.plot(x, mc_result.median_result.total_consumption, color='#2A9D8F', linewidth=2,
             linestyle='--', label='Deterministic')
 
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
@@ -107,10 +107,10 @@ def create_monte_carlo_fan_chart(
     non_default_floored = np.maximum(non_default, floor_val)
     max_val = np.percentile(non_default_floored, 99)
     bins = np.geomspace(floor_val, max_val, 50)
-    ax.hist(non_default_floored, bins=bins, alpha=0.7, color='blue', edgecolor='white', density=True)
-    ax.axvline(x=max(np.median(non_default), floor_val), color='red', linestyle='--', linewidth=2,
+    ax.hist(non_default_floored, bins=bins, alpha=0.7, color='#1A759F', edgecolor='white', density=True)
+    ax.axvline(x=max(np.median(non_default), floor_val), color='#E9C46A', linestyle='--', linewidth=2,
                label=f'Median: ${np.median(non_default):,.0f}k')
-    ax.axvline(x=max(np.mean(non_default), floor_val), color='green', linestyle='--', linewidth=2,
+    ax.axvline(x=max(np.mean(non_default), floor_val), color='#2A9D8F', linestyle='--', linewidth=2,
                label=f'Mean: ${np.mean(non_default):,.0f}k')
 
     ax.set_xlabel('Final Wealth ($ 000s)')
@@ -212,8 +212,8 @@ def create_monte_carlo_detailed_view(
     ret_percentiles = np.percentile(mc_result.stock_return_paths, percentiles, axis=0)
     x_ret = x[:n_returns] if len(x) > n_returns else x
     ax.fill_between(x_ret, ret_percentiles[0]*100, ret_percentiles[2]*100,
-                    alpha=0.3, color='green', label='10-90th pctl')
-    ax.plot(x_ret, ret_percentiles[1]*100, color='darkgreen', linewidth=2, label='Median')
+                    alpha=0.3, color='#2A9D8F', label='10-90th pctl')
+    ax.plot(x_ret, ret_percentiles[1]*100, color='#264653', linewidth=2, label='Median')
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.5)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.set_xlabel(xlabel)
@@ -239,9 +239,9 @@ def create_monte_carlo_detailed_view(
     ax = axes[0, 2]
     weight_percentiles = np.percentile(mc_result.stock_weight_paths, percentiles, axis=0)
     ax.fill_between(x, weight_percentiles[0]*100, weight_percentiles[2]*100,
-                    alpha=0.3, color='red', label='10-90th pctl')
-    ax.plot(x, weight_percentiles[1]*100, color='darkred', linewidth=2, label='Median')
-    ax.plot(x, mc_result.median_result.stock_weight_no_short*100, color='green',
+                    alpha=0.3, color='#F4A261', label='10-90th pctl')
+    ax.plot(x, weight_percentiles[1]*100, color='#BC6C25', linewidth=2, label='Median')
+    ax.plot(x, mc_result.median_result.stock_weight_no_short*100, color='#2A9D8F',
             linewidth=2, linestyle='--', label='Deterministic')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=mc_result.target_stock*100, color='gray', linestyle='--', alpha=0.5,
@@ -273,7 +273,7 @@ def create_monte_carlo_detailed_view(
                     alpha=0.3, color='orange', label='10-90th pctl')
     ax.plot(x, cum_percentiles[1], color='darkorange', linewidth=2, label='Median')
     cum_det = np.cumsum(mc_result.median_result.total_consumption)
-    ax.plot(x, cum_det, color='green', linewidth=2, linestyle='--', label='Deterministic')
+    ax.plot(x, cum_det, color='#2A9D8F', linewidth=2, linestyle='--', label='Deterministic')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
@@ -284,7 +284,7 @@ def create_monte_carlo_detailed_view(
     ax = axes[1, 2]
     default_ages = mc_result.default_ages[~np.isnan(mc_result.default_ages)]
     if len(default_ages) > 0:
-        ax.hist(default_ages, bins=20, alpha=0.7, color='red', edgecolor='white')
+        ax.hist(default_ages, bins=20, alpha=0.7, color='#E07A5F', edgecolor='white')
         ax.axvline(x=params.retirement_age, color='gray', linestyle='--', linewidth=2,
                    label='Retirement Age')
         ax.set_xlabel('Age at Default')
@@ -323,7 +323,7 @@ def plot_wealth_paths_spaghetti(
 
         for i in range(min(n_paths, result.wealth_paths.shape[0])):
             alpha = 0.3 if result.defaulted[i] else 0.15
-            color = 'red' if result.defaulted[i] else STRATEGY_COLORS[idx]
+            color = '#E07A5F' if result.defaulted[i] else STRATEGY_COLORS[idx]
             ax.plot(years, result.wealth_paths[i, :] / 1e6,
                    color=color, alpha=alpha, linewidth=0.5)
 
@@ -339,7 +339,7 @@ def plot_wealth_paths_spaghetti(
         ax.set_title(f'{strategy}')
         ax.set_xlim(0, n_periods - 1)
         ax.set_ylim(0, None)
-        ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        ax.axhline(y=0, color='#E07A5F', linestyle='--', alpha=0.5)
 
         default_rate = 100 * result.defaulted.mean()
         ax.annotate(f'Default: {default_rate:.1f}%',
@@ -426,7 +426,7 @@ def create_teaching_scenarios_figure(
     for i, scenario in enumerate(scenarios):
         ax.plot(x, scenario.financial_wealth, color=colors[i], linewidth=2,
                 label=scenario.name)
-    ax.axhline(y=0, color='red', linestyle='-', alpha=0.3)
+    ax.axhline(y=0, color='#E07A5F', linestyle='-', alpha=0.3)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
@@ -564,7 +564,7 @@ def create_sequence_of_returns_figure(
         xlabel = 'Age'
         retirement_x = params.retirement_age
 
-    colors = ['#2ecc71', '#e74c3c', '#3498db']
+    colors = ['#1A759F', '#E9C46A', '#2A9D8F']  # Colorblind-safe: blue, amber, teal
 
     # Panel 1: Return Sequences
     ax = axes[0, 0]
@@ -584,7 +584,7 @@ def create_sequence_of_returns_figure(
     for i, scenario in enumerate(scenarios):
         ax.plot(x, scenario.financial_wealth, color=colors[i], linewidth=2,
                 label=scenario.name)
-    ax.axhline(y=0, color='red', linestyle='-', alpha=0.3)
+    ax.axhline(y=0, color='#E07A5F', linestyle='-', alpha=0.3)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
