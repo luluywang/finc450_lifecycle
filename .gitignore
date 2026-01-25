@@ -4,8 +4,8 @@ __pycache__/
 *.pyo
 .ipynb_checkpoints/
 
-# Generated output (use `make` to regenerate)
-output/
+# Generated output is now tracked in git
+# (Previously ignored, but we track output/figures/ for LaTeX compilation)
 
 # LaTeX auxiliary files
 *.aux
@@ -24,3 +24,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Prevent accidental figures/ at project root (use output/figures/ instead)
+figures/

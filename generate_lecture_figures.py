@@ -8,7 +8,7 @@ These figures are designed to tell the story of lifecycle investing:
 4. Why portfolio allocation changes over life
 
 Usage:
-    python generate_lecture_figures.py [--output-dir figures/] [--format png]
+    python generate_lecture_figures.py [--output-dir output/figures/] [--format png]
 """
 
 import numpy as np
@@ -18,6 +18,7 @@ from typing import Optional
 
 # Import from core module (primary source of truth)
 from core import (
+    DEFAULT_RISKY_BETA,
     LifecycleParams,
     EconomicParams,
     LifecycleResult,
@@ -32,6 +33,7 @@ from visualization import (
     add_retirement_line,
     apply_standard_style,
     compute_x_axis_from_ages,  # DRY helper
+    create_hc_stock_sensitivity_figure,  # Human capital sensitivity
 )
 
 # Apply consistent style for all figures
@@ -423,6 +425,111 @@ def fig_consumption_path(result: LifecycleResult, params: LifecycleParams,
 # FIGURE 9: Beta Comparison
 # =============================================================================
 
+def fig_allocation_risky_hc(params: LifecycleParams, econ_params: EconomicParams,
+                            beta: float = DEFAULT_RISKY_BETA, use_years: bool = True,
+                            figsize=(12, 8)) -> plt.Figure:
+    """
+    Same as fig_allocation_theory but for risky human capital (beta > 0).
+
+    Shows how stock-like human capital changes the optimal portfolio allocation.
+    Key insight: With risky HC, the financial portfolio holds FEWER stocks
+    to compensate for the implicit stock exposure in human capital.
+    """
+    # Create params with specified beta
+    risky_params = LifecycleParams(
+        start_age=params.start_age,
+        retirement_age=params.retirement_age,
+        end_age=params.end_age,
+        initial_earnings=params.initial_earnings,
+        base_expenses=params.base_expenses,
+        retirement_expenses=params.retirement_expenses,
+        stock_beta_human_capital=beta,
+        gamma=params.gamma,
+        initial_wealth=params.initial_wealth,
+        consumption_share=params.consumption_share,
+    )
+
+    result = compute_lifecycle_median_path(risky_params, econ_params)
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    x, xlabel, retirement_x = get_x_axis(result, risky_params, use_years)
+
+    # Panel 1: Human Capital as % of Total Wealth
+    ax = axes[0, 0]
+    hc_share = result.human_capital / np.maximum(result.total_wealth, 1) * 100
+    fw_share = result.financial_wealth / np.maximum(result.total_wealth, 1) * 100
+
+    ax.fill_between(x, 0, fw_share, alpha=0.8, color=COLORS['fw'], label='Financial Wealth %')
+    ax.fill_between(x, fw_share, 100, alpha=0.8, color=COLORS['hc'], label='Human Capital %')
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('% of Total Wealth')
+    ax.set_title('Wealth Composition Over Life')
+    ax.legend(loc='right')
+    ax.set_ylim(0, 100)
+    ax.set_xlim(x[0], x[-1])
+
+    # Panel 2: HC Decomposition (bond-like vs stock-like)
+    ax = axes[0, 1]
+    ax.plot(x, result.hc_bond_component + result.hc_cash_component,
+            color=COLORS['bond'], linewidth=2, label='Bond-like HC')
+    ax.plot(x, result.hc_stock_component,
+            color=COLORS['stock'], linewidth=2, label='Stock-like HC')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.7)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title(f'Human Capital Decomposition\n(Beta = {beta})')
+    ax.legend(loc='upper right')
+    ax.set_xlim(x[0] - 1, x[-1] + 1)
+
+    # Panel 3: Financial Portfolio Allocation
+    ax = axes[1, 0]
+    ax.fill_between(x, 0, result.cash_weight_no_short * 100,
+                    alpha=0.8, color=COLORS['cash'], label='Cash')
+    ax.fill_between(x, result.cash_weight_no_short * 100,
+                    (result.cash_weight_no_short + result.bond_weight_no_short) * 100,
+                    alpha=0.8, color=COLORS['bond'], label='Bonds')
+    ax.fill_between(x, (result.cash_weight_no_short + result.bond_weight_no_short) * 100, 100,
+                    alpha=0.8, color=COLORS['stock'], label='Stocks')
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Portfolio Weight (%)')
+    ax.set_title('Financial Portfolio Allocation')
+    ax.legend(loc='right')
+    ax.set_ylim(0, 100)
+    ax.set_xlim(x[0], x[-1])
+
+    # Panel 4: Stock allocation explanation
+    ax = axes[1, 1]
+    ax.plot(x, result.stock_weight_no_short * 100, color=COLORS['stock'],
+            linewidth=2.5, label='Stock Weight in Financial Portfolio')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.7)
+    ax.axhline(y=50, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Stock Allocation (%)')
+    ax.set_title('The Equity Glide Path')
+    ax.legend(loc='upper right')
+    ax.set_ylim(0, 105)
+    ax.set_xlim(x[0] - 1, x[-1] + 1)
+
+    # Add annotation showing the key difference from beta=0
+    early_stock = result.stock_weight_no_short[5] * 100
+    ax.annotate(f'Lower stocks ({early_stock:.0f}%):\nHC is partially stock-like',
+                xy=(5, early_stock), fontsize=10, ha='left',
+                xytext=(10, early_stock + 15),
+                arrowprops=dict(arrowstyle='->', color='gray'),
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    ax.annotate('Same convergence:\nHC depleted',
+                xy=(50, 60), fontsize=10, ha='left',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
+    fig.suptitle(f'Portfolio Allocation with Risky Human Capital (β = {beta})',
+                 fontsize=16, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    return fig
+
+
 def fig_beta_comparison(params: LifecycleParams, econ_params: EconomicParams,
                         use_years: bool = True, figsize=(12, 5)) -> plt.Figure:
     """
@@ -433,9 +540,9 @@ def fig_beta_comparison(params: LifecycleParams, econ_params: EconomicParams,
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    betas = [0.0, 0.5, 1.0]
+    betas = [0.0, DEFAULT_RISKY_BETA, 1.0]
     colors = ['#2ecc71', '#3498db', '#e74c3c']
-    labels = ['Beta=0 (Professor)', 'Beta=0.5 (Manager)', 'Beta=1.0 (Entrepreneur)']
+    labels = ['Beta=0 (Professor)', f'Beta={DEFAULT_RISKY_BETA} (Manager)', 'Beta=1.0 (Entrepreneur)']
 
     results = []
     for beta in betas:
@@ -486,7 +593,7 @@ def fig_beta_comparison(params: LifecycleParams, econ_params: EconomicParams,
 # =============================================================================
 
 def generate_all_figures(
-    output_dir: str = 'figures',
+    output_dir: str = 'output/figures',
     format: str = 'png',
     dpi: int = 150,
     params: LifecycleParams = None,
@@ -553,6 +660,23 @@ def generate_all_figures(
     fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
+    # Generate risky HC allocation figure (beta = DEFAULT_RISKY_BETA)
+    print(f"  10_allocation_risky_hc: Allocation with risky human capital (beta={DEFAULT_RISKY_BETA})")
+    fig = fig_allocation_risky_hc(params, econ_params, beta=DEFAULT_RISKY_BETA, use_years=use_years)
+    filepath = output_path / f"10_allocation_risky_hc.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    # Generate human capital stock sensitivity figure
+    print("  11_hc_stock_sensitivity: Human capital sensitivity to stock returns")
+    fig = create_hc_stock_sensitivity_figure(
+        params=params, econ_params=econ_params,
+        n_simulations=1000, use_years=use_years
+    )
+    filepath = output_path / f"11_hc_stock_sensitivity.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
     print(f"\nAll figures saved to: {output_path.absolute()}")
     print(f"Format: {format}, DPI: {dpi}")
 
@@ -562,15 +686,15 @@ def generate_all_figures(
     print("="*60)
     print(r"""
 \begin{frame}{The Lifecycle Problem}
-  \includegraphics[width=\textwidth]{figures/01_income_expenses.png}
+  \includegraphics[width=\textwidth]{output/figures/01_income_expenses.png}
 \end{frame}
 
 \begin{frame}{The Four Gauges of Lifecycle Finance}
-  \includegraphics[width=\textwidth]{figures/05_gauges_dashboard.png}
+  \includegraphics[width=\textwidth]{output/figures/05_gauges_dashboard.png}
 \end{frame}
 
 \begin{frame}{Why Allocation Changes Over Life}
-  \includegraphics[width=\textwidth]{figures/06_allocation_theory.png}
+  \includegraphics[width=\textwidth]{output/figures/06_allocation_theory.png}
 \end{frame}
 """)
 
@@ -581,7 +705,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Generate lecture figures for lifecycle investing'
     )
-    parser.add_argument('--output-dir', default='figures',
+    parser.add_argument('--output-dir', default='output/figures',
                         help='Output directory for figures')
     parser.add_argument('--format', default='png', choices=['png', 'pdf', 'svg'],
                         help='Output format')
