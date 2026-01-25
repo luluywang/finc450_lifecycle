@@ -42,8 +42,8 @@ finc450_lifecycle/
 ├── data/                           # Data files
 ├── output/                         # Generated figures and PDFs (gitignored)
 │
-├── lifecycle_strategy.py           # Main PDF generation
-├── dashboard.py                    # Strategy comparison dashboard
+├── generate_report.py              # Main lifecycle report PDF
+├── compare_strategies.py           # LDI vs RoT comparison PDF
 ├── generate_lecture_figures.py     # Lecture figure generation
 ├── Makefile                        # Build automation
 └── requirements.txt                # Python dependencies
@@ -149,14 +149,14 @@ make help         # Show available targets
 ```
 
 Outputs are written to `output/`:
-- `output/lifecycle_strategy.pdf` - Main lifecycle analysis
-- `output/strategy_dashboard.pdf` - Strategy comparison
+- `output/lifecycle_report.pdf` - Main lifecycle analysis
+- `output/strategy_comparison.pdf` - LDI vs RoT comparison
 - `output/figures/` - Lecture figures (PNG)
 
 ### Custom Parameters
 
 ```bash
-python3 lifecycle_strategy.py -o output/custom.pdf --initial-earnings 120 --stock-beta 0.4
+python3 generate_report.py -o output/custom.pdf --initial-earnings 120 --stock-beta 0.4
 ```
 
-Run `python3 lifecycle_strategy.py --help` for all available options.
+Run `python3 generate_report.py --help` for all available options.

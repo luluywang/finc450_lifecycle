@@ -273,10 +273,10 @@ if __name__ == '__main__':
         random_seed=42,
     )
 
-    print("Creating dashboard...")
+    print("Creating comparison figure...")
     fig = create_dashboard(results)
 
     # Save to PDF
-    fig.savefig('strategy_dashboard.pdf', bbox_inches='tight')
+    fig.savefig('strategy_comparison.pdf', bbox_inches='tight')
     plt.close(fig)
-    print("Dashboard saved to strategy_dashboard.pdf")
+    print("Saved to strategy_comparison.pdf")

@@ -13,8 +13,8 @@ FIGURE_FORMAT = png
 FIGURE_DPI = 150
 
 # Output files
-LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_strategy.pdf
-DASHBOARD_PDF = $(OUTPUT_DIR)/strategy_dashboard.pdf
+LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_report.pdf
+DASHBOARD_PDF = $(OUTPUT_DIR)/strategy_comparison.pdf
 
 # Source files that trigger rebuilds
 CORE_SOURCES = core/params.py core/economics.py core/simulation.py core/strategies.py
@@ -38,16 +38,16 @@ $(FIGURES_DIR)/.stamp: generate_lecture_figures.py $(CORE_SOURCES) $(VIZ_SOURCES
 # Generate all PDFs
 pdfs: $(LIFECYCLE_PDF) $(DASHBOARD_PDF)
 
-# Lifecycle strategy PDF
-$(LIFECYCLE_PDF): lifecycle_strategy.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
+# Lifecycle report PDF
+$(LIFECYCLE_PDF): generate_report.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
 	@echo "Generating $(LIFECYCLE_PDF)..."
-	$(PYTHON) lifecycle_strategy.py -o $@
+	$(PYTHON) generate_report.py -o $@
 
-# Strategy dashboard PDF
-$(DASHBOARD_PDF): dashboard.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
+# Strategy comparison PDF
+$(DASHBOARD_PDF): compare_strategies.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
 	@echo "Generating $(DASHBOARD_PDF)..."
-	$(PYTHON) dashboard.py
-	@mv strategy_dashboard.pdf $@
+	$(PYTHON) compare_strategies.py
+	@mv strategy_comparison.pdf $@
 
 # Create output directories
 $(OUTPUT_DIR):
