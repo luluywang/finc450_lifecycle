@@ -6,8 +6,8 @@ investment system, consolidated from various modules into a single source of tru
 """
 
 import numpy as np
-from dataclasses import dataclass
-from typing import Optional, List, TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import Optional, List, TYPE_CHECKING, Protocol, runtime_checkable
 from enum import Enum
 
 if TYPE_CHECKING:
@@ -88,6 +88,9 @@ class LifecycleParams:
     gamma: float = 2.0               # Risk aversion coefficient for MV optimization
     target_stock_allocation: float = 0.60    # Target stock allocation (used if gamma=0)
     target_bond_allocation: float = 0.30     # Target bond allocation (used if gamma=0)
+
+    # Portfolio constraint parameters
+    allow_leverage: bool = False     # Allow shorting and leverage in portfolio
 
     # Economic parameters (consistent with EconomicParams for DGP)
     risk_free_rate: float = 0.02     # Long-run real risk-free rate
@@ -383,3 +386,99 @@ class ScenarioResult:
     stock_weight: np.ndarray
     stock_returns: np.ndarray
     cumulative_consumption: np.ndarray
+
+
+# =============================================================================
+# Generic Strategy Framework
+# =============================================================================
+
+@dataclass
+class SimulationState:
+    """
+    State available to strategy at each time step.
+
+    This provides all the information a strategy needs to make decisions,
+    including wealth measures, cash flows, market conditions, and precomputed
+    hedge components for LDI-style strategies.
+    """
+    # Time indices
+    t: int                          # Current period (0-indexed)
+    age: int                        # Current age
+    is_working: bool                # True if before retirement
+
+    # Wealth measures
+    financial_wealth: float         # Current FW
+    human_capital: float            # PV of future earnings
+    pv_expenses: float              # PV of future expenses
+    net_worth: float                # HC + FW - PV(expenses)
+    total_wealth: float             # HC + FW
+
+    # Cash flows
+    earnings: float                 # Current period earnings
+    expenses: float                 # Current period expenses (subsistence)
+
+    # Market state
+    current_rate: float             # Current interest rate
+
+    # HC decomposition (for LDI hedge)
+    hc_stock_component: float
+    hc_bond_component: float
+    hc_cash_component: float
+
+    # Expense liability decomposition (for LDI hedge)
+    exp_bond_component: float
+    exp_cash_component: float
+
+    # Durations
+    duration_hc: float
+    duration_expenses: float
+
+    # Target allocations (from MV optimization)
+    target_stock: float
+    target_bond: float
+    target_cash: float
+
+    # Parameters (read-only reference)
+    params: 'LifecycleParams'
+    econ_params: 'EconomicParams'
+
+
+@dataclass
+class StrategyActions:
+    """
+    Actions returned by strategy for current period.
+
+    Contains both consumption decisions and portfolio allocation weights.
+    Weights should sum to 1.0 (or close to it for leveraged strategies).
+    """
+    # Consumption
+    total_consumption: float
+    subsistence_consumption: float
+    variable_consumption: float
+
+    # Portfolio weights (should sum to 1.0)
+    stock_weight: float
+    bond_weight: float
+    cash_weight: float
+
+
+@runtime_checkable
+class StrategyProtocol(Protocol):
+    """
+    Protocol for strategies that map state to actions.
+
+    Strategies are simple functions that take the current simulation state
+    and return actions (consumption and portfolio weights). This allows
+    strategies to be easily swapped and compared using a generic simulation engine.
+
+    Example:
+        >>> class MyStrategy:
+        ...     name: str = "My Strategy"
+        ...     def __call__(self, state: SimulationState) -> StrategyActions:
+        ...         return StrategyActions(...)
+    """
+    name: str
+
+    def __call__(self, state: SimulationState) -> StrategyActions:
+        """Compute actions given current state."""
+        ...

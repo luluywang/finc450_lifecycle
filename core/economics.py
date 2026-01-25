@@ -145,6 +145,43 @@ def compute_zero_coupon_returns(
     return returns
 
 
+def compute_duration_approx_returns(
+    rates: np.ndarray,
+    duration: float,
+    econ_params: EconomicParams
+) -> np.ndarray:
+    """
+    Compute bond returns using duration approximation.
+
+    Uses the classic duration formula:
+        bond_return ≈ yield - duration × Δr
+
+    where Δr = r_{t+1} - r_t is the change in interest rates.
+
+    This is simpler than the exact zero-coupon formula and avoids
+    dealing with specific maturities.
+
+    Args:
+        rates: Interest rate paths of shape (n_sims, n_periods + 1)
+        duration: Duration of the bond portfolio
+        econ_params: Economic parameters (for mu_bond spread)
+
+    Returns:
+        Array of shape (n_sims, n_periods) with bond returns
+    """
+    # Rate at start of period
+    r_t = rates[:, :-1]
+
+    # Rate change over period
+    delta_r = rates[:, 1:] - rates[:, :-1]
+
+    # Duration approximation: yield - duration × Δr
+    # Note: mu_bond (spread) is added separately by caller
+    returns = r_t - duration * delta_r
+
+    return returns
+
+
 # =============================================================================
 # Present Value and Duration Calculations
 # =============================================================================

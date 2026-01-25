@@ -18,9 +18,10 @@ pip install -r requirements.txt
 finc450_lifecycle/
 ├── core/                           # Core module (SINGLE SOURCE OF TRUTH)
 │   ├── __init__.py                 # Public API exports
-│   ├── params.py                   # All dataclasses (LifecycleParams, EconomicParams, ScenarioResult, etc.)
+│   ├── params.py                   # All dataclasses (LifecycleParams, EconomicParams, etc.)
 │   ├── economics.py                # Bond pricing, PV calculations, MV optimization
-│   └── simulation.py               # Monte Carlo engines, strategy comparison
+│   ├── simulation.py               # Monte Carlo engines, strategy comparison
+│   └── strategies.py               # Generic strategy implementations (LDI, RoT, Fixed)
 │
 ├── visualization/                  # Consolidated matplotlib visualization code
 │   ├── __init__.py                 # Public API exports
@@ -56,6 +57,41 @@ from core import (
     run_strategy_comparison,
 )
 ```
+
+### Generic Strategy Framework
+
+Strategies are simple functions mapping `SimulationState -> StrategyActions`:
+
+```python
+from core import (
+    # State/Action dataclasses
+    SimulationState,
+    StrategyActions,
+    StrategyProtocol,
+    # Strategy implementations
+    LDIStrategy,
+    RuleOfThumbStrategy,
+    FixedConsumptionStrategy,
+    # Generic simulation engine
+    simulate_with_strategy,
+    generate_correlated_shocks,
+)
+
+# Run any strategy with the generic engine
+ldi = LDIStrategy(allow_leverage=False)
+rot = RuleOfThumbStrategy(savings_rate=0.15, withdrawal_rate=0.04)
+
+# Zero shocks = deterministic median path
+rate_shocks = np.zeros((1, n_periods))
+stock_shocks = np.zeros((1, n_periods))
+result = simulate_with_strategy(ldi, params, econ, rate_shocks, stock_shocks)
+
+# Random shocks = Monte Carlo
+rate_shocks, stock_shocks = generate_correlated_shocks(n_periods, n_sims, rho, rng)
+mc_result = simulate_with_strategy(rot, params, econ, rate_shocks, stock_shocks)
+```
+
+Key insight: **Static calculations = Dynamic with zero shocks**. This unifies the codebase.
 
 ### Visualization Module
 

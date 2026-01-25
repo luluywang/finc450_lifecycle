@@ -17,6 +17,9 @@ from .params import (
     RuleOfThumbResult,
     StrategyComparisonResult,
     MedianPathComparisonResult,
+    SimulationState,
+    StrategyActions,
+    StrategyProtocol,
 )
 from .economics import (
     compute_present_value,
@@ -26,7 +29,7 @@ from .economics import (
     generate_correlated_shocks,
     simulate_interest_rates,
     simulate_stock_returns,
-    compute_zero_coupon_returns,
+    compute_duration_approx_returns,
 )
 
 
@@ -43,18 +46,21 @@ def compute_static_pvs(
     phi: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute static PV values and durations for earnings and expenses.
+    Compute PV values and durations for earnings and expenses at constant rate.
 
-    This is the single source of truth for PV calculations, replacing
-    duplicate loops in simulate_paths(), run_strategy_comparison(), and
-    compute_lifecycle_fixed_consumption().
+    KEY INSIGHT: "Static" = "Dynamic with current_rate = r_bar"
+
+    This function uses the same compute_present_value() as dynamic calculations,
+    just with current_rate fixed at r_bar. This unifies the codebase:
+    - Static/median path: call with current_rate = r_bar
+    - Dynamic/Monte Carlo: call with current_rate from simulated rate path
 
     Args:
         earnings: Array of earnings over total_years
         expenses: Array of expenses over total_years
         working_years: Number of working years
         total_years: Total years in simulation
-        r: Risk-free rate (r_bar)
+        r: Risk-free rate (r_bar) - used as current_rate for PV calculation
         phi: Mean reversion parameter
 
     Returns:
@@ -311,7 +317,272 @@ def compute_dynamic_pv(
 
 
 # =============================================================================
-# Unified Simulation Engine
+# Generic Strategy Simulation Engine
+# =============================================================================
+
+def simulate_with_strategy(
+    strategy: StrategyProtocol,
+    params: LifecycleParams,
+    econ_params: EconomicParams,
+    rate_shocks: np.ndarray,
+    stock_shocks: np.ndarray,
+    initial_rate: float = None,
+) -> dict:
+    """
+    Generic simulation engine that runs ANY strategy.
+
+    This is the single source of truth for simulation logic. Strategies are
+    simple functions that map state to actions, allowing easy comparison.
+
+    Key insight: Static calculations (median path) are just dynamic calculations
+    with zero shocks. This unifies the codebase.
+
+    Args:
+        strategy: Strategy implementing StrategyProtocol (maps state -> actions)
+        params: Lifecycle parameters
+        econ_params: Economic parameters
+        rate_shocks: Shape (n_sims, n_periods) - interest rate epsilon shocks
+        stock_shocks: Shape (n_sims, n_periods) - stock return epsilon shocks
+        initial_rate: Starting interest rate (defaults to r_bar)
+
+    Returns:
+        Dictionary containing all simulation outputs:
+        - financial_wealth_paths: (n_sims, n_periods)
+        - human_capital_paths: (n_sims, n_periods)
+        - total_wealth_paths: (n_sims, n_periods)
+        - consumption paths (total, subsistence, variable)
+        - weight paths (stock, bond, cash)
+        - rate_paths, stock_return_paths
+        - default_flags, default_ages
+    """
+    if initial_rate is None:
+        initial_rate = econ_params.r_bar
+
+    n_sims, n_periods = rate_shocks.shape
+    total_years = params.end_age - params.start_age
+    working_years = params.retirement_age - params.start_age
+
+    assert n_periods == total_years, f"Shock periods {n_periods} != total years {total_years}"
+
+    # Compute target allocations (from MV optimization or fixed)
+    target_stock, target_bond, target_cash = compute_target_allocations(params, econ_params)
+
+    # Simulate market paths from shocks
+    rate_paths = simulate_interest_rates(
+        initial_rate, total_years, n_sims, econ_params, rate_shocks
+    )
+    stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
+
+    # Compute bond returns using duration approximation
+    # bond_return ≈ yield + spread - duration × Δr
+    if econ_params.bond_duration > 0:
+        bond_return_paths = compute_duration_approx_returns(
+            rate_paths, econ_params.bond_duration, econ_params
+        )
+        bond_return_paths = bond_return_paths + econ_params.mu_bond
+    else:
+        bond_return_paths = rate_paths[:, :-1] + econ_params.mu_bond
+
+    # Get earnings and expenses profiles
+    earnings_profile = compute_earnings_profile(params)
+    working_exp, retirement_exp = compute_expense_profile(params)
+
+    earnings = np.zeros(total_years)
+    expenses = np.zeros(total_years)
+    earnings[:working_years] = earnings_profile
+    expenses[:working_years] = working_exp
+    expenses[working_years:] = retirement_exp
+
+    r_bar = econ_params.r_bar
+    phi = econ_params.phi
+
+    # Initialize output arrays
+    financial_wealth_paths = np.zeros((n_sims, total_years))
+    human_capital_paths = np.zeros((n_sims, total_years))
+    total_wealth_paths = np.zeros((n_sims, total_years))
+    pv_expenses_paths = np.zeros((n_sims, total_years))
+    net_worth_paths = np.zeros((n_sims, total_years))
+
+    total_consumption_paths = np.zeros((n_sims, total_years))
+    subsistence_consumption_paths = np.zeros((n_sims, total_years))
+    variable_consumption_paths = np.zeros((n_sims, total_years))
+    savings_paths = np.zeros((n_sims, total_years))
+
+    stock_weight_paths = np.zeros((n_sims, total_years))
+    bond_weight_paths = np.zeros((n_sims, total_years))
+    cash_weight_paths = np.zeros((n_sims, total_years))
+
+    default_flags = np.zeros(n_sims, dtype=bool)
+    default_ages = np.full(n_sims, np.nan)
+
+    # Set initial wealth
+    financial_wealth_paths[:, 0] = params.initial_wealth
+
+    # Simulate each path
+    for sim in range(n_sims):
+        defaulted = False
+
+        # Reset strategy state if it has a reset method (for RoT retirement values)
+        if hasattr(strategy, 'reset'):
+            strategy.reset()
+
+        for t in range(total_years):
+            fw = financial_wealth_paths[sim, t]
+            is_working = t < working_years
+            current_rate = rate_paths[sim, t]
+            age = params.start_age + t
+
+            # Compute PV values at current rate (dynamic revaluation)
+            remaining_expenses = expenses[t:]
+            pv_exp = compute_present_value(remaining_expenses, current_rate, phi, r_bar)
+            duration_exp = compute_duration(remaining_expenses, current_rate, phi, r_bar)
+
+            if is_working:
+                remaining_earnings = earnings[t:working_years]
+                hc = compute_present_value(remaining_earnings, current_rate, phi, r_bar)
+                duration_hc = compute_duration(remaining_earnings, current_rate, phi, r_bar)
+            else:
+                hc = 0.0
+                duration_hc = 0.0
+
+            # Compute HC decomposition at current rate
+            if is_working and hc > 0:
+                hc_stock = hc * params.stock_beta_human_capital
+                non_stock_hc = hc * (1.0 - params.stock_beta_human_capital)
+                if econ_params.bond_duration > 0:
+                    hc_bond_frac = duration_hc / econ_params.bond_duration
+                    hc_bond = non_stock_hc * hc_bond_frac
+                    hc_cash = non_stock_hc * (1.0 - hc_bond_frac)
+                else:
+                    hc_bond = 0.0
+                    hc_cash = non_stock_hc
+            else:
+                hc_stock = 0.0
+                hc_bond = 0.0
+                hc_cash = 0.0
+
+            # Compute expense decomposition at current rate
+            if econ_params.bond_duration > 0 and pv_exp > 0:
+                exp_bond_frac = duration_exp / econ_params.bond_duration
+                exp_bond = pv_exp * exp_bond_frac
+                exp_cash = pv_exp * (1.0 - exp_bond_frac)
+            else:
+                exp_bond = 0.0
+                exp_cash = pv_exp
+
+            # Store values
+            human_capital_paths[sim, t] = hc
+            pv_expenses_paths[sim, t] = pv_exp
+            total_wealth = fw + hc
+            total_wealth_paths[sim, t] = total_wealth
+            net_worth = hc + fw - pv_exp
+            net_worth_paths[sim, t] = net_worth
+
+            # Build state for strategy
+            state = SimulationState(
+                t=t,
+                age=age,
+                is_working=is_working,
+                financial_wealth=fw,
+                human_capital=hc,
+                pv_expenses=pv_exp,
+                net_worth=net_worth,
+                total_wealth=total_wealth,
+                earnings=earnings[t],
+                expenses=expenses[t],
+                current_rate=current_rate,
+                hc_stock_component=hc_stock,
+                hc_bond_component=hc_bond,
+                hc_cash_component=hc_cash,
+                exp_bond_component=exp_bond,
+                exp_cash_component=exp_cash,
+                duration_hc=duration_hc,
+                duration_expenses=duration_exp,
+                target_stock=target_stock,
+                target_bond=target_bond,
+                target_cash=target_cash,
+                params=params,
+                econ_params=econ_params,
+            )
+
+            # Get actions from strategy
+            if defaulted:
+                actions = StrategyActions(
+                    total_consumption=0.0,
+                    subsistence_consumption=0.0,
+                    variable_consumption=0.0,
+                    stock_weight=target_stock,
+                    bond_weight=target_bond,
+                    cash_weight=target_cash,
+                )
+            else:
+                actions = strategy(state)
+
+            # Check for default
+            if not is_working and fw <= 0 and not defaulted:
+                defaulted = True
+                default_flags[sim] = True
+                default_ages[sim] = age
+
+            # Store results
+            total_consumption_paths[sim, t] = actions.total_consumption
+            subsistence_consumption_paths[sim, t] = actions.subsistence_consumption
+            variable_consumption_paths[sim, t] = actions.variable_consumption
+            savings_paths[sim, t] = earnings[t] - actions.total_consumption
+
+            stock_weight_paths[sim, t] = actions.stock_weight
+            bond_weight_paths[sim, t] = actions.bond_weight
+            cash_weight_paths[sim, t] = actions.cash_weight
+
+            # Evolve wealth to next period
+            if t < total_years - 1 and not defaulted:
+                stock_ret = stock_return_paths[sim, t]
+                bond_ret = bond_return_paths[sim, t]
+                cash_ret = rate_paths[sim, t]
+
+                portfolio_return = (
+                    actions.stock_weight * stock_ret +
+                    actions.bond_weight * bond_ret +
+                    actions.cash_weight * cash_ret
+                )
+                savings = earnings[t] - actions.total_consumption
+                financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
+
+    return {
+        # Core paths
+        'financial_wealth_paths': financial_wealth_paths,
+        'human_capital_paths': human_capital_paths,
+        'total_wealth_paths': total_wealth_paths,
+        'pv_expenses_paths': pv_expenses_paths,
+        'net_worth_paths': net_worth_paths,
+        # Consumption
+        'total_consumption_paths': total_consumption_paths,
+        'subsistence_consumption_paths': subsistence_consumption_paths,
+        'variable_consumption_paths': variable_consumption_paths,
+        'savings_paths': savings_paths,
+        # Weights
+        'stock_weight_paths': stock_weight_paths,
+        'bond_weight_paths': bond_weight_paths,
+        'cash_weight_paths': cash_weight_paths,
+        # Market paths
+        'rate_paths': rate_paths,
+        'stock_return_paths': stock_return_paths,
+        'bond_return_paths': bond_return_paths,
+        # Default tracking
+        'default_flags': default_flags,
+        'default_ages': default_ages,
+        # Reference arrays
+        'earnings': earnings,
+        'expenses': expenses,
+        # Targets
+        'target_stock': target_stock,
+        'target_bond': target_bond,
+        'target_cash': target_cash,
+    }
+
+
+# =============================================================================
+# Unified Simulation Engine (Legacy - kept for backward compatibility)
 # =============================================================================
 
 def simulate_paths(
@@ -367,11 +638,10 @@ def simulate_paths(
     )
     stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
 
-    # Pre-compute duration-based bond returns (includes capital gains/losses)
-    # This uses the zero-coupon bond return formula that accounts for
-    # price changes when rates move, not just yield
+    # Compute bond returns using duration approximation
+    # bond_return ≈ yield + spread - duration × Δr
     if econ_params.bond_duration > 0:
-        bond_return_paths = compute_zero_coupon_returns(
+        bond_return_paths = compute_duration_approx_returns(
             rate_paths, econ_params.bond_duration, econ_params
         )
         # Add bond spread to the duration-based returns
@@ -1155,9 +1425,9 @@ def run_strategy_comparison(
     # Simulate stock return paths
     stock_return_paths = simulate_stock_returns(rate_paths, econ_params, stock_shocks)
 
-    # Pre-compute duration-based bond returns (includes capital gains/losses)
+    # Compute bond returns using duration approximation
     if econ_params.bond_duration > 0:
-        bond_return_paths = compute_zero_coupon_returns(
+        bond_return_paths = compute_duration_approx_returns(
             rate_paths, econ_params.bond_duration, econ_params
         )
         bond_return_paths = bond_return_paths + econ_params.mu_bond

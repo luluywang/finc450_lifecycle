@@ -28,6 +28,17 @@ from .params import (
     SimulationResult,
     MedianPathResult,
     ScenarioResult,
+    # Generic strategy framework
+    SimulationState,
+    StrategyActions,
+    StrategyProtocol,
+)
+
+# Strategy implementations
+from .strategies import (
+    LDIStrategy,
+    RuleOfThumbStrategy,
+    FixedConsumptionStrategy,
 )
 
 # Economic primitives
@@ -39,6 +50,7 @@ from .economics import (
     zero_coupon_price_vectorized,
     spot_rate,
     compute_zero_coupon_returns,
+    compute_duration_approx_returns,
     # Present value and duration
     compute_present_value,
     compute_pv_consumption,
@@ -69,7 +81,9 @@ from .simulation import (
     normalize_portfolio_weights,
     apply_consumption_constraints,
     compute_dynamic_pv,
-    # Unified simulation engine
+    # Generic strategy simulation engine
+    simulate_with_strategy,
+    # Unified simulation engine (legacy)
     simulate_paths,
     # Profile generators
     compute_earnings_profile,
@@ -104,6 +118,13 @@ __all__ = [
     'SimulationResult',
     'MedianPathResult',
     'ScenarioResult',
+    # Generic strategy framework
+    'SimulationState',
+    'StrategyActions',
+    'StrategyProtocol',
+    'LDIStrategy',
+    'RuleOfThumbStrategy',
+    'FixedConsumptionStrategy',
     # Economics
     'effective_duration',
     'effective_duration_vectorized',
@@ -111,6 +132,7 @@ __all__ = [
     'zero_coupon_price_vectorized',
     'spot_rate',
     'compute_zero_coupon_returns',
+    'compute_duration_approx_returns',
     'compute_present_value',
     'compute_pv_consumption',
     'compute_duration',
@@ -133,6 +155,7 @@ __all__ = [
     'normalize_portfolio_weights',
     'apply_consumption_constraints',
     'compute_dynamic_pv',
+    'simulate_with_strategy',
     'simulate_paths',
     # Simulation
     'compute_earnings_profile',
