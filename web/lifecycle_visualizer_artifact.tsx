@@ -1479,6 +1479,158 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
   return strategy;
 }
 
+// =============================================================================
+// Rule-of-Thumb Strategy Implementation
+// =============================================================================
+
+/**
+ * Configuration options for Rule-of-Thumb strategy.
+ */
+interface RuleOfThumbStrategyOptions {
+  /** Fraction of income to save during working years (default 0.15) */
+  savingsRate?: number;
+  /** Fixed withdrawal rate in retirement (default 0.04) */
+  withdrawalRate?: number;
+  /** Target duration for fixed income allocation (default 6.0) */
+  targetDuration?: number;
+}
+
+/**
+ * Create a Rule-of-Thumb strategy.
+ *
+ * This implements the classic financial advisor heuristics from Python core/strategies.py:
+ * - Working years: Save savingsRate of income, (100-age)% in stocks
+ * - Retirement: Fixed 4% of initial retirement wealth, allocation frozen at retirement age
+ *
+ * This is NOT optimal but represents common retail investment advice.
+ *
+ * The strategy is stateful: it remembers the retirement wealth and allocation
+ * once retirement begins, so these values remain fixed throughout retirement.
+ *
+ * @param options - Configuration options
+ * @returns Strategy object implementing the Strategy interface
+ *
+ * @example
+ * const rot = createRuleOfThumbStrategy({ savingsRate: 0.15, withdrawalRate: 0.04 });
+ * const result = simulateWithStrategy(rot, params, econ, rateShocks, stockShocks);
+ */
+function createRuleOfThumbStrategy(options: RuleOfThumbStrategyOptions = {}): Strategy {
+  const {
+    savingsRate = 0.15,
+    withdrawalRate = 0.04,
+    targetDuration = 6.0,
+  } = options;
+
+  // Internal state for fixed retirement values (mutable, reset between simulations)
+  let retirementConsumption: number | null = null;
+  let retirementStockWeight: number | null = null;
+  let retirementBondWeight: number | null = null;
+  let retirementCashWeight: number | null = null;
+
+  const strategy = function ruleOfThumbStrategy(state: SimulationState): StrategyActions {
+    const fw = state.financialWealth;
+    const age = state.age;
+
+    // Compute allocation: (100 - age)% stocks
+    const bondDuration = state.econParams.bondDuration;
+    const bondWeightInFI = bondDuration > 0 ? Math.min(1.0, targetDuration / bondDuration) : 0.0;
+
+    let stockPct: number;
+    let bondPct: number;
+    let cashPct: number;
+
+    if (state.isWorking) {
+      // Working years allocation: (100 - age)% stocks
+      stockPct = Math.max(0.0, Math.min(1.0, (100 - age) / 100.0));
+      const fixedIncomePct = 1.0 - stockPct;
+      bondPct = fixedIncomePct * bondWeightInFI;
+      cashPct = fixedIncomePct * (1.0 - bondWeightInFI);
+    } else {
+      // Retirement: freeze allocation at retirement age
+      if (retirementStockWeight === null) {
+        const retirementAge = state.params.retirementAge;
+        retirementStockWeight = Math.max(0.0, Math.min(1.0, (100 - retirementAge) / 100.0));
+        const retirementFI = 1.0 - retirementStockWeight;
+        retirementBondWeight = retirementFI * bondWeightInFI;
+        retirementCashWeight = retirementFI * (1.0 - bondWeightInFI);
+      }
+
+      stockPct = retirementStockWeight;
+      bondPct = retirementBondWeight!;
+      cashPct = retirementCashWeight!;
+    }
+
+    // Compute consumption
+    let subsistence = state.expenses;
+    let totalCons: number;
+    let variable: number;
+
+    if (state.isWorking) {
+      // Working years: save savingsRate of earnings, consume the rest
+      const baselineConsumption = state.earnings * (1.0 - savingsRate);
+
+      if (baselineConsumption >= subsistence) {
+        totalCons = baselineConsumption;
+        variable = baselineConsumption - subsistence;
+      } else {
+        // Can't meet baseline, try to cover subsistence
+        const available = state.earnings + fw;
+        if (available >= subsistence) {
+          totalCons = subsistence;
+          variable = 0.0;
+        } else {
+          totalCons = Math.max(0, available);
+          subsistence = totalCons;
+          variable = 0.0;
+        }
+      }
+    } else {
+      // Retirement: 4% of initial retirement wealth (fixed dollar amount)
+      if (retirementConsumption === null) {
+        retirementConsumption = withdrawalRate * fw;
+      }
+
+      if (fw <= 0) {
+        return {
+          consumption: 0.0,
+          stockWeight: stockPct,
+          bondWeight: bondPct,
+          cashWeight: cashPct,
+        };
+      }
+
+      const targetConsumption = Math.max(retirementConsumption, subsistence);
+      if (fw < targetConsumption) {
+        totalCons = fw;
+        subsistence = Math.min(fw, state.expenses);
+        variable = Math.max(0, fw - state.expenses);
+      } else {
+        totalCons = targetConsumption;
+        variable = targetConsumption - subsistence;
+      }
+    }
+
+    return {
+      consumption: totalCons,
+      stockWeight: stockPct,
+      bondWeight: bondPct,
+      cashWeight: cashPct,
+    };
+  } as Strategy;
+
+  strategy.name = 'RuleOfThumb';
+
+  // Reset method to clear state between simulations
+  strategy.reset = function(): void {
+    retirementConsumption = null;
+    retirementStockWeight = null;
+    retirementBondWeight = null;
+    retirementCashWeight = null;
+  };
+
+  return strategy;
+}
+
 function computeEarningsProfile(params: Params): number[] {
   const workingYears = params.retirementAge - params.startAge;
   const earnings: number[] = [];
