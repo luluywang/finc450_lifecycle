@@ -446,12 +446,51 @@ function generateCorrelatedShocks(
 // Core Calculation Functions
 // =============================================================================
 
+/**
+ * Effective duration of a zero-coupon bond under mean-reverting rates.
+ *
+ * For the AR(1) process r_{t+1} = r_bar + phi(r_t - r_bar) + eps, the sensitivity
+ * of a tau-year zero-coupon bond price to the current short rate is:
+ *
+ *     B(tau) = (1 - phi^tau) / (1 - phi)
+ *
+ * This is LESS than tau because mean reversion anchors long-term rates.
+ *
+ * As tau -> infinity, B(tau) -> 1/(1-phi). With phi=0.85, max duration ~= 6.67 years.
+ *
+ * @param tau - Time to maturity in years
+ * @param phi - Mean reversion parameter (persistence)
+ * @returns Effective duration (sensitivity to short rate changes)
+ */
 function effectiveDuration(tau: number, phi: number): number {
+  // Edge case: zero or negative maturity
+  if (tau <= 0) return 0.0;
+  // No mean reversion case (random walk): duration equals maturity
   if (Math.abs(phi - 1.0) < 1e-10) return tau;
+  // Mean reversion case: VCV model formula
   return (1 - Math.pow(phi, tau)) / (1 - phi);
 }
 
+/**
+ * Price of a zero-coupon bond under the discrete-time Vasicek model.
+ *
+ * Under the expectations hypothesis, the tau-period spot rate is the average
+ * of expected future short rates. Given:
+ *     E_t[r_{t+k}] = r_bar + phi^k(r_t - r_bar)
+ *
+ * The price is:
+ *     P(tau) = exp(-tau*r_bar - B(tau)*(r - r_bar))
+ *
+ * where B(tau) = (1 - phi^tau)/(1 - phi) is the effective duration.
+ *
+ * @param r - Current short rate
+ * @param tau - Time to maturity
+ * @param rBar - Long-run mean rate
+ * @param phi - Mean reversion parameter
+ * @returns Bond price (between 0 and 1)
+ */
 function zeroCouponPrice(r: number, tau: number, rBar: number, phi: number): number {
+  // Edge case: zero or negative maturity returns par value
   if (tau <= 0) return 1.0;
   const B = effectiveDuration(tau, phi);
   return Math.exp(-tau * rBar - B * (r - rBar));
