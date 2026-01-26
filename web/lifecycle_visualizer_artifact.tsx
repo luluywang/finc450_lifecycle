@@ -496,24 +496,62 @@ function zeroCouponPrice(r: number, tau: number, rBar: number, phi: number): num
   return Math.exp(-tau * rBar - B * (r - rBar));
 }
 
+/**
+ * Compute present value of cashflow stream.
+ *
+ * If rBar and phi provided (not null), uses mean-reverting term structure.
+ * Otherwise uses flat discount rate.
+ *
+ * @param cashflows - Array of cashflow values over time
+ * @param rate - Discount rate (current short rate for VCV, constant rate for flat)
+ * @param phi - Mean reversion parameter (null for flat discounting)
+ * @param rBar - Long-run mean rate (null for flat discounting)
+ * @returns Present value of cashflow stream at time 0
+ */
 function computePresentValue(
   cashflows: number[],
   rate: number,
-  phi: number,
-  rBar: number
+  phi: number | null = null,
+  rBar: number | null = null
 ): number {
+  if (cashflows.length === 0) return 0;
+
   let pv = 0;
-  for (let t = 0; t < cashflows.length; t++) {
-    pv += cashflows[t] * zeroCouponPrice(rate, t + 1, rBar, phi);
+  if (rBar !== null && phi !== null) {
+    // Mean-reverting term structure
+    for (let t = 0; t < cashflows.length; t++) {
+      pv += cashflows[t] * zeroCouponPrice(rate, t + 1, rBar, phi);
+    }
+  } else {
+    // Flat discount rate
+    for (let t = 0; t < cashflows.length; t++) {
+      pv += cashflows[t] / Math.pow(1 + rate, t + 1);
+    }
   }
   return pv;
 }
 
+/**
+ * Compute effective duration of cashflow stream.
+ *
+ * Under mean reversion (rBar and phi provided), duration is the PV-weighted
+ * average of effective durations:
+ *   D_eff = sum(cf[t] * P(t+1) * B(t+1)) / PV
+ *
+ * Under flat rate (rBar/phi null), returns traditional Macaulay duration:
+ *   D = sum(t * cf[t] / (1+r)^t) / PV
+ *
+ * @param cashflows - Array of cashflow values over time
+ * @param rate - Discount rate
+ * @param phi - Mean reversion parameter (null for traditional duration)
+ * @param rBar - Long-run mean rate (null for traditional duration)
+ * @returns Duration of cashflow stream (sensitivity to rate changes)
+ */
 function computeDuration(
   cashflows: number[],
   rate: number,
-  phi: number,
-  rBar: number
+  phi: number | null = null,
+  rBar: number | null = null
 ): number {
   if (cashflows.length === 0) return 0;
 
@@ -521,10 +559,132 @@ function computeDuration(
   if (pv < 1e-10) return 0;
 
   let weightedSum = 0;
-  for (let t = 0; t < cashflows.length; t++) {
-    const P_t = zeroCouponPrice(rate, t + 1, rBar, phi);
-    const B_t = effectiveDuration(t + 1, phi);
-    weightedSum += cashflows[t] * P_t * B_t;
+  if (rBar !== null && phi !== null) {
+    // Effective duration under mean reversion
+    for (let t = 0; t < cashflows.length; t++) {
+      const P_t = zeroCouponPrice(rate, t + 1, rBar, phi);
+      const B_t = effectiveDuration(t + 1, phi);
+      weightedSum += cashflows[t] * P_t * B_t;
+    }
+  } else {
+    // Traditional Macaulay duration
+    for (let t = 0; t < cashflows.length; t++) {
+      weightedSum += (t + 1) * cashflows[t] / Math.pow(1 + rate, t + 1);
+    }
+  }
+  return weightedSum / pv;
+}
+
+/**
+ * Compute Present Value of consumption at time 0.
+ *
+ * This discounts all future consumption back to the starting age,
+ * providing a single metric for lifetime consumption in present value terms.
+ * Uses flat discount rate (no term structure).
+ *
+ * @param consumption - Array of consumption values over time
+ * @param rate - Discount rate (typically the risk-free rate)
+ * @returns Present value of total lifetime consumption at time 0
+ */
+function computePvConsumption(consumption: number[], rate: number): number {
+  if (consumption.length === 0) return 0;
+
+  let pv = 0;
+  for (let t = 0; t < consumption.length; t++) {
+    pv += consumption[t] / Math.pow(1 + rate, t);
+  }
+  return pv;
+}
+
+/**
+ * Calculate present value of liability stream (constant consumption annuity).
+ *
+ * If rBar and phi are provided, uses the mean-reverting term structure:
+ *   PV = sum C * P(t) where P(t) = exp(-t*r_bar - B(t)*(r - r_bar))
+ *
+ * Otherwise falls back to flat discount rate:
+ *   PV = C * [1 - (1+r)^(-T)] / r
+ *
+ * @param consumption - Annual consumption amount (constant)
+ * @param rate - Current short rate (for VCV) or discount rate (for flat)
+ * @param yearsRemaining - Number of years of consumption remaining
+ * @param rBar - Long-run mean rate (null for flat discounting)
+ * @param phi - Mean reversion parameter (null for flat discounting)
+ * @returns Present value of liability stream
+ */
+function liabilityPv(
+  consumption: number,
+  rate: number,
+  yearsRemaining: number,
+  rBar: number | null = null,
+  phi: number | null = null
+): number {
+  if (yearsRemaining <= 0) return 0;
+
+  // Use mean-reverting term structure if parameters provided
+  if (rBar !== null && phi !== null) {
+    let pv = 0;
+    for (let t = 1; t <= yearsRemaining; t++) {
+      pv += consumption * zeroCouponPrice(rate, t, rBar, phi);
+    }
+    return pv;
+  }
+
+  // Fallback to flat rate discounting
+  if (rate < 1e-10) {
+    return consumption * yearsRemaining;
+  }
+  return consumption * (1 - Math.pow(1 + rate, -yearsRemaining)) / rate;
+}
+
+/**
+ * Calculate effective duration of liability stream (constant consumption annuity).
+ *
+ * If rBar and phi provided, returns EFFECTIVE duration (sensitivity to
+ * short rate) under mean reversion:
+ *   D_eff = (1/PV) * sum C * P(t) * B(t)
+ *
+ * where B(t) = (1 - phi^t)/(1 - phi) is the effective duration of a t-year zero.
+ *
+ * Otherwise returns traditional modified duration.
+ *
+ * @param consumption - Annual consumption amount (constant)
+ * @param rate - Current short rate (for VCV) or discount rate (for flat)
+ * @param yearsRemaining - Number of years of consumption remaining
+ * @param rBar - Long-run mean rate (null for traditional duration)
+ * @param phi - Mean reversion parameter (null for traditional duration)
+ * @returns Duration of liability stream
+ */
+function liabilityDuration(
+  consumption: number,
+  rate: number,
+  yearsRemaining: number,
+  rBar: number | null = null,
+  phi: number | null = null
+): number {
+  if (yearsRemaining <= 0) return 0;
+
+  // Use effective duration under mean reversion
+  if (rBar !== null && phi !== null) {
+    const pv = liabilityPv(consumption, rate, yearsRemaining, rBar, phi);
+    if (pv < 1e-10) return 0;
+
+    let weightedSum = 0;
+    for (let t = 1; t <= yearsRemaining; t++) {
+      const P_t = zeroCouponPrice(rate, t, rBar, phi);
+      const B_t = effectiveDuration(t, phi);
+      weightedSum += consumption * P_t * B_t;
+    }
+    return weightedSum / pv;
+  }
+
+  // Fallback to traditional modified duration
+  const pv = liabilityPv(consumption, rate, yearsRemaining);
+  if (pv < 1e-10) return 0;
+
+  let weightedSum = 0;
+  for (let t = 1; t <= yearsRemaining; t++) {
+    weightedSum += t * consumption / Math.pow(1 + rate, t + 1);
   }
   return weightedSum / pv;
 }
