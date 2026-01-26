@@ -16,7 +16,8 @@
       "description": "Save 40 panels from lifecycle_report.pdf",
       "type": "code",
       "depends_on": [1],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Added _save_base_case_panels, _save_beta_comparison_panels, _save_allocation_comparison_panels helpers; modified generate_lifecycle_pdf to export PNG panels with export_png=True parameter"
     },
     {
       "id": 3,
@@ -25,7 +26,8 @@
       "description": "Save 54 panels from teaching_scenarios.pdf",
       "type": "code",
       "depends_on": [1],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Added save_axes_as_png, save_scenario_panels, save_summary_panels helpers; modified create_scenario_figure and create_summary_figure to return axes; integrated PNG export into generate_teaching_scenarios_pdf"
     },
     {
       "id": 4,

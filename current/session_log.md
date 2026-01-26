@@ -108,3 +108,83 @@ Changed from useMemo to useEffect+useState pattern because useMemo would recompu
 - [x] Changing HC Beta parameter does NOT auto-clear results (keep old outputs, feel fast)
 
 ---
+
+## Task 3 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 3 requires modifying compare_teaching_scenarios.py to export 54 individual PNG panels from the teaching_scenarios.pdf. The PDF has:
+- Page 1: Summary figure (3x2 grid = 6 bar charts for 2-beta case)
+- Pages 2-7: 3 scenarios x 2 beta values = 6 pages, each with 4x2 grid = 8 panels
+
+Total: 6 + 48 = 54 panels
+
+The key challenge is extracting individual axes from multi-panel figures and saving them as standalone PNGs at 300 DPI.
+
+**Action:**
+1. Added `save_panel_as_png` import from visualization module
+2. Created helper functions:
+   - `save_axes_as_png(fig, ax, panel_name, output_dir)` - extracts single axes and saves as PNG
+   - `save_scenario_panels(fig, axes, scenario_name, beta, output_dir)` - saves all 8 panels from scenario figure
+   - `save_summary_panels(fig, axes, beta_values, output_dir)` - saves summary bar chart panels
+3. Modified `create_scenario_figure` to return `Tuple[plt.Figure, np.ndarray]` (fig + axes)
+4. Modified `create_summary_figure` and `_create_single_beta_summary` to return `Tuple[plt.Figure, np.ndarray]`
+5. Updated `generate_teaching_scenarios_pdf` to call PNG export functions after each figure is created
+
+**Results:**
+- 54 PNG files created in `output/teaching_panels/`
+- File naming convention: `scenario_{scenario}_{beta_label}_{panel_desc}.png`
+  - Summary panels: `scenario_summary_beta00_default_rates.png`, etc.
+  - Scenario panels: `scenario_baseline_beta00_stock_returns.png`, etc.
+- All PNG files are 300 DPI with tight bounding boxes
+- PDF generation continues to work correctly
+
+**Checks:**
+- [x] After running `python compare_teaching_scenarios.py`, count PNG files in `output/teaching_panels/scenario_*`: Expected 54 PNG files
+- [x] File naming includes scenario and beta info: e.g., `scenario_baseline_beta0_stock_returns.png`
+- [x] All PNG files are non-empty (file size > 10KB)
+- [x] PDF still generates correctly
+
+---
+
+## Task 2 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 2 requires modifying generate_report.py to export 40 individual PNG panels from lifecycle_strategy.pdf. The PDF has:
+- Pages 1-3: Deterministic median path for Beta = 0.0, 0.4, 1.0 (10 panels each = 30 panels)
+- Page 4: Beta comparison (2x3 grid = 6 panels)
+- Page 5: Portfolio Allocation Comparison (2x2 grid = 4 panels)
+- Page 6: Summary text (no panels to export)
+
+Total: 30 + 6 + 4 = 40 panels
+
+The key challenge is that the existing code creates multi-panel figures using subplot grids. Rather than modifying the existing page creation functions (which would be invasive), I added separate helper functions that create individual panel figures and save them as PNG.
+
+**Action:**
+1. Added imports for `save_panel_as_png` and `REPORT_COLORS` from visualization module
+2. Created helper functions for individual panel plotting:
+   - `_plot_income_expenses`, `_plot_cash_flow`, `_plot_present_values`, etc. (10 plot functions)
+   - `_save_base_case_panels(result, params, beta, use_years, output_dir)` - saves 10 panels per beta
+   - `_save_beta_comparison_panels(beta_values, base_params, econ_params, use_years, output_dir)` - saves 6 panels
+   - `_save_allocation_comparison_panels(comparison_beta0, comparison_beta_risky, ...)` - saves 4 panels
+3. Added `export_png=True` and `png_output_dir` parameters to `generate_lifecycle_pdf()`
+4. Added PNG export calls after each page is created in the PDF generation loop
+5. Added summary print statement showing PNG count
+
+**Results:**
+- 40 PNG files created in `output/teaching_panels/`
+- File naming convention: `lifecycle_{beta_str}_{panel_desc}.png`
+  - Base case panels: `lifecycle_beta0p0_income_expenses.png`, `lifecycle_beta0p4_consumption_path.png`, etc.
+  - Beta comparison panels: `lifecycle_beta_comparison_stock_weight_by_beta.png`, etc.
+  - Allocation comparison panels: `lifecycle_allocation_ldi_beta0.png`, `lifecycle_allocation_rot.png`, etc.
+- All PNG files are 300 DPI with tight bounding boxes (file sizes 92KB to 214KB)
+- PDF generation continues to work correctly (143KB output)
+
+**Checks:**
+- [x] After running `python generate_report.py`, count PNG files in `output/teaching_panels/lifecycle_*`: 40 PNG files
+- [x] File naming is descriptive: e.g., `lifecycle_beta0p0_income_expenses.png`, `lifecycle_beta_comparison_stock_weight_by_beta.png`
+- [x] All PNG files are non-empty (file size > 10KB) - smallest is 92KB
+- [x] PDF still generates correctly alongside PNG files
+
+---

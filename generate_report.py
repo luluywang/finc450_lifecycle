@@ -44,7 +44,425 @@ from visualization import (
     create_initial_wealth_comparison_figure,
     create_equity_premium_comparison_figure,
     create_volatility_comparison_figure,
+    # PNG export utility
+    save_panel_as_png,
+    REPORT_COLORS,
 )
+
+
+def _save_base_case_panels(
+    result,
+    params: LifecycleParams,
+    beta: float,
+    use_years: bool = True,
+    output_dir: str = "output/teaching_panels",
+) -> list:
+    """
+    Create and save individual PNG panels for a base case page.
+
+    This extracts each of the 10 panels from the base case layout and saves them
+    individually at 300 DPI for PowerPoint integration.
+
+    Args:
+        result: LifecycleResult from compute_lifecycle_median_path
+        params: LifecycleParams
+        beta: Stock beta value for naming
+        use_years: If True, x-axis shows years from career start
+        output_dir: Directory to save PNG files
+
+    Returns:
+        List of saved file paths
+    """
+    saved_paths = []
+    COLORS = REPORT_COLORS
+
+    # Compute x-axis values
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    beta_str = f"beta{beta}".replace(".", "p")
+
+    # Panel definitions: (name_suffix, plot_function)
+    panels = [
+        # Section 1: Assumptions
+        ("income_expenses", lambda ax: _plot_income_expenses(ax, x, result, COLORS, xlabel, retirement_x)),
+        ("cash_flow", lambda ax: _plot_cash_flow(ax, x, result, COLORS, xlabel, retirement_x)),
+        # Section 2: Forward-Looking Values
+        ("present_values", lambda ax: _plot_present_values(ax, x, result, COLORS, xlabel, retirement_x)),
+        ("durations", lambda ax: _plot_durations(ax, x, result, COLORS, xlabel, retirement_x)),
+        # Section 3: Wealth
+        ("hc_vs_fw", lambda ax: _plot_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x)),
+        ("hc_decomposition", lambda ax: _plot_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x)),
+        ("expense_decomposition", lambda ax: _plot_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x)),
+        ("net_hc_minus_expenses", lambda ax: _plot_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x)),
+        # Section 4: Choices
+        ("consumption_path", lambda ax: _plot_consumption_path(ax, x, result, COLORS, xlabel, retirement_x)),
+        ("portfolio_allocation", lambda ax: _plot_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x)),
+    ]
+
+    for name_suffix, plot_fn in panels:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        plot_fn(ax)
+        panel_name = f"lifecycle_{beta_str}_{name_suffix}"
+        path = save_panel_as_png(fig, panel_name, output_dir)
+        saved_paths.append(path)
+        plt.close(fig)
+
+    return saved_paths
+
+
+def _plot_income_expenses(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot income and expenses panel."""
+    ax.plot(x, result.earnings, color=COLORS['earnings'], linewidth=2, label='Earnings')
+    ax.plot(x, result.expenses, color=COLORS['expenses'], linewidth=2, label='Expenses')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5, label='Retirement')
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Income & Expenses ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_cash_flow(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot cash flow panel."""
+    savings = result.earnings - result.expenses
+    ax.fill_between(x, 0, savings, where=savings >= 0, alpha=0.7, color=COLORS['earnings'], label='Savings')
+    ax.fill_between(x, 0, savings, where=savings < 0, alpha=0.7, color=COLORS['expenses'], label='Drawdown')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Cash Flow: Earnings - Expenses ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_present_values(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot present values panel."""
+    ax.plot(x, result.pv_earnings, color=COLORS['earnings'], linewidth=2, label='PV Earnings')
+    ax.plot(x, result.pv_expenses, color=COLORS['expenses'], linewidth=2, label='PV Expenses')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Present Values ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_durations(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot durations panel."""
+    ax.plot(x, result.duration_earnings, color=COLORS['earnings'], linewidth=2, label='Duration (Earnings)')
+    ax.plot(x, result.duration_expenses, color=COLORS['expenses'], linewidth=2, label='Duration (Expenses)')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Years')
+    ax.set_title('Durations (years)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot human capital vs financial wealth panel."""
+    ax.fill_between(x, 0, result.financial_wealth, alpha=0.7, color=COLORS['fw'], label='Financial Wealth')
+    ax.fill_between(x, result.financial_wealth, result.financial_wealth + result.human_capital,
+                   alpha=0.7, color=COLORS['hc'], label='Human Capital')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Human Capital vs Financial Wealth ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot human capital decomposition panel."""
+    ax.plot(x, result.hc_cash_component, color=COLORS['cash'], linewidth=2, label='HC Cash')
+    ax.plot(x, result.hc_bond_component, color=COLORS['bond'], linewidth=2, label='HC Bond')
+    ax.plot(x, result.hc_stock_component, color=COLORS['stock'], linewidth=2, label='HC Stock')
+    ax.plot(x, result.human_capital, color='black', linewidth=1.5, linestyle='--', label='Total HC')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Human Capital Decomposition ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot expense liability decomposition panel."""
+    ax.plot(x, result.exp_cash_component, color=COLORS['cash'], linewidth=2, label='Expense Cash')
+    ax.plot(x, result.exp_bond_component, color=COLORS['bond'], linewidth=2, label='Expense Bond')
+    ax.plot(x, result.pv_expenses, color='black', linewidth=1.5, linestyle='--', label='Total Expenses')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Expense Liability Decomposition ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot net HC minus expenses panel."""
+    net_stock = result.hc_stock_component
+    net_bond = result.hc_bond_component - result.exp_bond_component
+    net_cash = result.hc_cash_component - result.exp_cash_component
+    net_total = net_stock + net_bond + net_cash
+
+    ax.plot(x, net_cash, color=COLORS['cash'], linewidth=2, label='Net Cash')
+    ax.plot(x, net_bond, color=COLORS['bond'], linewidth=2, label='Net Bond')
+    ax.plot(x, net_stock, color=COLORS['stock'], linewidth=2, label='Net Stock')
+    ax.plot(x, net_total, color='black', linewidth=1.5, linestyle='--', label='Net Total')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Net HC minus Expenses ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_consumption_path(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot consumption path panel."""
+    ax.fill_between(x, 0, result.subsistence_consumption, alpha=0.7, color=COLORS['subsistence'], label='Subsistence')
+    ax.fill_between(x, result.subsistence_consumption, result.total_consumption,
+                   alpha=0.7, color=COLORS['variable'], label='Variable')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Consumption Path ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot portfolio allocation panel."""
+    stock_pct = result.stock_weight_no_short * 100
+    bond_pct = result.bond_weight_no_short * 100
+    cash_pct = result.cash_weight_no_short * 100
+
+    ax.fill_between(x, 0, cash_pct, alpha=0.7, color=COLORS['cash'], label='Cash')
+    ax.fill_between(x, cash_pct, cash_pct + bond_pct, alpha=0.7, color=COLORS['bond'], label='Bonds')
+    ax.fill_between(x, cash_pct + bond_pct, cash_pct + bond_pct + stock_pct,
+                   alpha=0.7, color=COLORS['stock'], label='Stocks')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_ylim(0, 100)
+    ax.set_title('Portfolio Allocation (%)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def _save_beta_comparison_panels(
+    beta_values: list,
+    base_params: LifecycleParams,
+    econ_params: EconomicParams,
+    use_years: bool = True,
+    output_dir: str = "output/teaching_panels",
+) -> list:
+    """
+    Create and save individual PNG panels for the beta comparison page.
+
+    This extracts each of the 6 panels from the beta comparison layout.
+
+    Returns:
+        List of saved file paths
+    """
+    from core import compute_lifecycle_median_path
+
+    saved_paths = []
+
+    # Compute results for each beta value
+    results = {}
+    for beta in beta_values:
+        params = LifecycleParams(
+            start_age=base_params.start_age,
+            retirement_age=base_params.retirement_age,
+            end_age=base_params.end_age,
+            initial_earnings=base_params.initial_earnings,
+            earnings_growth=base_params.earnings_growth,
+            earnings_hump_age=base_params.earnings_hump_age,
+            earnings_decline=base_params.earnings_decline,
+            base_expenses=base_params.base_expenses,
+            expense_growth=base_params.expense_growth,
+            retirement_expenses=base_params.retirement_expenses,
+            stock_beta_human_capital=beta,
+            gamma=base_params.gamma,
+            target_stock_allocation=base_params.target_stock_allocation,
+            target_bond_allocation=base_params.target_bond_allocation,
+            risk_free_rate=base_params.risk_free_rate,
+            equity_premium=base_params.equity_premium,
+            initial_wealth=base_params.initial_wealth,
+        )
+        results[beta] = compute_lifecycle_median_path(params, econ_params)
+
+    # Colors for different beta values
+    beta_colors = ['#1A759F', '#E9C46A', '#2A9D8F']  # blue, amber, teal
+
+    # Get x-axis values
+    result_0 = results[beta_values[0]]
+    if use_years:
+        x = np.arange(len(result_0.ages))
+        xlabel = 'Years from Career Start'
+    else:
+        x = result_0.ages
+        xlabel = 'Age'
+
+    retirement_x = base_params.retirement_age - base_params.start_age if use_years else base_params.retirement_age
+
+    # Compute shared y-axis range for HC decomposition charts
+    hc_min = float('inf')
+    hc_max = float('-inf')
+    for beta in beta_values:
+        for component in [results[beta].hc_stock_component,
+                          results[beta].hc_bond_component,
+                          results[beta].hc_cash_component]:
+            hc_min = min(hc_min, np.min(component))
+            hc_max = max(hc_max, np.max(component))
+    hc_range = hc_max - hc_min
+    hc_ylim = (hc_min - 0.05 * hc_range, hc_max + 0.05 * hc_range)
+
+    panel_configs = [
+        ("stock_weight_by_beta", "stock_weight_no_short", "Stock Weight by Beta", "Weight", (-0.05, 1.15)),
+        ("bond_weight_by_beta", "bond_weight_no_short", "Bond Weight by Beta", "Weight", (-0.05, 1.15)),
+        ("cash_weight_by_beta", "cash_weight_no_short", "Cash Weight by Beta", "Weight", (-0.05, 1.15)),
+        ("hc_stock_by_beta", "hc_stock_component", "Stock Component of Human Capital", "$ (000s)", hc_ylim),
+        ("hc_bond_by_beta", "hc_bond_component", "Bond Component of Human Capital", "$ (000s)", hc_ylim),
+        ("hc_cash_by_beta", "hc_cash_component", "Cash Component of Human Capital", "$ (000s)", hc_ylim),
+    ]
+
+    for name_suffix, attr_name, title, ylabel, ylim in panel_configs:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for i, beta in enumerate(beta_values):
+            ax.plot(x, getattr(results[beta], attr_name), color=beta_colors[i],
+                    linewidth=2, label=f'Beta = {beta}')
+        ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+        ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+        if ylim[1] <= 1.5:  # For weight charts
+            ax.axhline(y=1, color='gray', linestyle='-', alpha=0.3)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.set_ylim(ylim)
+
+        panel_name = f"lifecycle_beta_comparison_{name_suffix}"
+        path = save_panel_as_png(fig, panel_name, output_dir)
+        saved_paths.append(path)
+        plt.close(fig)
+
+    return saved_paths
+
+
+def _save_allocation_comparison_panels(
+    comparison_beta0,
+    comparison_beta_risky,
+    params_beta0: LifecycleParams,
+    params_beta_risky: LifecycleParams,
+    use_years: bool = True,
+    output_dir: str = "output/teaching_panels",
+) -> list:
+    """
+    Create and save individual PNG panels for the allocation comparison page.
+
+    This extracts each of the 4 panels from the allocation comparison layout.
+
+    Returns:
+        List of saved file paths
+    """
+    saved_paths = []
+
+    risky_beta = params_beta_risky.stock_beta_human_capital
+
+    if use_years:
+        x = np.arange(len(comparison_beta0.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params_beta0.retirement_age - params_beta0.start_age
+    else:
+        x = comparison_beta0.ages
+        xlabel = 'Age'
+        retirement_x = params_beta0.retirement_age
+
+    stock_color = '#F4A261'
+    bond_color = '#9b59b6'
+    cash_color = '#95a5a6'
+
+    # Panel 1: LDI Allocation (Beta=0)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ldi_b0 = comparison_beta0.result_a
+    ax.stackplot(x,
+                 ldi_b0.stock_weight * 100,
+                 ldi_b0.bond_weight * 100,
+                 ldi_b0.cash_weight * 100,
+                 labels=['Stocks', 'Bonds', 'Cash'],
+                 colors=[stock_color, bond_color, cash_color],
+                 alpha=0.8)
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title('LDI Strategy (Beta = 0, Bond-like HC)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_ylim(0, 100)
+    path = save_panel_as_png(fig, "lifecycle_allocation_ldi_beta0", output_dir)
+    saved_paths.append(path)
+    plt.close(fig)
+
+    # Panel 2: LDI Allocation (Beta=risky)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ldi_risky = comparison_beta_risky.result_a
+    ax.stackplot(x,
+                 ldi_risky.stock_weight * 100,
+                 ldi_risky.bond_weight * 100,
+                 ldi_risky.cash_weight * 100,
+                 labels=['Stocks', 'Bonds', 'Cash'],
+                 colors=[stock_color, bond_color, cash_color],
+                 alpha=0.8)
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title(f'LDI Strategy (Beta = {risky_beta}, Risky HC)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_ylim(0, 100)
+    path = save_panel_as_png(fig, f"lifecycle_allocation_ldi_beta{risky_beta}".replace(".", "p"), output_dir)
+    saved_paths.append(path)
+    plt.close(fig)
+
+    # Panel 3: RoT Allocation (Beta=0)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    rot_b0 = comparison_beta0.result_b
+    ax.stackplot(x,
+                 rot_b0.stock_weight * 100,
+                 rot_b0.bond_weight * 100,
+                 rot_b0.cash_weight * 100,
+                 labels=['Stocks', 'Bonds', 'Cash'],
+                 colors=[stock_color, bond_color, cash_color],
+                 alpha=0.8)
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title('Rule-of-Thumb: (100-Age)% Stock', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_ylim(0, 100)
+    path = save_panel_as_png(fig, "lifecycle_allocation_rot", output_dir)
+    saved_paths.append(path)
+    plt.close(fig)
+
+    # Panel 4: Summary text (skip - no meaningful visual for teaching)
+    # Instead, create a comparison chart showing both strategies side by side
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(x, ldi_b0.stock_weight * 100, color='#1A759F', linewidth=2.5, label='LDI (Beta=0)')
+    ax.plot(x, ldi_risky.stock_weight * 100, color='#2A9D8F', linewidth=2.5, linestyle='--', label=f'LDI (Beta={risky_beta})')
+    ax.plot(x, rot_b0.stock_weight * 100, color='#E9C46A', linewidth=2.5, linestyle=':', label='Rule-of-Thumb')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5, label='Retirement')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Stock Allocation (%)')
+    ax.set_title('Stock Allocation Comparison: LDI vs Rule-of-Thumb', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_ylim(0, 100)
+    path = save_panel_as_png(fig, "lifecycle_allocation_stock_comparison", output_dir)
+    saved_paths.append(path)
+    plt.close(fig)
+
+    return saved_paths
 
 
 def generate_lifecycle_pdf(
@@ -56,6 +474,8 @@ def generate_lifecycle_pdf(
     rot_savings_rate: float = 0.15,
     rot_target_duration: float = 6.0,
     rot_withdrawal_rate: float = 0.04,
+    export_png: bool = True,
+    png_output_dir: str = "output/teaching_panels",
 ) -> str:
     """
     Generate a PDF report showing lifecycle investment strategy.
@@ -74,6 +494,8 @@ def generate_lifecycle_pdf(
         rot_savings_rate: Rule-of-Thumb savings rate (default 15%)
         rot_target_duration: Rule-of-Thumb FI target duration (default 6)
         rot_withdrawal_rate: Rule-of-Thumb withdrawal rate (default 4%)
+        export_png: If True, export individual panels as PNG files (default True)
+        png_output_dir: Directory for PNG files (default 'output/teaching_panels')
 
     Returns:
         Path to generated PDF file
@@ -131,6 +553,16 @@ def generate_lifecycle_pdf(
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
+            # Export individual panels as PNG
+            if export_png:
+                _save_base_case_panels(
+                    result=result,
+                    params=beta_params,
+                    beta=beta,
+                    use_years=use_years,
+                    output_dir=png_output_dir,
+                )
+
         # ====================================================================
         # PAGE 4: BETA COMPARISON
         # ====================================================================
@@ -146,6 +578,16 @@ def generate_lifecycle_pdf(
                     fontsize=14, fontweight='bold', y=1.02)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
+
+        # Export individual beta comparison panels as PNG
+        if export_png:
+            _save_beta_comparison_panels(
+                beta_values=beta_values,
+                base_params=params,
+                econ_params=econ_params,
+                use_years=use_years,
+                output_dir=png_output_dir,
+            )
 
         # ====================================================================
         # PAGE 5: PORTFOLIO ALLOCATION COMPARISON (Beta = 0 vs Beta = DEFAULT_RISKY_BETA)
@@ -200,6 +642,17 @@ def generate_lifecycle_pdf(
         )
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
+
+        # Export individual allocation comparison panels as PNG
+        if export_png:
+            _save_allocation_comparison_panels(
+                comparison_beta0=median_comparison_beta0,
+                comparison_beta_risky=median_comparison_beta03,
+                params_beta0=params,
+                params_beta_risky=params_beta03,
+                use_years=use_years,
+                output_dir=png_output_dir,
+            )
 
         # ====================================================================
         # LEGACY PAGES (optional)
@@ -290,6 +743,12 @@ def generate_lifecycle_pdf(
 
         # Summary page with parameters
         _add_summary_page(pdf, params, econ_params)
+
+    # Print PNG export summary
+    if export_png:
+        import glob
+        png_files = glob.glob(os.path.join(png_output_dir, "lifecycle_*.png"))
+        print(f"Exported {len(png_files)} PNG panels to {png_output_dir}/")
 
     return output_path
 
