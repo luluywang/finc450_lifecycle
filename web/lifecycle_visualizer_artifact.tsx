@@ -3961,8 +3961,6 @@ export default function LifecycleVisualizer() {
   const [rateShockMagnitude, setRateShockMagnitude] = useState(-0.02);
   const [scenarioRetirementAge, setScenarioRetirementAge] = useState(params.retirementAge);
   const [scenarioEndAge, setScenarioEndAge] = useState(params.endAge);
-  // Beta toggle for teaching scenarios: 0 = Bond-like HC, 0.4 = Risky HC
-  const [scenarioBeta, setScenarioBeta] = useState<0 | 0.4>(0);
   // scenarioBadReturns is handled by the scenarioType - sequenceRisk forces bad returns
   // Simulation control state for deferred computation
   // simulationVersion increments each time "Run Simulation" is clicked
@@ -3986,14 +3984,14 @@ export default function LifecycleVisualizer() {
     consumptionShare: 0.05,
     consumptionBoost: 0.0,
     gamma: params.gamma,
-    stockBetaHumanCapital: scenarioBeta,  // Use beta toggle instead of params
+    stockBetaHumanCapital: params.stockBetaHC,  // Use selected beta from params
     targetStockAllocation: 0.6,
     targetBondAllocation: 0.3,
     allowLeverage: false,
     riskFreeRate: params.rBar,
     equityPremium: params.muStock,
     initialWealth: params.initialWealth,
-  }), [params, scenarioRetirementAge, scenarioEndAge, scenarioBeta]);
+  }), [params, scenarioRetirementAge, scenarioEndAge]);
 
   // Create EconomicParams for runTeachingScenarios
   const econParams = useMemo((): EconomicParams => ({
@@ -4694,39 +4692,6 @@ export default function LifecycleVisualizer() {
                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
                   />
                 </div>
-                <div>
-                  <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Human Capital Beta (beta):</div>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button
-                      onClick={() => setScenarioBeta(0)}
-                      style={{
-                        padding: '4px 12px',
-                        border: scenarioBeta === 0 ? '2px solid #2980b9' : '1px solid #ccc',
-                        borderRadius: '4px',
-                        background: scenarioBeta === 0 ? '#e8f4f8' : '#fff',
-                        fontWeight: scenarioBeta === 0 ? 'bold' : 'normal',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                      }}
-                    >
-                      beta=0 (Bond-like)
-                    </button>
-                    <button
-                      onClick={() => setScenarioBeta(0.4)}
-                      style={{
-                        padding: '4px 12px',
-                        border: scenarioBeta === 0.4 ? '2px solid #2980b9' : '1px solid #ccc',
-                        borderRadius: '4px',
-                        background: scenarioBeta === 0.4 ? '#e8f4f8' : '#fff',
-                        fontWeight: scenarioBeta === 0.4 ? 'bold' : 'normal',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                      }}
-                    >
-                      beta=0.4 (Risky)
-                    </button>
-                  </div>
-                </div>
                 {scenarioType === 'sequenceRisk' && (
                   <div style={{ fontSize: '12px', color: '#c0392b', fontStyle: 'italic' }}>
                     Stocks return ~-5% avg/year for first 10 years of retirement.
@@ -5238,7 +5203,7 @@ export default function LifecycleVisualizer() {
                         paddingBottom: '8px',
                         marginBottom: '16px'
                       }}>
-                        {scenarioName} Scenario (beta={scenarioBeta})
+                        {scenarioName} Scenario (beta={params.stockBetaHC})
                       </h3>
 
                       {/* Row 1: Market Conditions */}
@@ -5320,18 +5285,24 @@ export default function LifecycleVisualizer() {
 
                       {/* Row 2: Wealth Comparison */}
                       <ChartSection title={`${scenarioName}: Financial Wealth (Combined)`}>
-                        {/* Combined Wealth Fan Chart with both LDI and RoT medians */}
+                        {/* Overlaid Fan Chart: LDI vs RoT Financial Wealth */}
                         <ChartCard title="Financial Wealth - LDI vs RoT ($k)">
                           <ResponsiveContainer width="100%" height={280}>
-                            <LineChart
+                            <AreaChart
                               data={ages.map((age, i) => ({
                                 age,
-                                ldiP50: scenario.ldi.percentiles.financialWealth.p50[i],
-                                ldiP05: scenario.ldi.percentiles.financialWealth.p5[i],
-                                ldiP95: scenario.ldi.percentiles.financialWealth.p95[i],
-                                rotP50: scenario.rot.percentiles.financialWealth.p50[i],
-                                rotP05: scenario.rot.percentiles.financialWealth.p5[i],
-                                rotP95: scenario.rot.percentiles.financialWealth.p95[i],
+                                // LDI percentiles and bands
+                                ldi_p5: scenario.ldi.percentiles.financialWealth.p5[i],
+                                ldi_band_5_25: scenario.ldi.percentiles.financialWealth.p25[i] - scenario.ldi.percentiles.financialWealth.p5[i],
+                                ldi_band_25_75: scenario.ldi.percentiles.financialWealth.p75[i] - scenario.ldi.percentiles.financialWealth.p25[i],
+                                ldi_band_75_95: scenario.ldi.percentiles.financialWealth.p95[i] - scenario.ldi.percentiles.financialWealth.p75[i],
+                                ldi_p50: scenario.ldi.percentiles.financialWealth.p50[i],
+                                // RoT percentiles and bands
+                                rot_p5: scenario.rot.percentiles.financialWealth.p5[i],
+                                rot_band_5_25: scenario.rot.percentiles.financialWealth.p25[i] - scenario.rot.percentiles.financialWealth.p5[i],
+                                rot_band_25_75: scenario.rot.percentiles.financialWealth.p75[i] - scenario.rot.percentiles.financialWealth.p25[i],
+                                rot_band_75_95: scenario.rot.percentiles.financialWealth.p95[i] - scenario.rot.percentiles.financialWealth.p75[i],
+                                rot_p50: scenario.rot.percentiles.financialWealth.p50[i],
                               }))}
                               margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                             >
@@ -5342,16 +5313,23 @@ export default function LifecycleVisualizer() {
                               <Legend wrapperStyle={{ fontSize: '11px' }} />
                               <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                               <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
-                              <Line type="monotone" dataKey="ldiP05" stroke="#2980b9" strokeWidth={1} strokeDasharray="3 3" dot={false} name="LDI p5" />
-                              <Line type="monotone" dataKey="ldiP50" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Median" />
-                              <Line type="monotone" dataKey="ldiP95" stroke="#2980b9" strokeWidth={1} strokeDasharray="3 3" dot={false} name="LDI p95" />
-                              <Line type="monotone" dataKey="rotP05" stroke="#d4a84c" strokeWidth={1} strokeDasharray="3 3" dot={false} name="RoT p5" />
-                              <Line type="monotone" dataKey="rotP50" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Median" />
-                              <Line type="monotone" dataKey="rotP95" stroke="#d4a84c" strokeWidth={1} strokeDasharray="3 3" dot={false} name="RoT p95" />
-                            </LineChart>
+                              {/* LDI Fan Chart Bands (blue) - stacked from p5 baseline */}
+                              <Area type="monotone" dataKey="ldi_p5" stackId="ldi" fill="transparent" stroke="transparent" />
+                              <Area type="monotone" dataKey="ldi_band_5_25" stackId="ldi" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="LDI p5-p25" />
+                              <Area type="monotone" dataKey="ldi_band_25_75" stackId="ldi" fill="#2980b9" fillOpacity={0.3} stroke="transparent" name="LDI p25-p75" />
+                              <Area type="monotone" dataKey="ldi_band_75_95" stackId="ldi" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="LDI p75-p95" />
+                              {/* RoT Fan Chart Bands (gold/amber) - stacked from p5 baseline */}
+                              <Area type="monotone" dataKey="rot_p5" stackId="rot" fill="transparent" stroke="transparent" />
+                              <Area type="monotone" dataKey="rot_band_5_25" stackId="rot" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="RoT p5-p25" />
+                              <Area type="monotone" dataKey="rot_band_25_75" stackId="rot" fill="#d4a84c" fillOpacity={0.3} stroke="transparent" name="RoT p25-p75" />
+                              <Area type="monotone" dataKey="rot_band_75_95" stackId="rot" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="RoT p75-p95" />
+                              {/* Median lines for both strategies */}
+                              <Line type="monotone" dataKey="ldi_p50" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Median" />
+                              <Line type="monotone" dataKey="rot_p50" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Median" />
+                            </AreaChart>
                           </ResponsiveContainer>
                           <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
-                            Solid lines = medians, dashed = p5/p95. LDI (blue) vs RoT (gold).
+                            Overlaid fan charts: LDI (blue) vs RoT (gold). Bands show p5-p25, p25-p75, p75-p95 percentiles.
                           </div>
                         </ChartCard>
 
