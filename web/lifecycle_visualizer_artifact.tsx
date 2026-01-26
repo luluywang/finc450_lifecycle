@@ -3868,7 +3868,19 @@ export default function LifecycleVisualizer() {
     bondDuration: params.bondDuration,
   }), [params]);
 
-  // Compute Teaching Scenarios (3-scenario comparison)
+  // ==========================================================================
+  // SINGLE SOURCE OF TRUTH: Teaching Scenarios Computation
+  // ==========================================================================
+  // This useEffect computes cachedTeachingScenarios which is used by BOTH:
+  //   1. Summary tab (bar charts and table)
+  //   2. Individual scenario tabs (Baseline, Sequence Risk, Rate Shock)
+  //
+  // Both tabs access the SAME teachingScenarios object, so they MUST show
+  // identical numbers. If you see different numbers between tabs:
+  //   - Check browser cache (hard refresh with Cmd+Shift+R)
+  //   - Verify the page has been rebuilt after code changes
+  //   - Check console for any errors during simulation
+  //
   // Deferred computation: only runs after "Run Simulation" button is clicked
   // Keeps old results when params change (don't auto-clear on param changes)
   // Uses useEffect to trigger computation only when simulationVersion changes
@@ -3878,9 +3890,9 @@ export default function LifecycleVisualizer() {
     if (simulationVersion === 0) return; // Don't run until button clicked
     if (currentPage !== 'scenarios') return;
 
-    // Compute and cache the results
+    // Compute and cache the results - this is the SINGLE computation for all tabs
     const results = runTeachingScenarios(lifecycleParams, econParams, {
-      numSims: 500,
+      numSims: 500,  // 500 simulations for statistical significance
       seed: 42,
       rotSavingsRate: 0.15,
       rotWithdrawalRate: 0.04,
@@ -3891,7 +3903,7 @@ export default function LifecycleVisualizer() {
     setScenarioComputing(false);
   }, [simulationVersion, lifecycleParams, econParams, rateShockMagnitude, currentPage]);
 
-  // teachingScenarios is just the cached value
+  // teachingScenarios is the SINGLE SOURCE OF TRUTH for both Summary and individual tabs
   const teachingScenarios = cachedTeachingScenarios;
 
   // Prepare chart data
@@ -4613,6 +4625,9 @@ export default function LifecycleVisualizer() {
             )}
 
             {/* 3-Scenario Summary - Matching teaching_scenarios.pdf */}
+            {/* CRITICAL: This summary uses teachingScenarios.baseline/sequenceRisk/rateShock
+                which is the SAME object used by the individual scenario tabs.
+                Single source of truth: cachedTeachingScenarios computed in useEffect above. */}
             {scenarioType === 'summary' && teachingScenarios && (
               <>
                 {/* Description */}
@@ -4881,8 +4896,15 @@ export default function LifecycleVisualizer() {
             )}
 
             {/* 8-Panel Individual Scenario View - Matching teaching_scenarios.pdf */}
+            {/* CRITICAL: This view uses the SAME teachingScenarios data as the Summary tab above.
+                Both tabs access teachingScenarios.baseline (or sequenceRisk/rateShock).
+                If you see different numbers between Summary and individual tabs, check:
+                1. Browser cache - hard refresh (Cmd+Shift+R)
+                2. The teachingScenarios object is the single source of truth
+                3. Both tabs multiply defaultRate by 100 for percentage display */}
             {(scenarioType === 'baseline' || scenarioType === 'sequenceRisk' || scenarioType === 'rateShock') && teachingScenarios && (() => {
               // Get the scenario data based on scenarioType
+              // This accesses the SAME object as Summary tab: teachingScenarios[scenarioKey]
               const scenarioKey = scenarioType as 'baseline' | 'sequenceRisk' | 'rateShock';
               const scenario = teachingScenarios[scenarioKey];
               const retirementIdx = scenarioRetirementAge - params.startAge;
