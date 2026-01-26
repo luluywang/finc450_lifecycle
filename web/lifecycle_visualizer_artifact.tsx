@@ -1728,6 +1728,355 @@ function computeMedianPathComparison(
   };
 }
 
+// =============================================================================
+// Monte Carlo Simulation with Percentile Statistics
+// =============================================================================
+
+/**
+ * Percentile statistics for a single field across Monte Carlo simulations.
+ * Contains values at the 5th, 25th, 50th (median), 75th, and 95th percentiles
+ * for each time period.
+ */
+interface FieldPercentiles {
+  p5: number[];    // 5th percentile (pessimistic)
+  p25: number[];   // 25th percentile (below median)
+  p50: number[];   // 50th percentile (median)
+  p75: number[];   // 75th percentile (above median)
+  p95: number[];   // 95th percentile (optimistic)
+}
+
+/**
+ * Complete percentile statistics for Monte Carlo simulation results.
+ * Provides percentiles for key output fields at each time period.
+ */
+interface PercentileStats {
+  financialWealth: FieldPercentiles;
+  consumption: FieldPercentiles;
+  stockWeight: FieldPercentiles;
+  humanCapital: FieldPercentiles;
+  interestRates: FieldPercentiles;
+  stockReturns: FieldPercentiles;
+}
+
+/**
+ * Result from Monte Carlo simulation combining raw SimulationResult with
+ * computed percentile statistics.
+ *
+ * The `result` field contains 2D arrays (nSims x nPeriods) for each trajectory.
+ * The `percentiles` field contains computed percentile statistics across simulations.
+ */
+interface MonteCarloSimulationResult {
+  /** Raw simulation result with 2D arrays for all paths */
+  result: SimulationResult;
+  /** Computed percentile statistics across simulations */
+  percentiles: PercentileStats;
+  /** Number of simulations */
+  numSims: number;
+  /** Random seed used */
+  seed: number;
+  /** Default rate across all simulations */
+  defaultRate: number;
+  /** Median final wealth */
+  medianFinalWealth: number;
+}
+
+/**
+ * Compute percentiles for a 2D array (nSims x nPeriods) at each time period.
+ *
+ * @param data - 2D array of values [nSims][nPeriods]
+ * @param percentile - Percentile to compute (0-100)
+ * @returns Array of percentile values at each time period
+ */
+function computePercentileArray(data: number[][], percentile: number): number[] {
+  const nPeriods = data[0].length;
+  const result: number[] = [];
+
+  for (let t = 0; t < nPeriods; t++) {
+    const values = data.map(row => row[t]);
+    result.push(computePercentile(values, percentile));
+  }
+
+  return result;
+}
+
+/**
+ * Compute all standard percentiles (5, 25, 50, 75, 95) for a 2D array.
+ *
+ * @param data - 2D array of values [nSims][nPeriods]
+ * @returns FieldPercentiles containing all percentile arrays
+ */
+function computeFieldPercentiles(data: number[][]): FieldPercentiles {
+  return {
+    p5: computePercentileArray(data, 5),
+    p25: computePercentileArray(data, 25),
+    p50: computePercentileArray(data, 50),
+    p75: computePercentileArray(data, 75),
+    p95: computePercentileArray(data, 95),
+  };
+}
+
+/**
+ * Run Monte Carlo simulation with a single strategy.
+ * Matches Python run_lifecycle_monte_carlo from core/simulation.py.
+ *
+ * This function:
+ * 1. Generates N sets of correlated shocks using mulberry32 and generateCorrelatedShocks
+ * 2. Passes them to simulateWithStrategy
+ * 3. Computes percentile statistics across all simulations
+ *
+ * The key insight is that simulateWithStrategy already handles 2D shock arrays,
+ * so this function is primarily a convenience wrapper for shock generation
+ * and percentile computation.
+ *
+ * @param strategy - Strategy implementing the Strategy interface
+ * @param params - Lifecycle parameters
+ * @param econParams - Economic parameters
+ * @param numSims - Number of Monte Carlo simulations (default: 50)
+ * @param seed - Random seed for reproducibility (default: 42)
+ * @returns MonteCarloSimulationResult with raw result and percentile statistics
+ *
+ * @example
+ * const ldi = createLDIStrategy({ allowLeverage: false });
+ * const mcResult = runMonteCarloSimulation(ldi, params, econParams, 50, 42);
+ *
+ * // Access percentile statistics
+ * console.log(mcResult.percentiles.financialWealth.p50); // Median wealth path
+ * console.log(mcResult.percentiles.consumption.p5);      // 5th percentile consumption
+ *
+ * // Access raw simulation data
+ * const allWealthPaths = mcResult.result.financialWealth as number[][];
+ * console.log(allWealthPaths[0]); // First simulation path
+ *
+ * // Summary statistics
+ * console.log(mcResult.defaultRate);        // Fraction that defaulted
+ * console.log(mcResult.medianFinalWealth);  // Median terminal wealth
+ */
+function runMonteCarloSimulation(
+  strategy: Strategy,
+  params: LifecycleParams = DEFAULT_LIFECYCLE_PARAMS,
+  econParams: EconomicParams = DEFAULT_ECON_PARAMS,
+  numSims: number = 50,
+  seed: number = 42
+): MonteCarloSimulationResult {
+  const nPeriods = params.endAge - params.startAge;
+  const rho = econParams.rho;
+
+  // Generate correlated shocks for all simulations
+  // Each simulation gets its own PRNG seeded differently
+  const rateShocks: number[][] = [];
+  const stockShocks: number[][] = [];
+
+  for (let sim = 0; sim < numSims; sim++) {
+    // Each simulation uses a different seed for its shock sequence
+    const rand = mulberry32(seed + sim * 1000);
+    const simRateShocks: number[] = [];
+    const simStockShocks: number[] = [];
+
+    for (let t = 0; t < nPeriods; t++) {
+      const [stockShock, rateShock] = generateCorrelatedShocks(rand, rho);
+      simStockShocks.push(stockShock);
+      simRateShocks.push(rateShock);
+    }
+
+    rateShocks.push(simRateShocks);
+    stockShocks.push(simStockShocks);
+  }
+
+  // Run simulation with all shocks
+  const result = simulateWithStrategy(
+    strategy,
+    params,
+    econParams,
+    rateShocks,
+    stockShocks,
+    null,
+    `Monte Carlo (${numSims} sims, seed=${seed})`
+  );
+
+  // Extract 2D arrays from result (we know they're 2D for numSims > 1)
+  const financialWealthPaths = result.financialWealth as number[][];
+  const consumptionPaths = result.consumption as number[][];
+  const stockWeightPaths = result.stockWeight as number[][];
+  const humanCapitalPaths = result.humanCapital as number[][];
+  const interestRatePaths = result.interestRates as number[][];
+  const stockReturnPaths = result.stockReturns as number[][];
+  const defaultedFlags = result.defaulted as boolean[];
+  const finalWealthValues = result.finalWealth as number[];
+
+  // Compute percentile statistics
+  const percentiles: PercentileStats = {
+    financialWealth: computeFieldPercentiles(financialWealthPaths),
+    consumption: computeFieldPercentiles(consumptionPaths),
+    stockWeight: computeFieldPercentiles(stockWeightPaths),
+    humanCapital: computeFieldPercentiles(humanCapitalPaths),
+    interestRates: computeFieldPercentiles(interestRatePaths),
+    stockReturns: computeFieldPercentiles(stockReturnPaths),
+  };
+
+  // Compute summary statistics
+  const defaultCount = defaultedFlags.filter(d => d).length;
+  const defaultRate = defaultCount / numSims;
+  const medianFinalWealth = computePercentile(finalWealthValues, 50);
+
+  return {
+    result,
+    percentiles,
+    numSims,
+    seed,
+    defaultRate,
+    medianFinalWealth,
+  };
+}
+
+/**
+ * Options for Monte Carlo strategy comparison.
+ */
+interface MonteCarloComparisonOptions extends MedianPathComparisonOptions {
+  /** Number of Monte Carlo simulations (default: 50) */
+  numSims?: number;
+  /** Random seed for reproducibility (default: 42) */
+  seed?: number;
+}
+
+/**
+ * Result from Monte Carlo strategy comparison.
+ */
+interface MonteCarloStrategyComparison {
+  /** LDI strategy Monte Carlo result */
+  resultA: MonteCarloSimulationResult;
+  /** Rule-of-Thumb strategy Monte Carlo result */
+  resultB: MonteCarloSimulationResult;
+  /** Strategy A parameters for display */
+  strategyAParams: Record<string, unknown>;
+  /** Strategy B parameters for display */
+  strategyBParams: Record<string, unknown>;
+}
+
+/**
+ * Run Monte Carlo comparison between LDI and Rule-of-Thumb strategies.
+ * Matches Python run_strategy_comparison from core/simulation.py.
+ *
+ * Both strategies are run with IDENTICAL random shocks (same market conditions)
+ * for a fair comparison. This isolates the effect of strategy differences
+ * from market luck.
+ *
+ * @param params - Lifecycle parameters
+ * @param econParams - Economic parameters
+ * @param options - Comparison options (numSims, seed, RoT parameters)
+ * @returns MonteCarloStrategyComparison with both strategies' MC results
+ *
+ * @example
+ * const comparison = runMonteCarloStrategyComparison();
+ * console.log(comparison.resultA.defaultRate);  // LDI default rate
+ * console.log(comparison.resultB.defaultRate);  // RoT default rate
+ * console.log(comparison.resultA.percentiles.financialWealth.p50);  // LDI median wealth
+ */
+function runMonteCarloStrategyComparison(
+  params: LifecycleParams = DEFAULT_LIFECYCLE_PARAMS,
+  econParams: EconomicParams = DEFAULT_ECON_PARAMS,
+  options: MonteCarloComparisonOptions = {}
+): MonteCarloStrategyComparison {
+  const {
+    numSims = 50,
+    seed = 42,
+    rotSavingsRate = 0.15,
+    rotTargetDuration = 6.0,
+    rotWithdrawalRate = 0.04,
+  } = options;
+
+  const nPeriods = params.endAge - params.startAge;
+  const rho = econParams.rho;
+
+  // Generate correlated shocks ONCE - same for both strategies
+  const rateShocks: number[][] = [];
+  const stockShocks: number[][] = [];
+
+  for (let sim = 0; sim < numSims; sim++) {
+    const rand = mulberry32(seed + sim * 1000);
+    const simRateShocks: number[] = [];
+    const simStockShocks: number[] = [];
+
+    for (let t = 0; t < nPeriods; t++) {
+      const [stockShock, rateShock] = generateCorrelatedShocks(rand, rho);
+      simStockShocks.push(stockShock);
+      simRateShocks.push(rateShock);
+    }
+
+    rateShocks.push(simRateShocks);
+    stockShocks.push(simStockShocks);
+  }
+
+  // Strategy 1: LDI
+  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const ldiResult = simulateWithStrategy(
+    ldiStrategy, params, econParams,
+    rateShocks, stockShocks,
+    null, "LDI (Monte Carlo)"
+  );
+
+  // Strategy 2: Rule-of-Thumb
+  const rotStrategy = createRuleOfThumbStrategy({
+    savingsRate: rotSavingsRate,
+    withdrawalRate: rotWithdrawalRate,
+    targetDuration: rotTargetDuration,
+  });
+  const rotResult = simulateWithStrategy(
+    rotStrategy, params, econParams,
+    rateShocks, stockShocks,
+    null, "RuleOfThumb (Monte Carlo)"
+  );
+
+  // Compute percentile statistics for both
+  const ldiPercentiles: PercentileStats = {
+    financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
+    consumption: computeFieldPercentiles(ldiResult.consumption as number[][]),
+    stockWeight: computeFieldPercentiles(ldiResult.stockWeight as number[][]),
+    humanCapital: computeFieldPercentiles(ldiResult.humanCapital as number[][]),
+    interestRates: computeFieldPercentiles(ldiResult.interestRates as number[][]),
+    stockReturns: computeFieldPercentiles(ldiResult.stockReturns as number[][]),
+  };
+
+  const rotPercentiles: PercentileStats = {
+    financialWealth: computeFieldPercentiles(rotResult.financialWealth as number[][]),
+    consumption: computeFieldPercentiles(rotResult.consumption as number[][]),
+    stockWeight: computeFieldPercentiles(rotResult.stockWeight as number[][]),
+    humanCapital: computeFieldPercentiles(rotResult.humanCapital as number[][]),
+    interestRates: computeFieldPercentiles(rotResult.interestRates as number[][]),
+    stockReturns: computeFieldPercentiles(rotResult.stockReturns as number[][]),
+  };
+
+  // Compute summary statistics
+  const ldiDefaulted = ldiResult.defaulted as boolean[];
+  const rotDefaulted = rotResult.defaulted as boolean[];
+  const ldiFinalWealth = ldiResult.finalWealth as number[];
+  const rotFinalWealth = rotResult.finalWealth as number[];
+
+  return {
+    resultA: {
+      result: ldiResult,
+      percentiles: ldiPercentiles,
+      numSims,
+      seed,
+      defaultRate: ldiDefaulted.filter(d => d).length / numSims,
+      medianFinalWealth: computePercentile(ldiFinalWealth, 50),
+    },
+    resultB: {
+      result: rotResult,
+      percentiles: rotPercentiles,
+      numSims,
+      seed,
+      defaultRate: rotDefaulted.filter(d => d).length / numSims,
+      medianFinalWealth: computePercentile(rotFinalWealth, 50),
+    },
+    strategyAParams: { allowLeverage: false },
+    strategyBParams: {
+      savingsRate: rotSavingsRate,
+      withdrawalRate: rotWithdrawalRate,
+      targetDuration: rotTargetDuration,
+    },
+  };
+}
+
 function computeEarningsProfile(params: Params): number[] {
   const workingYears = params.retirementAge - params.startAge;
   const earnings: number[] = [];
