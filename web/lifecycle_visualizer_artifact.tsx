@@ -1026,9 +1026,13 @@ function simulateWithStrategy(
   for (let sim = 0; sim < nSims; sim++) {
     const returns: number[] = [];
     for (let t = 0; t < totalYears; t++) {
-      // Stock return = r_t + mu_excess + sigma_s * epsilon_t
-      const stockReturn = ratePaths[sim][t] + econParams.muExcess +
-        econParams.sigmaS * stockShocks[sim][t];
+      // Stock return = r_t + mu_excess - sigma^2/2 + sigma_s * epsilon_t
+      // The -sigma^2/2 is the median return adjustment (Jensen's inequality)
+      // which accounts for the difference between arithmetic and geometric means
+      // so that zero shocks give the median (geometric) return path
+      const stockReturn = ratePaths[sim][t] + econParams.muExcess
+        - 0.5 * econParams.sigmaS * econParams.sigmaS
+        + econParams.sigmaS * stockShocks[sim][t];
       returns.push(stockReturn);
     }
     stockReturnPaths.push(returns);
@@ -1368,9 +1372,12 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
     let effectiveConsumptionRate: number;
     if (consumptionRate === null) {
       const r = state.econParams.rBar;
-      const expectedStockReturn = r + state.econParams.muExcess;
+      // Use median (geometric) return for consistency with simulation
+      // The -sigma^2/2 is the median return adjustment (Jensen's inequality)
+      const sigmaS = state.econParams.sigmaS;
+      const medianStockReturn = r + state.econParams.muExcess - 0.5 * sigmaS * sigmaS;
       const avgReturn =
-        state.targetStock * expectedStockReturn +
+        state.targetStock * medianStockReturn +
         state.targetBond * r +
         state.targetCash * r;
       effectiveConsumptionRate = avgReturn + state.params.consumptionBoost;
@@ -2610,10 +2617,11 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const variableConsumption = Array(totalYears).fill(0);
   const totalConsumption = Array(totalYears).fill(0);
 
-  // Expected portfolio return
-  const expectedStockReturn = r + params.muStock;
+  // Expected portfolio return (using geometric/median returns for consistency)
+  // The -sigma^2/2 is the median return adjustment (Jensen's inequality)
+  const medianStockReturn = r + params.muStock - 0.5 * params.sigmaS * params.sigmaS;
   const expectedBondReturn = r;
-  const avgReturn = targetStock * expectedStockReturn +
+  const avgReturn = targetStock * medianStockReturn +
                     targetBond * expectedBondReturn +
                     targetCash * r;
 
@@ -2677,10 +2685,10 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   }
 
   // For median path, interest rate is constant at rBar
-  // and expected cumulative stock return grows at expected rate
+  // and cumulative stock return grows at median (geometric) rate
   const interestRate = Array(totalYears).fill(r);
   const cumulativeStockReturn = Array.from({ length: totalYears }, (_, i) =>
-    Math.pow(1 + expectedStockReturn, i)
+    Math.pow(1 + medianStockReturn, i)
   );
 
   return {
@@ -2842,8 +2850,10 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     // Consumption decision
     netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
 
-    // Consumption rate based on expected return + 1pp
-    const expectedReturn = currentRate + stockWeight[i] * params.muStock;
+    // Consumption rate based on median return + 1pp
+    // Using geometric mean return for consistency with median path
+    const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
+    const expectedReturn = currentRate + stockWeight[i] * medianStockReturn;
     const consumptionRate = expectedReturn + 0.01;
 
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
@@ -2876,7 +2886,10 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
       const savings = earnings[i] - totalConsumption[i];
 
       // Realized returns with shocks
-      const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+      // Median return adjustment: -sigma^2/2 for geometric mean
+      const stockReturn = currentRate + params.muStock
+        - 0.5 * params.sigmaS * params.sigmaS
+        + params.sigmaS * stockShock;
       const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
       const cashReturn = currentRate;
 
@@ -3072,7 +3085,9 @@ function computeScenarioPath(
 
     if (scenario.consumptionRule === 'adaptive') {
       // Adaptive: consume based on net worth, always protect subsistence
-      const expectedReturn = currentRate + stockWeight * params.muStock;
+      // Using geometric mean return for consistency with median path
+      const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
+      const expectedReturn = currentRate + stockWeight * medianStockReturn;
       const consumptionRate = expectedReturn + 0.01;
       variableConsumption[i] = Math.max(0, consumptionRate * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
@@ -3150,7 +3165,10 @@ function computeScenarioPath(
     const savings = earnings[i] - totalConsumption[i];
 
     // Realized returns with shocks
-    const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+    // Median return adjustment: -sigma^2/2 for geometric mean
+    const stockReturn = currentRate + params.muStock
+      - 0.5 * params.sigmaS * params.sigmaS
+      + params.sigmaS * stockShock;
     cumStockReturn *= (1 + stockReturn);
     cumulativeStockReturn[i] = cumStockReturn;
 
@@ -3331,8 +3349,10 @@ function computeOptimalStrategy(
     cashWeightArr[i] = cashWeight;
 
     // Adaptive consumption
+    // Using geometric mean return for consistency with median path
     const netWorth = humanCapital + financialWealth[i] - pvExpenses;
-    const expectedReturn = currentRate + stockWeight * params.muStock;
+    const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
+    const expectedReturn = currentRate + stockWeight * medianStockReturn;
     const consumptionRate = expectedReturn + 0.01;
 
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth);
@@ -3365,7 +3385,10 @@ function computeOptimalStrategy(
     savingsArr[i] = earnings[i] - totalConsumption[i];
 
     // Wealth accumulation
-    const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+    // Median return adjustment: -sigma^2/2 for geometric mean
+    const stockReturn = currentRate + params.muStock
+      - 0.5 * params.sigmaS * params.sigmaS
+      + params.sigmaS * stockShock;
     cumStockReturn *= (1 + stockReturn);
     cumulativeStockReturn[i] = cumStockReturn;
 
@@ -3518,7 +3541,10 @@ function computeRuleOfThumbStrategy(
     }
 
     // Wealth accumulation
-    const stockReturn = currentRate + params.muStock + params.sigmaS * stockShock;
+    // Median return adjustment: -sigma^2/2 for geometric mean
+    const stockReturn = currentRate + params.muStock
+      - 0.5 * params.sigmaS * params.sigmaS
+      + params.sigmaS * stockShock;
     cumStockReturn *= (1 + stockReturn);
     cumulativeStockReturn[i] = cumStockReturn;
 
