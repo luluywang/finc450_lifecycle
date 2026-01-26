@@ -138,6 +138,58 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
   initialWealth: 100,           // $100k starting wealth
 };
 
+/**
+ * State available to strategy at each time step.
+ * Matches Python SimulationState from core/params.py exactly.
+ *
+ * This provides all the information a strategy needs to make decisions,
+ * including wealth measures, cash flows, market conditions, and precomputed
+ * hedge components for LDI-style strategies.
+ */
+interface SimulationState {
+  // Time indices
+  t: number;                    // Current period (0-indexed)
+  age: number;                  // Current age (Python: age)
+  year: number;                 // Current year (derived from age - startAge)
+
+  // Market state
+  currentRate: number;          // Current interest rate (Python: current_rate)
+
+  // Human capital and expense liability
+  humanCapital: number;         // PV of future earnings (Python: human_capital)
+  pvExpenses: number;           // PV of future expenses (Python: pv_expenses)
+
+  // Durations
+  durationHc: number;           // Duration of human capital (Python: duration_hc)
+  durationExp: number;          // Duration of expense liability (Python: duration_expenses)
+
+  // Wealth measures
+  financialWealth: number;      // Current FW (Python: financial_wealth)
+  totalWealth: number;          // HC + FW (Python: total_wealth)
+
+  // Cash flows
+  earnings: number;             // Current period earnings (Python: earnings)
+  expenses: number;             // Current period expenses/subsistence (Python: expenses)
+}
+
+/**
+ * Actions returned by strategy for current period.
+ * Matches Python StrategyActions from core/params.py exactly.
+ *
+ * Contains portfolio allocation weights for the current period.
+ * Constraint: stockWeight + bondWeight + cashWeight should sum to 1.0
+ * Constraint: consumption should be non-negative (>= 0)
+ */
+interface StrategyActions {
+  // Portfolio weights (should sum to 1.0)
+  stockWeight: number;          // Stock allocation weight (Python: stock_weight)
+  bondWeight: number;           // Bond allocation weight (Python: bond_weight)
+  cashWeight: number;           // Cash allocation weight (Python: cash_weight)
+
+  // Consumption (non-negative)
+  consumption: number;          // Total consumption for the period (Python: total_consumption)
+}
+
 interface Params {
   // Age parameters
   startAge: number;
