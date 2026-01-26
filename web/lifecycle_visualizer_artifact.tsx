@@ -12,6 +12,43 @@ import {
 // Types
 // =============================================================================
 
+/**
+ * Parameters for the economic environment (VAR structure).
+ * Matches Python EconomicParams from core/params.py exactly.
+ */
+interface EconomicParams {
+  rBar: number;           // Long-run mean real rate (Python: r_bar = 0.02)
+  phi: number;            // Interest rate persistence (1.0 = random walk)
+  sigmaR: number;         // Rate shock volatility (0.3 pp = 0.003)
+  muExcess: number;       // Equity risk premium (stock excess return)
+  bondSharpe: number;     // Bond Sharpe ratio (replaces fixed mu_bond)
+  sigmaS: number;         // Stock return volatility
+  rho: number;            // Correlation between rate and stock shocks
+  bondDuration: number;   // Duration for HC decomposition and MV optimization
+}
+
+/**
+ * Default economic parameters matching Python EconomicParams defaults exactly.
+ */
+const DEFAULT_ECON_PARAMS: EconomicParams = {
+  rBar: 0.02,             // Long-run mean real rate
+  phi: 1.0,               // Interest rate persistence (random walk)
+  sigmaR: 0.003,          // Rate shock volatility (0.3 pp)
+  muExcess: 0.04,         // Equity risk premium
+  bondSharpe: 0.037,      // Bond Sharpe ratio
+  sigmaS: 0.18,           // Stock return volatility
+  rho: 0.0,               // Correlation between rate and stock shocks
+  bondDuration: 20.0,     // Duration for HC decomposition
+};
+
+/**
+ * Compute bond excess return from Sharpe ratio.
+ * mu_bond = bond_sharpe * bond_duration * sigma_r
+ */
+function computeMuBondFromEcon(econ: EconomicParams): number {
+  return econ.bondSharpe * econ.bondDuration * econ.sigmaR;
+}
+
 interface Params {
   // Age parameters
   startAge: number;
