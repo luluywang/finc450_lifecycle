@@ -270,6 +270,71 @@ interface StrategyActions {
   consumption: number;          // Total consumption for the period (Python: total_consumption)
 }
 
+/**
+ * Strategy protocol: a function that maps SimulationState to StrategyActions.
+ * Matches Python StrategyProtocol from core/params.py.
+ *
+ * Strategies are simple callables that take the current simulation state
+ * and return actions (consumption and portfolio weights). This allows
+ * strategies to be easily swapped and compared using simulateWithStrategy.
+ *
+ * The strategy object can have a `name` property and optionally a `reset()`
+ * method that is called at the start of each simulation path.
+ */
+interface Strategy {
+  name: string;
+  (state: SimulationState): StrategyActions;
+  reset?: () => void;
+}
+
+/**
+ * Unified, strategy-agnostic simulation result.
+ * Matches Python SimulationResult from core/params.py.
+ *
+ * Works for both:
+ * - Single simulation (deterministic median path): arrays are 1D [nPeriods]
+ * - Monte Carlo: arrays are 2D [nSims, nPeriods]
+ *
+ * The strategy is an INPUT to simulation, not part of the OUTPUT type.
+ * Any strategy (LDI, RuleOfThumb, Fixed, custom) produces this same result format.
+ */
+interface SimulationResult {
+  // Identification
+  strategyName: string;
+  ages: number[];                     // [nPeriods] age at each time step
+
+  // Core wealth and consumption paths
+  // Shape: [nPeriods] for single sim, [nSims][nPeriods] for MC
+  financialWealth: number[] | number[][];
+  consumption: number[] | number[][];
+  subsistenceConsumption: number[] | number[][];
+  variableConsumption: number[] | number[][];
+
+  // Portfolio allocation weights (sum to 1.0)
+  stockWeight: number[] | number[][];
+  bondWeight: number[] | number[][];
+  cashWeight: number[] | number[][];
+
+  // Market conditions used in simulation
+  interestRates: number[] | number[][];
+  stockReturns: number[] | number[][];
+
+  // Earnings (after wage shocks applied, if any)
+  earnings: number[] | number[][];
+
+  // Human capital path (for verification)
+  humanCapital: number[] | number[][];
+
+  // Default tracking
+  // For single sim: scalar; for MC: [nSims] array
+  defaulted: boolean | boolean[];
+  defaultAge: number | null | (number | null)[];
+  finalWealth: number | number[];
+
+  // Optional metadata for scenarios
+  description: string;
+}
+
 interface Params {
   // Age parameters
   startAge: number;
@@ -900,6 +965,374 @@ function normalizePortfolioWeights(
   }
 
   return [equity, wB, wC];
+}
+
+// =============================================================================
+// Generic Strategy Simulation Engine
+// =============================================================================
+
+/**
+ * Generic simulation engine that runs ANY strategy.
+ * Matches Python simulate_with_strategy from core/simulation.py.
+ *
+ * This is the single source of truth for simulation logic. Strategies are
+ * simple functions that map state to actions, allowing easy comparison.
+ *
+ * Key insight: Static calculations (median path) are just dynamic calculations
+ * with zero shocks. This unifies the codebase.
+ *
+ * @param strategy - Strategy implementing Strategy interface (maps state -> actions)
+ * @param params - Lifecycle parameters
+ * @param econParams - Economic parameters
+ * @param rateShocks - Shape [nSims][nPeriods] - interest rate epsilon shocks
+ * @param stockShocks - Shape [nSims][nPeriods] - stock return epsilon shocks
+ * @param initialRate - Starting interest rate (defaults to rBar)
+ * @param description - Optional description for the simulation result
+ *
+ * @returns SimulationResult containing all simulation outputs with unified field names.
+ *          Arrays are 2D [nSims][nPeriods] for Monte Carlo, squeezed to 1D for single sim.
+ */
+function simulateWithStrategy(
+  strategy: Strategy,
+  params: LifecycleParams,
+  econParams: EconomicParams,
+  rateShocks: number[][],
+  stockShocks: number[][],
+  initialRate: number | null = null,
+  description: string = ""
+): SimulationResult {
+  const effectiveInitialRate = initialRate !== null ? initialRate : econParams.rBar;
+
+  const nSims = rateShocks.length;
+  const nPeriods = rateShocks[0].length;
+  const totalYears = params.endAge - params.startAge;
+  const workingYears = params.retirementAge - params.startAge;
+
+  if (nPeriods !== totalYears) {
+    throw new Error(`Shock periods ${nPeriods} != total years ${totalYears}`);
+  }
+
+  // Compute target allocations from MV optimization
+  const muBond = computeMuBondFromEcon(econParams);
+  const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+    econParams.muExcess, muBond, econParams.sigmaS, econParams.sigmaR,
+    econParams.rho, econParams.bondDuration, params.gamma
+  );
+
+  // Simulate interest rate paths from shocks
+  // ratePaths[sim][t] = observed rate at time t for simulation sim
+  const ratePaths: number[][] = [];
+  for (let sim = 0; sim < nSims; sim++) {
+    const rates: number[] = [];
+    let latentRate = effectiveInitialRate;
+    let observedRate = effectiveInitialRate;
+    for (let t = 0; t < totalYears; t++) {
+      // For first period, use initial rate, then update
+      if (t > 0) {
+        [latentRate, observedRate] = updateInterestRate(
+          latentRate, econParams.sigmaR, rateShocks[sim][t - 1]
+        );
+      }
+      rates.push(observedRate);
+    }
+    ratePaths.push(rates);
+  }
+
+  // Simulate stock return paths
+  // stockReturnPaths[sim][t] = stock return for period t for simulation sim
+  const stockReturnPaths: number[][] = [];
+  for (let sim = 0; sim < nSims; sim++) {
+    const returns: number[] = [];
+    for (let t = 0; t < totalYears; t++) {
+      // Stock return = r_t + mu_excess + sigma_s * epsilon_t
+      const stockReturn = ratePaths[sim][t] + econParams.muExcess +
+        econParams.sigmaS * stockShocks[sim][t];
+      returns.push(stockReturn);
+    }
+    stockReturnPaths.push(returns);
+  }
+
+  // Compute bond returns using duration approximation
+  // bond_return = yield + spread - duration * delta_r
+  const bondReturnPaths: number[][] = [];
+  for (let sim = 0; sim < nSims; sim++) {
+    const returns: number[] = [];
+    for (let t = 0; t < totalYears - 1; t++) {
+      const deltaR = ratePaths[sim][t + 1] - ratePaths[sim][t];
+      const bondReturn = ratePaths[sim][t] + muBond -
+        econParams.bondDuration * deltaR;
+      returns.push(bondReturn);
+    }
+    // Last period: no rate change
+    returns.push(ratePaths[sim][totalYears - 1] + muBond);
+    bondReturnPaths.push(returns);
+  }
+
+  // Get BASE earnings and expenses profiles (deterministic)
+  // Create a Params object from LifecycleParams for the existing functions
+  const legacyParams: Params = {
+    startAge: params.startAge,
+    retirementAge: params.retirementAge,
+    endAge: params.endAge,
+    initialEarnings: params.initialEarnings,
+    earningsGrowth: params.earningsGrowth,
+    earningsHumpAge: params.earningsHumpAge,
+    earningsDecline: params.earningsDecline,
+    baseExpenses: params.baseExpenses,
+    expenseGrowth: params.expenseGrowth,
+    retirementExpenses: params.retirementExpenses,
+    stockBetaHC: params.stockBetaHumanCapital,
+    gamma: params.gamma,
+    initialWealth: params.initialWealth,
+    rBar: econParams.rBar,
+    muStock: econParams.muExcess,
+    bondSharpe: econParams.bondSharpe,
+    sigmaS: econParams.sigmaS,
+    sigmaR: econParams.sigmaR,
+    rho: econParams.rho,
+    bondDuration: econParams.bondDuration,
+    phi: econParams.phi,
+  };
+
+  const earningsProfile = computeEarningsProfile(legacyParams);
+  const expenseProfile = computeExpenseProfile(legacyParams);
+
+  const baseEarnings: number[] = Array(totalYears).fill(0);
+  const expenses: number[] = Array(totalYears).fill(0);
+  for (let t = 0; t < workingYears; t++) {
+    baseEarnings[t] = earningsProfile[t];
+    expenses[t] = expenseProfile.working[t];
+  }
+  for (let t = workingYears; t < totalYears; t++) {
+    expenses[t] = expenseProfile.retirement[t - workingYears];
+  }
+
+  const rBar = econParams.rBar;
+  const phi = econParams.phi;
+
+  // Initialize output arrays for all simulations
+  const financialWealthPaths: number[][] = [];
+  const humanCapitalPaths: number[][] = [];
+  const totalConsumptionPaths: number[][] = [];
+  const subsistenceConsumptionPaths: number[][] = [];
+  const variableConsumptionPaths: number[][] = [];
+  const stockWeightPaths: number[][] = [];
+  const bondWeightPaths: number[][] = [];
+  const cashWeightPaths: number[][] = [];
+  const actualEarningsPaths: number[][] = [];
+  const defaultFlags: boolean[] = [];
+  const defaultAges: (number | null)[] = [];
+
+  // Simulate each path
+  for (let sim = 0; sim < nSims; sim++) {
+    let defaulted = false;
+    let defaultAge: number | null = null;
+
+    // Reset strategy state if it has a reset method (for RoT retirement values)
+    if (strategy.reset) {
+      strategy.reset();
+    }
+
+    const financialWealth: number[] = Array(totalYears).fill(0);
+    const humanCapital: number[] = Array(totalYears).fill(0);
+    const totalConsumption: number[] = Array(totalYears).fill(0);
+    const subsistenceConsumption: number[] = Array(totalYears).fill(0);
+    const variableConsumption: number[] = Array(totalYears).fill(0);
+    const stockWeight: number[] = Array(totalYears).fill(0);
+    const bondWeight: number[] = Array(totalYears).fill(0);
+    const cashWeight: number[] = Array(totalYears).fill(0);
+    const actualEarnings: number[] = Array(totalYears).fill(0);
+
+    // Set initial wealth
+    financialWealth[0] = params.initialWealth;
+
+    for (let t = 0; t < totalYears; t++) {
+      const fw = financialWealth[t];
+      const isWorking = t < workingYears;
+      const currentRate = ratePaths[sim][t];
+      const age = params.startAge + t;
+
+      // For now, no wage shocks (stockBetaHumanCapital handling can be added later)
+      // This matches zero-shock scenario where earnings are deterministic
+      const currentEarnings = isWorking ? baseEarnings[t] : 0.0;
+      actualEarnings[t] = currentEarnings;
+
+      // Compute PV values at current rate (dynamic revaluation)
+      const remainingExpenses = expenses.slice(t);
+      const pvExp = computePresentValue(remainingExpenses, currentRate, phi, rBar);
+      const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar);
+
+      let hc = 0.0;
+      let durationHc = 0.0;
+      if (isWorking) {
+        const remainingEarnings = baseEarnings.slice(t, workingYears);
+        hc = computePresentValue(remainingEarnings, currentRate, phi, rBar);
+        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar);
+      }
+
+      humanCapital[t] = hc;
+
+      // Compute HC decomposition at current rate
+      let hcStock = 0.0;
+      let hcBond = 0.0;
+      let hcCash = 0.0;
+      if (isWorking && hc > 0) {
+        hcStock = hc * params.stockBetaHumanCapital;
+        const nonStockHc = hc * (1.0 - params.stockBetaHumanCapital);
+        if (econParams.bondDuration > 0) {
+          const hcBondFrac = durationHc / econParams.bondDuration;
+          hcBond = nonStockHc * hcBondFrac;
+          hcCash = nonStockHc * (1.0 - hcBondFrac);
+        } else {
+          hcBond = 0.0;
+          hcCash = nonStockHc;
+        }
+      }
+
+      // Compute expense decomposition at current rate
+      let expBond = 0.0;
+      let expCash = 0.0;
+      if (econParams.bondDuration > 0 && pvExp > 0) {
+        const expBondFrac = durationExp / econParams.bondDuration;
+        expBond = pvExp * expBondFrac;
+        expCash = pvExp * (1.0 - expBondFrac);
+      } else {
+        expBond = 0.0;
+        expCash = pvExp;
+      }
+
+      // Compute wealth measures
+      const totalWealth = fw + hc;
+      const netWorth = hc + fw - pvExp;
+
+      // Build state for strategy
+      const state: SimulationState = {
+        t: t,
+        age: age,
+        year: t,
+        currentRate: currentRate,
+        humanCapital: hc,
+        pvExpenses: pvExp,
+        durationHc: durationHc,
+        durationExp: durationExp,
+        financialWealth: fw,
+        totalWealth: totalWealth,
+        earnings: currentEarnings,
+        expenses: expenses[t],
+      };
+
+      // Get actions from strategy
+      let actions: StrategyActions;
+      if (defaulted) {
+        actions = {
+          consumption: 0.0,
+          stockWeight: targetStock,
+          bondWeight: targetBond,
+          cashWeight: targetCash,
+        };
+      } else {
+        actions = strategy(state);
+      }
+
+      // Check for default
+      if (!isWorking && fw <= 0 && !defaulted) {
+        defaulted = true;
+        defaultAge = age;
+      }
+
+      // Store results
+      // Split consumption into subsistence and variable
+      const subsistence = Math.min(actions.consumption, expenses[t]);
+      const variable = Math.max(0, actions.consumption - expenses[t]);
+
+      totalConsumption[t] = actions.consumption;
+      subsistenceConsumption[t] = subsistence;
+      variableConsumption[t] = variable;
+
+      stockWeight[t] = actions.stockWeight;
+      bondWeight[t] = actions.bondWeight;
+      cashWeight[t] = actions.cashWeight;
+
+      // Evolve wealth to next period
+      if (t < totalYears - 1 && !defaulted) {
+        const stockRet = stockReturnPaths[sim][t];
+        const bondRet = bondReturnPaths[sim][t];
+        const cashRet = ratePaths[sim][t];
+
+        const portfolioReturn =
+          actions.stockWeight * stockRet +
+          actions.bondWeight * bondRet +
+          actions.cashWeight * cashRet;
+
+        const savings = currentEarnings - actions.consumption;
+        financialWealth[t + 1] = fw * (1 + portfolioReturn) + savings;
+      }
+    }
+
+    financialWealthPaths.push(financialWealth);
+    humanCapitalPaths.push(humanCapital);
+    totalConsumptionPaths.push(totalConsumption);
+    subsistenceConsumptionPaths.push(subsistenceConsumption);
+    variableConsumptionPaths.push(variableConsumption);
+    stockWeightPaths.push(stockWeight);
+    bondWeightPaths.push(bondWeight);
+    cashWeightPaths.push(cashWeight);
+    actualEarningsPaths.push(actualEarnings);
+    defaultFlags.push(defaulted);
+    defaultAges.push(defaultAge);
+  }
+
+  // Compute ages array
+  const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
+
+  // Compute final wealth (last period)
+  const finalWealth = financialWealthPaths.map(fw => fw[totalYears - 1]);
+
+  // Get strategy name
+  const strategyName = strategy.name;
+
+  // For single simulation, squeeze arrays to 1D for cleaner API
+  if (nSims === 1) {
+    return {
+      strategyName: strategyName,
+      ages: ages,
+      financialWealth: financialWealthPaths[0],
+      consumption: totalConsumptionPaths[0],
+      subsistenceConsumption: subsistenceConsumptionPaths[0],
+      variableConsumption: variableConsumptionPaths[0],
+      stockWeight: stockWeightPaths[0],
+      bondWeight: bondWeightPaths[0],
+      cashWeight: cashWeightPaths[0],
+      interestRates: ratePaths[0],
+      stockReturns: stockReturnPaths[0],
+      earnings: actualEarningsPaths[0],
+      humanCapital: humanCapitalPaths[0],
+      defaulted: defaultFlags[0],
+      defaultAge: defaultAges[0],
+      finalWealth: finalWealth[0],
+      description: description,
+    };
+  }
+
+  return {
+    strategyName: strategyName,
+    ages: ages,
+    financialWealth: financialWealthPaths,
+    consumption: totalConsumptionPaths,
+    subsistenceConsumption: subsistenceConsumptionPaths,
+    variableConsumption: variableConsumptionPaths,
+    stockWeight: stockWeightPaths,
+    bondWeight: bondWeightPaths,
+    cashWeight: cashWeightPaths,
+    interestRates: ratePaths,
+    stockReturns: stockReturnPaths,
+    earnings: actualEarningsPaths,
+    humanCapital: humanCapitalPaths,
+    defaulted: defaultFlags,
+    defaultAge: defaultAges,
+    finalWealth: finalWealth,
+    description: description,
+  };
 }
 
 function computeEarningsProfile(params: Params): number[] {
