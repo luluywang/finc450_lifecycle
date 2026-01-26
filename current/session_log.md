@@ -339,9 +339,20 @@ The TSX implementation includes:
 
 ## Task 15 — 2026-01-26
 
-**Status:** complete
+**Status:** blocked
 
-**Reasoning:** Task 15 requires implementing the Bond Allocation panel as the sixth panel (axes[2,1]) in the 4x2 grid for individual scenario tabs. The panel should show overlaid fan charts comparing LDI and RoT bond allocation over time.
+**Reasoning:** Task 15 requires implementing the Bond Allocation panel as the sixth panel (axes[2,1]) in the 4x2 grid for individual scenario tabs. However, upon investigation, the architecture has changed:
+
+1. Task 9 removed the "Detailed Charts for Each Scenario" section from the Summary tab, which contained the individual scenario panels (Baseline, Sequence Risk, Rate Shock) with the 8-panel layout matching the PDF.
+
+2. The `teachingScenarios` data structure (with `percentiles.bondWeight` for LDI and RoT strategies) is now only used for summary bar charts.
+
+3. The alternative scenario tabs (sequenceRisk, rateShock) use `scenarioResults` data structure with `adaptive` and `fourPercent` strategies, which doesn't include `bondWeight` percentiles.
+
+**Blocker:** The panel location (individual scenario tabs with 8-panel layout) no longer exists. Requires architecture decision:
+- Option A: Restore the detailed scenario tabs using teachingScenarios data
+- Option B: Add bond allocation percentiles to scenarioResults data structure
+- Option C: Redesign where bond allocation is shown in the current UI
 
 The PDF reference (compare_teaching_scenarios.py lines 660-672) shows:
 - Panel position: axes[2, 1] (Row 3, second column - "Portfolio Allocation")

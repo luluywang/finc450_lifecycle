@@ -142,8 +142,8 @@
       "description": "Create overlaid fan chart comparing LDI and RoT bond allocation over time",
       "type": "code",
       "depends_on": [6],
-      "status": "complete",
-      "notes": "Converted simple LineChart to overlaid AreaChart fan chart with percentile bands (p5-p25, p25-p75, p75-p95) for both LDI (blue #2980b9) and RoT (gold #d4a84c). Panel shows bond allocation as percentage (0-100%) with separate stacks for each strategy."
+      "status": "blocked",
+      "notes": "BLOCKED: Task 9 removed the 'Detailed Charts for Each Scenario' section that contained the individual scenario tabs with 8 panels. The teachingScenarios data (with percentiles.bondWeight) is now only used for summary bar charts. Alternative scenario tabs (sequenceRisk, rateShock) use scenarioResults which has adaptive/fourPercent strategies without bond allocation percentiles. Requires architecture decision: either restore teachingScenarios panels or add bond allocation data to scenarioResults."
     },
     {
       "id": 16,
