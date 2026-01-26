@@ -74,7 +74,8 @@
       "description": "No separate beta analysis, use selected beta from assumptions",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Removed separate scenarioBeta toggle; now uses params.stockBetaHC from assumptions panel; scenarios computed for single beta value only"
     },
     {
       "id": 9,
@@ -139,7 +140,8 @@
       "description": "Create overlaid fan chart comparing LDI and RoT bond allocation over time",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Converted simple LineChart to overlaid AreaChart fan chart with percentile bands (p5-p25, p25-p75, p75-p95) for both LDI (blue #2980b9) and RoT (gold #d4a84c). Panel shows bond allocation as percentage (0-100%) with separate stacks for each strategy."
     },
     {
       "id": 16,

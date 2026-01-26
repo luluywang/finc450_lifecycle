@@ -3955,22 +3955,6 @@ export default function LifecycleVisualizer() {
   // Compute lifecycle results
   const result = useMemo(() => computeLifecycleMedianPath(params), [params]);
 
-  // Monte Carlo state - computed on demand via button click
-  const [mcResult, setMcResult] = useState<MonteCarloSimulationResult | null>(null);
-  const [showMcModal, setShowMcModal] = useState(false);
-  const [mcComputing, setMcComputing] = useState(false);
-
-  const handleComputeMC = () => {
-    setMcComputing(true);
-    // Use setTimeout to allow UI to update before blocking computation
-    setTimeout(() => {
-      const result = computeMonteCarloSimulation(params, 50);
-      setMcResult(result);
-      setMcComputing(false);
-      setShowMcModal(true);
-    }, 50);
-  };
-
   // Scenario state
   const [scenarioType, setScenarioType] = useState<'summary' | 'sequenceRisk' | 'rateShock' | 'optimalVsRuleOfThumb'>('summary');
   const [rateShockAge, setRateShockAge] = useState(50);
@@ -4220,69 +4204,6 @@ export default function LifecycleVisualizer() {
     }));
   }, [result]);
 
-  // Prepare Monte Carlo chart data with band ranges for proper stacking
-  const mcChartData = useMemo(() => {
-    if (!mcResult) return [];
-    return mcResult.ages.map((age, i) => ({
-      age,
-      // Consumption percentiles and bands
-      consumption_p05: mcResult.consumption_p05[i],
-      consumption_p25: mcResult.consumption_p25[i],
-      consumption_p50: mcResult.consumption_p50[i],
-      consumption_p75: mcResult.consumption_p75[i],
-      consumption_p95: mcResult.consumption_p95[i],
-      // Band ranges for proper area rendering
-      consumption_band_5_25: mcResult.consumption_p25[i] - mcResult.consumption_p05[i],
-      consumption_band_25_75: mcResult.consumption_p75[i] - mcResult.consumption_p25[i],
-      consumption_band_75_95: mcResult.consumption_p95[i] - mcResult.consumption_p75[i],
-      // Financial wealth percentiles and bands
-      fw_p05: mcResult.financialWealth_p05[i],
-      fw_p25: mcResult.financialWealth_p25[i],
-      fw_p50: mcResult.financialWealth_p50[i],
-      fw_p75: mcResult.financialWealth_p75[i],
-      fw_p95: mcResult.financialWealth_p95[i],
-      fw_band_5_25: mcResult.financialWealth_p25[i] - mcResult.financialWealth_p05[i],
-      fw_band_25_75: mcResult.financialWealth_p75[i] - mcResult.financialWealth_p25[i],
-      fw_band_75_95: mcResult.financialWealth_p95[i] - mcResult.financialWealth_p75[i],
-      // Total wealth percentiles (FW + HC)
-      tw_p05: mcResult.totalWealth_p05[i],
-      tw_p25: mcResult.totalWealth_p25[i],
-      tw_p50: mcResult.totalWealth_p50[i],
-      tw_p75: mcResult.totalWealth_p75[i],
-      tw_p95: mcResult.totalWealth_p95[i],
-      tw_band_5_25: mcResult.totalWealth_p25[i] - mcResult.totalWealth_p05[i],
-      tw_band_25_75: mcResult.totalWealth_p75[i] - mcResult.totalWealth_p25[i],
-      tw_band_75_95: mcResult.totalWealth_p95[i] - mcResult.totalWealth_p75[i],
-      // Net Worth percentiles (HC + FW - expenses)
-      nw_p05: mcResult.netWorth_p05[i],
-      nw_p25: mcResult.netWorth_p25[i],
-      nw_p50: mcResult.netWorth_p50[i],
-      nw_p75: mcResult.netWorth_p75[i],
-      nw_p95: mcResult.netWorth_p95[i],
-      nw_band_5_25: mcResult.netWorth_p25[i] - mcResult.netWorth_p05[i],
-      nw_band_25_75: mcResult.netWorth_p75[i] - mcResult.netWorth_p25[i],
-      nw_band_75_95: mcResult.netWorth_p95[i] - mcResult.netWorth_p75[i],
-      // Stock return percentiles (cumulative, using log scale for bands)
-      sr_p05: Math.log(mcResult.stockReturn_p05[i]),
-      sr_p25: Math.log(mcResult.stockReturn_p25[i]),
-      sr_p50: Math.log(mcResult.stockReturn_p50[i]),
-      sr_p75: Math.log(mcResult.stockReturn_p75[i]),
-      sr_p95: Math.log(mcResult.stockReturn_p95[i]),
-      sr_band_5_25: Math.log(mcResult.stockReturn_p25[i]) - Math.log(mcResult.stockReturn_p05[i]),
-      sr_band_25_75: Math.log(mcResult.stockReturn_p75[i]) - Math.log(mcResult.stockReturn_p25[i]),
-      sr_band_75_95: Math.log(mcResult.stockReturn_p95[i]) - Math.log(mcResult.stockReturn_p75[i]),
-      // Interest rate percentiles (in percentage)
-      ir_p05: mcResult.interestRate_p05[i] * 100,
-      ir_p25: mcResult.interestRate_p25[i] * 100,
-      ir_p50: mcResult.interestRate_p50[i] * 100,
-      ir_p75: mcResult.interestRate_p75[i] * 100,
-      ir_p95: mcResult.interestRate_p95[i] * 100,
-      ir_band_5_25: (mcResult.interestRate_p25[i] - mcResult.interestRate_p05[i]) * 100,
-      ir_band_25_75: (mcResult.interestRate_p75[i] - mcResult.interestRate_p25[i]) * 100,
-      ir_band_75_95: (mcResult.interestRate_p95[i] - mcResult.interestRate_p75[i]) * 100,
-    }));
-  }, [mcResult]);
-
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
       {/* Left Sidebar - Parameters */}
@@ -4451,26 +4372,6 @@ export default function LifecycleVisualizer() {
           <div>Bonds: {Math.round(result.targetBond * 100)}%</div>
           <div>Cash: {Math.round(result.targetCash * 100)}%</div>
         </div>
-
-        {/* Monte Carlo Button */}
-        <button
-          onClick={handleComputeMC}
-          disabled={mcComputing}
-          style={{
-            width: '100%',
-            padding: '10px 16px',
-            marginTop: '16px',
-            background: mcComputing ? '#ccc' : '#3498db',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: mcComputing ? 'wait' : 'pointer',
-            fontWeight: 'bold',
-            fontSize: '12px',
-          }}
-        >
-          {mcComputing ? 'Computing...' : 'Compute Monte Carlo'}
-        </button>
       </div>
 
       {/* Main Content - Charts */}
@@ -5485,14 +5386,18 @@ export default function LifecycleVisualizer() {
 
                       {/* Row 3: Portfolio Allocation */}
                       <ChartSection title={`${scenarioName}: Portfolio Allocation`}>
-                        {/* Stock Allocation */}
+                        {/* Stock Allocation - Overlaid Fan Chart */}
                         <ChartCard title="Stock Allocation (LDI Dynamic vs RoT Static)">
                           <ResponsiveContainer width="100%" height={280}>
                             <LineChart
                               data={ages.map((age, i) => ({
                                 age,
-                                ldiStock: scenario.ldi.percentiles.stockWeight.p50[i] * 100,
-                                rotStock: scenario.rot.percentiles.stockWeight.p50[i] * 100,
+                                ldiP05: scenario.ldi.percentiles.stockWeight.p5[i] * 100,
+                                ldiP50: scenario.ldi.percentiles.stockWeight.p50[i] * 100,
+                                ldiP95: scenario.ldi.percentiles.stockWeight.p95[i] * 100,
+                                rotP05: scenario.rot.percentiles.stockWeight.p5[i] * 100,
+                                rotP50: scenario.rot.percentiles.stockWeight.p50[i] * 100,
+                                rotP95: scenario.rot.percentiles.stockWeight.p95[i] * 100,
                               }))}
                               margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                             >
@@ -5502,12 +5407,18 @@ export default function LifecycleVisualizer() {
                               <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
                               <Legend wrapperStyle={{ fontSize: '11px' }} />
                               <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
-                              <Line type="monotone" dataKey="ldiStock" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Stock %" />
-                              <Line type="monotone" dataKey="rotStock" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Stock %" />
+                              {/* LDI percentile band */}
+                              <Line type="monotone" dataKey="ldiP05" stroke="#2980b9" strokeWidth={1} strokeDasharray="3 3" dot={false} name="LDI p5" />
+                              <Line type="monotone" dataKey="ldiP50" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Median" />
+                              <Line type="monotone" dataKey="ldiP95" stroke="#2980b9" strokeWidth={1} strokeDasharray="3 3" dot={false} name="LDI p95" />
+                              {/* RoT percentile band */}
+                              <Line type="monotone" dataKey="rotP05" stroke="#d4a84c" strokeWidth={1} strokeDasharray="3 3" dot={false} name="RoT p5" />
+                              <Line type="monotone" dataKey="rotP50" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Median" />
+                              <Line type="monotone" dataKey="rotP95" stroke="#d4a84c" strokeWidth={1} strokeDasharray="3 3" dot={false} name="RoT p95" />
                             </LineChart>
                           </ResponsiveContainer>
                           <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
-                            LDI adjusts dynamically, RoT maintains fixed allocation.
+                            Solid lines = medians, dashed = p5/p95. LDI (blue) vs RoT (gold).
                           </div>
                         </ChartCard>
 

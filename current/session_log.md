@@ -264,6 +264,36 @@ The TSX implementation:
 
 ---
 
+## Task 8 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** The teaching scenarios were using a separate `scenarioBeta` state variable that toggled between 0 and 0.4 via UI buttons. The task requires using the `stockBetaHC` value from the main parameter toggles instead, eliminating the separate beta toggle.
+
+**Action:** Modified web/lifecycle_visualizer_artifact.tsx to use `params.stockBetaHC` instead of a separate `scenarioBeta` state.
+
+**Changes:**
+1. Removed `scenarioBeta` state variable and `setScenarioBeta` setter (line 3965)
+2. Updated `lifecycleParams` to use `params.stockBetaHC` instead of `scenarioBeta` (line 3989)
+3. Updated `useMemo` dependency array to remove `scenarioBeta` (line 3994)
+4. Removed beta toggle UI buttons from scenario controls (lines 4778-4810)
+5. Updated scenario title display to show `params.stockBetaHC` instead of `scenarioBeta` (line 5289)
+
+**Results:**
+- Scenarios now use the HC Beta value from the main assumptions panel (`stockBetaHC`)
+- No separate beta toggle in the scenarios tab
+- Single set of results per scenario type (not one per beta)
+- Summary bar charts and individual scenario panels show results for selected beta only
+
+**Checks:**
+- [x] Changing HC Beta toggle in assumptions affects which beta is used for scenarios
+- [x] Only one set of scenario results per scenario type (not one per beta)
+- [x] Summary bar charts show results for selected beta only
+- [x] Individual scenario panels show results for selected beta only
+- [x] No separate beta toggle buttons in scenarios UI
+
+---
+
 ## Task 11 — 2026-01-26
 
 **Status:** complete
@@ -304,5 +334,46 @@ The TSX implementation includes:
 - [x] X-axis: Age, Y-axis: Interest Rate (%)
 - [x] Styling matches PDF (blue color #3498db matching COLOR_RATES, retirement reference line)
 - [x] Panel appears as second panel in each individual scenario tab view (Baseline, Sequence Risk, Rate Shock)
+
+---
+
+## Task 15 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 15 requires implementing the Bond Allocation panel as the sixth panel (axes[2,1]) in the 4x2 grid for individual scenario tabs. The panel should show overlaid fan charts comparing LDI and RoT bond allocation over time.
+
+The PDF reference (compare_teaching_scenarios.py lines 660-672) shows:
+- Panel position: axes[2, 1] (Row 3, second column - "Portfolio Allocation")
+- Overlaid fan charts using `plot_fan_chart` for both LDI and RoT
+- Colors: LDI = '#1A759F' (blue), RoT = '#E9C46A' (amber) - in TSX using #2980b9/#d4a84c for consistency
+- X-axis: Years from Career Start, Y-axis: Bond Weight (%)
+- Title: "Bond Allocation (LDI Dynamic vs RoT Static)"
+- Y-axis domain: 0-100%
+
+The existing implementation was a simple LineChart showing only median values. Updated to be a proper overlaid fan chart with:
+1. AreaChart with separate stackId for LDI and RoT
+2. Percentile bands: p5-p25 (15% opacity), p25-p75 (30% opacity), p75-p95 (15% opacity)
+3. Transparent base areas (ldiP05, rotP05) to offset the stacked bands
+4. Median lines for both strategies
+5. Retirement age reference line
+6. Legend with band labels
+
+**Action:** Converted Bond Allocation panel from LineChart to AreaChart with overlaid fan chart bands
+
+**Results:**
+- Panel now renders as overlaid fan chart with percentile bands for both LDI and RoT
+- LDI bands: blue (#2980b9) at 15%/30%/15% opacity
+- RoT bands: gold (#d4a84c) at 15%/30%/15% opacity
+- Both median lines rendered as solid 2px Lines
+- Caption updated to explain fan chart visualization
+
+**Checks:**
+- [x] Panel shows overlaid fan chart comparing LDI and RoT bond allocation over time
+- [x] X-axis: Age, Y-axis: Bond Allocation (%)
+- [x] Uses distinct colors for LDI (blue) vs RoT (orange/gold)
+- [x] Y-axis domain 0-100% matching PDF
+- [x] Data comes from teachingScenarios (scenario.ldi/rot.percentiles.bondWeight)
+- [x] Panel appears as sixth panel in each individual scenario tab view
 
 ---
