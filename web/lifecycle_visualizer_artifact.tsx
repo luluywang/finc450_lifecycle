@@ -807,6 +807,101 @@ function computeFullMertonAllocationConstrained(
   return [wStock, wBond, wCash];
 }
 
+/**
+ * Normalize portfolio weights with no-short constraint.
+ *
+ * Takes target financial holdings and normalizes to valid weights.
+ * Matches Python core/simulation.py normalize_portfolio_weights exactly.
+ *
+ * When allow_leverage=false (default):
+ *   - Clips negative weights to 0
+ *   - Normalizes to sum to 1.0
+ *   - Preserves relative proportions where possible
+ *
+ * When allow_leverage=true:
+ *   - Returns raw weights (can be negative or >1)
+ *   - Allows shorting and leveraged positions
+ *
+ * @param targetFinStock - Target financial stock holdings ($)
+ * @param targetFinBond - Target financial bond holdings ($)
+ * @param targetFinCash - Target financial cash holdings ($)
+ * @param fw - Current financial wealth ($)
+ * @param targetStock - Baseline target stock weight (from MV optimization)
+ * @param targetBond - Baseline target bond weight
+ * @param targetCash - Baseline target cash weight
+ * @param allowLeverage - If true, allow negative/leveraged weights
+ * @returns [stockWeight, bondWeight, cashWeight] normalized to sum to 1
+ */
+function normalizePortfolioWeights(
+  targetFinStock: number,
+  targetFinBond: number,
+  targetFinCash: number,
+  fw: number,
+  targetStock: number,
+  targetBond: number,
+  targetCash: number,
+  allowLeverage: boolean = false
+): [number, number, number] {
+  // Edge case: no financial wealth, return baseline targets
+  if (fw <= 1e-6) {
+    return [targetStock, targetBond, targetCash];
+  }
+
+  // Compute raw weights
+  let wStock = targetFinStock / fw;
+  let wBond = targetFinBond / fw;
+  let wCash = targetFinCash / fw;
+
+  // If leverage is allowed, return raw (unconstrained) weights
+  if (allowLeverage) {
+    return [wStock, wBond, wCash];
+  }
+
+  // Apply no-short constraint
+  let equity = Math.max(0, wStock);
+  let fixedIncome = Math.max(0, wBond + wCash);
+
+  const totalAgg = equity + fixedIncome;
+  if (totalAgg > 0) {
+    equity /= totalAgg;
+    fixedIncome /= totalAgg;
+  } else {
+    // Edge case: all target financial holdings are non-positive
+    // Fall back to baseline target allocations
+    equity = targetStock;
+    fixedIncome = targetBond + targetCash;
+  }
+
+  // Split fixed income between bonds and cash
+  let wB: number;
+  let wC: number;
+
+  if (wBond > 0 && wCash > 0) {
+    const fiTotal = wBond + wCash;
+    wB = fixedIncome * (wBond / fiTotal);
+    wC = fixedIncome * (wCash / fiTotal);
+  } else if (wBond > 0) {
+    wB = fixedIncome;
+    wC = 0;
+  } else if (wCash > 0) {
+    wB = 0;
+    wC = fixedIncome;
+  } else {
+    // Both wBond and wCash are non-positive
+    const targetFI = targetBond + targetCash;
+    if (targetFI > 0) {
+      wB = fixedIncome * (targetBond / targetFI);
+      wC = fixedIncome * (targetCash / targetFI);
+    } else {
+      // Edge case: target FI is also zero/negative, split equally
+      wB = fixedIncome / 2;
+      wC = fixedIncome / 2;
+    }
+  }
+
+  return [equity, wB, wC];
+}
+
 function computeEarningsProfile(params: Params): number[] {
   const workingYears = params.retirementAge - params.startAge;
   const earnings: number[] = [];
@@ -988,55 +1083,20 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const targetFinBonds = totalWealth.map((tw, i) => targetBond * tw - hcBond[i]);
   const targetFinCash = totalWealth.map((tw, i) => targetCash * tw - hcCash[i]);
 
-  // Apply no-short constraints to get portfolio weights
+  // Apply no-short constraints to get portfolio weights using normalize helper
   const stockWeight = Array(totalYears).fill(0);
   const bondWeight = Array(totalYears).fill(0);
   const cashWeight = Array(totalYears).fill(0);
 
   for (let i = 0; i < totalYears; i++) {
-    const fw = financialWealth[i];
-    if (fw > 1e-6) {
-      let wStock = targetFinStocks[i] / fw;
-      let wBond = targetFinBonds[i] / fw;
-      let wCash = targetFinCash[i] / fw;
-
-      // Aggregate to equity vs fixed income
-      let equity = Math.max(0, wStock);
-      let fixedIncome = Math.max(0, wBond + wCash);
-
-      // Normalize
-      const totalAgg = equity + fixedIncome;
-      if (totalAgg > 0) {
-        equity /= totalAgg;
-        fixedIncome /= totalAgg;
-      } else {
-        equity = targetStock;
-        fixedIncome = targetBond + targetCash;
-      }
-
-      // Split fixed income
-      if (wBond > 0 && wCash > 0) {
-        const fiTotal = wBond + wCash;
-        bondWeight[i] = fixedIncome * (wBond / fiTotal);
-        cashWeight[i] = fixedIncome * (wCash / fiTotal);
-      } else if (wBond > 0) {
-        bondWeight[i] = fixedIncome;
-        cashWeight[i] = 0;
-      } else if (wCash > 0) {
-        bondWeight[i] = 0;
-        cashWeight[i] = fixedIncome;
-      } else {
-        const targetFI = targetBond + targetCash;
-        if (targetFI > 0) {
-          bondWeight[i] = fixedIncome * (targetBond / targetFI);
-          cashWeight[i] = fixedIncome * (targetCash / targetFI);
-        } else {
-          bondWeight[i] = fixedIncome / 2;
-          cashWeight[i] = fixedIncome / 2;
-        }
-      }
-      stockWeight[i] = equity;
-    }
+    const [wS, wB, wC] = normalizePortfolioWeights(
+      targetFinStocks[i], targetFinBonds[i], targetFinCash[i],
+      financialWealth[i], targetStock, targetBond, targetCash,
+      false  // no leverage for median path
+    );
+    stockWeight[i] = wS;
+    bondWeight[i] = wB;
+    cashWeight[i] = wC;
   }
 
   return {
@@ -1179,49 +1239,19 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
 
     totalWealth[i] = financialWealth[i] + humanCapital[i];
 
-    // Portfolio weights
-    const fw = financialWealth[i];
-    if (fw > 1e-6) {
-      const targetFinStocks = targetStock * totalWealth[i] - hcStock[i];
-      const targetFinBonds = targetBond * totalWealth[i] - hcBond[i];
-      const targetFinCash = targetCash * totalWealth[i] - hcCash[i];
+    // Portfolio weights using normalize helper
+    const targetFinStocks = targetStock * totalWealth[i] - hcStock[i];
+    const targetFinBonds = targetBond * totalWealth[i] - hcBond[i];
+    const targetFinCash = targetCash * totalWealth[i] - hcCash[i];
 
-      let wStock = targetFinStocks / fw;
-      let wBond = targetFinBonds / fw;
-      let wCash = targetFinCash / fw;
-
-      let equity = Math.max(0, wStock);
-      let fixedIncome = Math.max(0, wBond + wCash);
-
-      const totalAgg = equity + fixedIncome;
-      if (totalAgg > 0) {
-        equity /= totalAgg;
-        fixedIncome /= totalAgg;
-      } else {
-        equity = targetStock;
-        fixedIncome = targetBond + targetCash;
-      }
-
-      if (wBond > 0 && wCash > 0) {
-        const fiTotal = wBond + wCash;
-        bondWeight[i] = fixedIncome * (wBond / fiTotal);
-        cashWeight[i] = fixedIncome * (wCash / fiTotal);
-      } else if (wBond > 0) {
-        bondWeight[i] = fixedIncome;
-      } else if (wCash > 0) {
-        cashWeight[i] = fixedIncome;
-      } else {
-        const targetFI = targetBond + targetCash;
-        if (targetFI > 0) {
-          bondWeight[i] = fixedIncome * (targetBond / targetFI);
-          cashWeight[i] = fixedIncome * (targetCash / targetFI);
-        } else {
-          bondWeight[i] = fixedIncome / 2;
-          cashWeight[i] = fixedIncome / 2;
-        }
-      }
-      stockWeight[i] = equity;
-    }
+    const [wS, wB, wC] = normalizePortfolioWeights(
+      targetFinStocks, targetFinBonds, targetFinCash,
+      financialWealth[i], targetStock, targetBond, targetCash,
+      false  // no leverage
+    );
+    stockWeight[i] = wS;
+    bondWeight[i] = wB;
+    cashWeight[i] = wC;
 
     // Consumption decision
     netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
@@ -1572,43 +1602,16 @@ function computeScenarioPath(
     const totalWealth = financialWealth[i] + humanCapital;
     totalWealthArr[i] = totalWealth;
 
-    // Portfolio weights
-    let stockWeight = targetStock;
-    let bondWeight = targetBond;
-    let cashWeight = targetCash;
+    // Portfolio weights using normalize helper
+    const targetFinStocks = targetStock * totalWealth - hcStock;
+    const targetFinBonds = targetBond * totalWealth - hcBond;
+    const targetFinCash = targetCash * totalWealth - hcCash;
 
-    const fw = financialWealth[i];
-    if (fw > 1e-6) {
-      const targetFinStocks = targetStock * totalWealth - hcStock;
-      const targetFinBonds = targetBond * totalWealth - hcBond;
-      const targetFinCash = targetCash * totalWealth - hcCash;
-
-      let wStock = targetFinStocks / fw;
-      let wBond = targetFinBonds / fw;
-      let wCash = targetFinCash / fw;
-
-      let equity = Math.max(0, wStock);
-      let fixedIncome = Math.max(0, wBond + wCash);
-
-      const totalAgg = equity + fixedIncome;
-      if (totalAgg > 0) {
-        equity /= totalAgg;
-        fixedIncome /= totalAgg;
-      }
-
-      if (wBond > 0 && wCash > 0) {
-        const fiTotal = wBond + wCash;
-        bondWeight = fixedIncome * (wBond / fiTotal);
-        cashWeight = fixedIncome * (wCash / fiTotal);
-      } else if (wBond > 0) {
-        bondWeight = fixedIncome;
-        cashWeight = 0;
-      } else {
-        bondWeight = 0;
-        cashWeight = fixedIncome;
-      }
-      stockWeight = equity;
-    }
+    const [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
+      targetFinStocks, targetFinBonds, targetFinCash,
+      financialWealth[i], targetStock, targetBond, targetCash,
+      false  // no leverage
+    );
 
     // Consumption decision based on rule
     const netWorth = humanCapital + financialWealth[i] - pvExpenses;
@@ -1858,43 +1861,16 @@ function computeOptimalStrategy(
 
     const totalWealth = financialWealth[i] + humanCapital;
 
-    // Portfolio weights
-    let stockWeight = targetStock;
-    let bondWeight = targetBond;
-    let cashWeight = targetCash;
+    // Portfolio weights using normalize helper
+    const targetFinStocks = targetStock * totalWealth - hcStock;
+    const targetFinBonds = targetBond * totalWealth - hcBond;
+    const targetFinCash = targetCash * totalWealth - hcCash;
 
-    const fw = financialWealth[i];
-    if (fw > 1e-6) {
-      const targetFinStocks = targetStock * totalWealth - hcStock;
-      const targetFinBonds = targetBond * totalWealth - hcBond;
-      const targetFinCash = targetCash * totalWealth - hcCash;
-
-      let wStock = targetFinStocks / fw;
-      let wBond = targetFinBonds / fw;
-      let wCash = targetFinCash / fw;
-
-      let equity = Math.max(0, wStock);
-      let fixedIncome = Math.max(0, wBond + wCash);
-
-      const totalAgg = equity + fixedIncome;
-      if (totalAgg > 0) {
-        equity /= totalAgg;
-        fixedIncome /= totalAgg;
-      }
-
-      if (wBond > 0 && wCash > 0) {
-        const fiTotal = wBond + wCash;
-        bondWeight = fixedIncome * (wBond / fiTotal);
-        cashWeight = fixedIncome * (wCash / fiTotal);
-      } else if (wBond > 0) {
-        bondWeight = fixedIncome;
-        cashWeight = 0;
-      } else {
-        bondWeight = 0;
-        cashWeight = fixedIncome;
-      }
-      stockWeight = equity;
-    }
+    const [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
+      targetFinStocks, targetFinBonds, targetFinCash,
+      financialWealth[i], targetStock, targetBond, targetCash,
+      false  // no leverage
+    );
 
     stockWeightArr[i] = stockWeight;
     bondWeightArr[i] = bondWeight;
