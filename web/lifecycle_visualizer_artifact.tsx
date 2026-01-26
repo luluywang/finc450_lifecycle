@@ -4068,6 +4068,10 @@ export default function LifecycleVisualizer() {
       subsistence: result.subsistenceConsumption[i],
       variable: result.variableConsumption[i],
       totalConsumption: result.totalConsumption[i],
+      // Cash Flow / Savings (earnings - consumption)
+      savings: result.earnings[i] - result.totalConsumption[i],
+      // Total Wealth (HC + FW)
+      totalWealth: result.totalWealth[i],
     }));
   }, [result]);
 
@@ -4384,6 +4388,27 @@ export default function LifecycleVisualizer() {
                 <Line type="monotone" dataKey="earnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Earnings" />
                 <Line type="monotone" dataKey="expenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Expenses" />
               </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Cash Flow / Savings ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={10} />
+                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                <Area
+                  type="monotone"
+                  dataKey="savings"
+                  stroke={COLORS.earnings}
+                  fill={COLORS.earnings}
+                  fillOpacity={0.6}
+                  name="Savings (positive) / Drawdown (negative)"
+                />
+              </AreaChart>
             </ResponsiveContainer>
           </ChartCard>
         </ChartSection>
