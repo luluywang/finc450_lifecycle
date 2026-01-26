@@ -36,6 +36,8 @@ from .helpers import (
     setup_comparison_axes,
     compute_x_axis_from_ages,
     add_standard_chart_elements,
+    # PNG export utility
+    save_panel_as_png,
 )
 
 # Import lifecycle plots
@@ -125,6 +127,8 @@ __all__ = [
     'setup_comparison_axes',
     'compute_x_axis_from_ages',
     'add_standard_chart_elements',
+    # PNG export utility
+    'save_panel_as_png',
 
     # Lifecycle plots
     'plot_earnings_expenses_profile',

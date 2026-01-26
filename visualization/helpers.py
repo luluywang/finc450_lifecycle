@@ -4,12 +4,66 @@ Plot utility functions and helpers for lifecycle visualization.
 This module provides common plotting utilities used across visualization modules.
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core import LifecycleParams, LifecycleResult
+
+
+def save_panel_as_png(
+    fig: plt.Figure,
+    panel_name: str,
+    output_dir: str = "output/teaching_panels"
+) -> str:
+    """
+    Save a matplotlib figure as a PNG file for PowerPoint integration.
+
+    This function saves figures at publication quality (300 DPI) with minimal
+    whitespace using tight bounding box. It creates the output directory if
+    it doesn't exist.
+
+    Args:
+        fig: The matplotlib Figure object to save.
+        panel_name: The filename for the PNG (without extension).
+                   Should follow naming convention: source_section_desc
+                   (e.g., 'lifecycle_assumptions_income_expenses').
+        output_dir: Directory to save the PNG file.
+                   Defaults to 'output/teaching_panels'.
+
+    Returns:
+        The absolute path to the saved PNG file.
+
+    Example:
+        >>> fig, ax = plt.subplots()
+        >>> ax.plot([1, 2, 3], [1, 4, 9])
+        >>> path = save_panel_as_png(fig, 'lifecycle_assumptions_income_expenses')
+        >>> print(path)  # '/path/to/output/teaching_panels/lifecycle_assumptions_income_expenses.png'
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Construct full path with .png extension
+    if not panel_name.endswith('.png'):
+        filename = f"{panel_name}.png"
+    else:
+        filename = panel_name
+
+    filepath = os.path.join(output_dir, filename)
+
+    # Save figure at 300 DPI with tight bounding box
+    fig.savefig(
+        filepath,
+        dpi=300,
+        bbox_inches='tight',
+        facecolor='white',
+        edgecolor='none'
+    )
+
+    # Return absolute path
+    return os.path.abspath(filepath)
 
 
 def apply_wealth_log_scale(ax: plt.Axes, linthresh: float = 50, linscale: float = 0.5) -> None:
