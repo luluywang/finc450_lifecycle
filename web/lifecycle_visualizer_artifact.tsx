@@ -442,6 +442,42 @@ function generateCorrelatedShocks(
   return [stockShock, rateShock];
 }
 
+/**
+ * Update interest rate following random walk process (phi=1.0).
+ *
+ * This implements the discrete-time AR(1) process for interest rates:
+ *   r_{t+1} = r_bar + phi * (r_t - r_bar) + sigma_r * epsilon_t
+ *
+ * When phi = 1.0 (random walk), this simplifies to:
+ *   r_{t+1} = r_t + sigma_r * epsilon_t
+ *
+ * The function tracks both:
+ * - latentRate: The unbounded rate following the pure random walk
+ * - observedRate: The capped rate used for pricing (floor -2%, cap 15%)
+ *
+ * This matches Python core/economics.py::simulate_interest_rates() exactly.
+ *
+ * @param latentRate - Current latent (unbounded) interest rate
+ * @param sigmaR - Rate shock volatility (standard deviation)
+ * @param rateShock - Standard normal shock (epsilon_t)
+ * @param rateFloor - Minimum observed rate (default -0.02 = -2%)
+ * @param rateCap - Maximum observed rate (default 0.15 = 15%)
+ * @returns [newLatentRate, observedRate] - Updated latent rate and capped observed rate
+ */
+function updateInterestRate(
+  latentRate: number,
+  sigmaR: number,
+  rateShock: number,
+  rateFloor: number = -0.02,
+  rateCap: number = 0.15
+): [number, number] {
+  // Random walk update: r_t = r_{t-1} + sigma_r * shock
+  const newLatentRate = latentRate + sigmaR * rateShock;
+  // Observed rate = capped latent rate
+  const observedRate = Math.max(rateFloor, Math.min(rateCap, newLatentRate));
+  return [newLatentRate, observedRate];
+}
+
 // =============================================================================
 // Core Calculation Functions
 // =============================================================================
@@ -1094,10 +1130,8 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     // Generate correlated shocks for this year
     const [stockShock, rateShock] = generateCorrelatedShocks(rand, params.rho);
 
-    // Update latent rate with pure random walk (no mean reversion)
-    latentRate = latentRate + params.sigmaR * rateShock;
-    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
-    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    // Update interest rate using random walk (phi=1.0)
+    [latentRate, currentRate] = updateInterestRate(latentRate, params.sigmaR, rateShock);
 
     // Track interest rate
     interestRateArr[i] = currentRate;
@@ -1499,10 +1533,8 @@ function computeScenarioPath(
       latentRate += scenario.rateShockMagnitude;
     }
 
-    // Update latent rate with pure random walk (no mean reversion)
-    latentRate = latentRate + params.sigmaR * rateShock;
-    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
-    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    // Update interest rate using random walk (phi=1.0)
+    [latentRate, currentRate] = updateInterestRate(latentRate, params.sigmaR, rateShock);
     rateHistory[i] = currentRate;
 
     // Compute PVs with current rate
@@ -1788,10 +1820,8 @@ function computeOptimalStrategy(
       stockShock = -Math.abs(stockShock) * 0.5 - 0.3; // Force moderately negative (~-5% avg/year)
     }
 
-    // Update latent rate with pure random walk (no mean reversion)
-    latentRate = latentRate + params.sigmaR * rateShock;
-    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
-    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    // Update interest rate using random walk (phi=1.0)
+    [latentRate, currentRate] = updateInterestRate(latentRate, params.sigmaR, rateShock);
     interestRateArr[i] = currentRate;
 
     // Compute PVs for optimal strategy
@@ -1993,10 +2023,8 @@ function computeRuleOfThumbStrategy(
       stockShock = -Math.abs(stockShock) * 0.5 - 0.3; // Force moderately negative (~-5% avg/year)
     }
 
-    // Update latent rate with pure random walk (no mean reversion)
-    latentRate = latentRate + params.sigmaR * rateShock;
-    // Observed rate = capped latent rate (floor at -2%, cap at 15%)
-    currentRate = Math.max(-0.02, Math.min(0.15, latentRate));
+    // Update interest rate using random walk (phi=1.0)
+    [latentRate, currentRate] = updateInterestRate(latentRate, params.sigmaR, rateShock);
     interestRateArr[i] = currentRate;
 
     // Rule of Thumb allocation: (100 - age)% stocks, rest split 50/50 cash/bonds
