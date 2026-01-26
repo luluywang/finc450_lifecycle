@@ -3698,7 +3698,7 @@ const COLORS = {
   expenses: '#e67e22',
   hc: '#1abc9c',
   fw: '#34495e',
-  subsistence: '#95a5a6',
+  subsistence: '#7f8c8d',  // Darker gray for better contrast
   variable: '#f39c12',
 };
 
@@ -3718,10 +3718,10 @@ const yearsTooltipFormatter = (value: number | undefined) => value !== undefined
 function ChartSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: '24px' }}>
-      <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px', color: '#2c3e50' }}>
+      <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '12px', color: '#2c3e50' }}>
         {title}
       </h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
         {children}
       </div>
     </div>
@@ -3737,7 +3737,7 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
       padding: '12px',
       minHeight: '320px',
     }}>
-      <div style={{ fontSize: '12px', fontWeight: '500', marginBottom: '8px', color: '#555' }}>
+      <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '8px', color: '#444' }}>
         {title}
       </div>
       {children}
@@ -4119,10 +4119,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Line type="monotone" dataKey="earnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Earnings" />
                 <Line type="monotone" dataKey="expenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Expenses" />
               </LineChart>
@@ -4133,10 +4133,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
                 <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${(value * 100).toFixed(0)}%` : ''} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <ReferenceLine y={1} stroke="#999" strokeDasharray="3 3" />
                 <Line type="monotone" dataKey="cumulativeStockReturn" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Expected Cumulative Return" />
               </LineChart>
@@ -4147,10 +4147,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
                 <Tooltip formatter={percentTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Line type="monotone" dataKey="interestRate" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Interest Rate" />
               </LineChart>
             </ResponsiveContainer>
@@ -4163,10 +4163,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Line type="monotone" dataKey="pvEarnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="PV Earnings" />
                 <Line type="monotone" dataKey="pvExpenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="PV Expenses" />
               </LineChart>
@@ -4177,10 +4177,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatYears} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatYears} />
                 <Tooltip formatter={yearsTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Line type="monotone" dataKey="durationEarnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Duration (Earnings)" />
                 <Line type="monotone" dataKey="durationExpenses" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Duration (Expenses)" />
               </LineChart>
@@ -4194,10 +4194,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="financialWealth" stackId="1" stroke={COLORS.fw} fill={COLORS.fw} name="Financial Wealth" />
                 <Area type="monotone" dataKey="humanCapital" stackId="1" stroke={COLORS.hc} fill={COLORS.hc} name="Human Capital" />
               </AreaChart>
@@ -4208,10 +4208,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="hcCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="HC Cash" />
                 <Area type="monotone" dataKey="hcBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="HC Bond" />
                 <Area type="monotone" dataKey="hcStock" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="HC Stock" />
@@ -4223,10 +4223,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="expCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Expense Cash" />
                 <Area type="monotone" dataKey="expBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Expense Bond" />
               </AreaChart>
@@ -4237,10 +4237,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="netCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Net Cash" />
                 <Area type="monotone" dataKey="netBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Net Bond" />
                 <Area type="monotone" dataKey="netStock" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Net Stock" />
@@ -4255,10 +4255,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="subsistence" stackId="1" stroke={COLORS.subsistence} fill={COLORS.subsistence} name="Subsistence" />
                 <Area type="monotone" dataKey="variable" stackId="1" stroke={COLORS.variable} fill={COLORS.variable} name="Variable" />
               </AreaChart>
@@ -4269,10 +4269,10 @@ export default function LifecycleVisualizer() {
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} domain={[0, 100]} tickFormatter={formatPercent} />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} domain={[0, 100]} tickFormatter={formatPercent} />
                 <Tooltip formatter={percentTooltipFormatter} />
-                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="cashWeight" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Cash" />
                 <Area type="monotone" dataKey="bondWeight" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Bonds" />
                 <Area type="monotone" dataKey="stockWeight" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Stocks" />
@@ -4630,7 +4630,7 @@ export default function LifecycleVisualizer() {
                       >
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="scenario" fontSize={11} />
-                        <YAxis fontSize={10} domain={[0, 60]} tickFormatter={(v) => `${v}%`} />
+                        <YAxis fontSize={11} domain={[0, 60]} tickFormatter={(v) => `${v}%`} />
                         <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
                         <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
@@ -4667,7 +4667,7 @@ export default function LifecycleVisualizer() {
                       >
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="scenario" fontSize={11} />
-                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
                         <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
                         <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
@@ -4704,7 +4704,7 @@ export default function LifecycleVisualizer() {
                       >
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="scenario" fontSize={11} />
-                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
                         <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
                         <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
@@ -4984,15 +4984,15 @@ export default function LifecycleVisualizer() {
               return (
               <>
                 {/* Responsive 2-column grid layout matching PDF 4x2 structure */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
 
                   {/* Panel 1: Cumulative Stock Market Returns (fan chart) */}
                   <ChartCard title="Panel 1: Cumulative Stock Market Returns">
                     <ResponsiveContainer width="100%" height={280}>
                       <AreaChart data={marketData}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} tickFormatter={(v) => `${(Math.exp(v) * 100).toFixed(0)}%`} domain={['auto', 'auto']} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `${(Math.exp(v) * 100).toFixed(0)}%`} domain={['auto', 'auto']} />
                         <Tooltip formatter={(v) => v !== undefined ? [`${(Math.exp(v as number) * 100).toFixed(0)}%`, 'Return'] : ['', '']} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
@@ -5013,8 +5013,8 @@ export default function LifecycleVisualizer() {
                     <ResponsiveContainer width="100%" height={280}>
                       <AreaChart data={marketData}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} tickFormatter={(v) => `${v.toFixed(1)}%`} domain={['auto', 'auto']} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `${v.toFixed(1)}%`} domain={['auto', 'auto']} />
                         <Tooltip formatter={(v) => v !== undefined ? [`${(v as number).toFixed(2)}%`, 'Rate'] : ['', '']} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <Area type="monotone" dataKey="rate_p5" stackId="rate" fill="transparent" stroke="transparent" />
@@ -5034,8 +5034,8 @@ export default function LifecycleVisualizer() {
                     <ResponsiveContainer width="100%" height={280}>
                       <LineChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
                         <Tooltip formatter={dollarKTooltipFormatter} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
@@ -5047,7 +5047,7 @@ export default function LifecycleVisualizer() {
                         <Line type="monotone" dataKey="rot_fw_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_fw_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
                         <Line type="monotone" dataKey="rot_fw_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
-                        <Legend wrapperStyle={{ fontSize: '10px' }} />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
                       </LineChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
@@ -5072,8 +5072,8 @@ export default function LifecycleVisualizer() {
                         <ResponsiveContainer width="100%" height={180}>
                           <BarChart data={bins}>
                             <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="age" fontSize={9} />
-                            <YAxis fontSize={10} />
+                            <XAxis dataKey="age" fontSize={10} />
+                            <YAxis fontSize={11} />
                             <Tooltip />
                             <Bar dataKey="LDI" fill={COLOR_LDI} name="LDI" />
                             <Bar dataKey="RoT" fill={COLOR_ROT} name="RoT" />
@@ -5090,8 +5090,8 @@ export default function LifecycleVisualizer() {
                     <ResponsiveContainer width="100%" height={280}>
                       <LineChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} domain={[0, 100]} tickFormatter={formatPercent} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} domain={[0, 100]} tickFormatter={formatPercent} />
                         <Tooltip formatter={percentTooltipFormatter} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         {/* LDI lines */}
@@ -5102,7 +5102,7 @@ export default function LifecycleVisualizer() {
                         <Line type="monotone" dataKey="rot_stock_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_stock_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
                         <Line type="monotone" dataKey="rot_stock_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
-                        <Legend wrapperStyle={{ fontSize: '10px' }} />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
                       </LineChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
@@ -5115,8 +5115,8 @@ export default function LifecycleVisualizer() {
                     <ResponsiveContainer width="100%" height={280}>
                       <LineChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} domain={[0, 100]} tickFormatter={formatPercent} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} domain={[0, 100]} tickFormatter={formatPercent} />
                         <Tooltip formatter={percentTooltipFormatter} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         {/* LDI lines */}
@@ -5127,7 +5127,7 @@ export default function LifecycleVisualizer() {
                         <Line type="monotone" dataKey="rot_bond_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_bond_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
                         <Line type="monotone" dataKey="rot_bond_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
-                        <Legend wrapperStyle={{ fontSize: '10px' }} />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
                       </LineChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
@@ -5151,8 +5151,8 @@ export default function LifecycleVisualizer() {
                       <ResponsiveContainer width="100%" height={180}>
                         <BarChart data={wealthHistData}>
                           <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="bin" fontSize={9} />
-                          <YAxis fontSize={10} />
+                          <XAxis dataKey="bin" fontSize={10} />
+                          <YAxis fontSize={11} />
                           <Tooltip />
                           <Bar dataKey="LDI" fill={COLOR_LDI} name="LDI" />
                           <Bar dataKey="RoT" fill={COLOR_ROT} name="RoT" />
@@ -5177,8 +5177,8 @@ export default function LifecycleVisualizer() {
                       <ResponsiveContainer width="100%" height={180}>
                         <BarChart data={pvHistData}>
                           <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="bin" fontSize={9} />
-                          <YAxis fontSize={10} />
+                          <XAxis dataKey="bin" fontSize={10} />
+                          <YAxis fontSize={11} />
                           <Tooltip />
                           <Bar dataKey="LDI" fill={COLOR_LDI} name="LDI" />
                           <Bar dataKey="RoT" fill={COLOR_ROT} name="RoT" />
