@@ -65,7 +65,8 @@
       "description": "Clean up old Monte Carlo visualization component",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Removed: MonteCarloResult interface, computeMonteCarloSimulation function, mcResult/showMcModal/mcComputing state variables, handleComputeMC handler, mcChartData useMemo, 'Compute Monte Carlo' button, entire Monte Carlo Modal JSX block (219 lines). MonteCarloSimulationResult interface and runMonteCarloSimulation kept for Scenarios tab."
     },
     {
       "id": 8,

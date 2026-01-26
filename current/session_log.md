@@ -460,3 +460,37 @@ The TSX implementation includes:
 - [x] Panel appears as third panel in each individual scenario tab view
 
 ---
+
+## Task 7 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 7 requires removing the old Monte Carlo page/modal component that was superseded by the new Scenarios tab functionality. The old MC modal was triggered by a "Compute Monte Carlo" button on the base page and displayed percentile fan charts for various metrics. This functionality is now handled by the "Run Simulation" button in the Scenarios tab.
+
+**Action:** Removed the following from web/lifecycle_visualizer_artifact.tsx:
+1. `MonteCarloResult` interface (37 lines) - old data structure for MC results
+2. `computeMonteCarloSimulation` function (131 lines) - old MC computation logic  
+3. State variables: mcResult, showMcModal, mcComputing
+4. Handler: handleComputeMC
+5. useMemo: mcChartData
+6. "Compute Monte Carlo" button from sidebar
+7. Monte Carlo Modal JSX block (219 lines) - the popup with fan charts
+
+**Results:**
+- File reduced from 6234 to 5638 lines (-596 lines)
+- No separate "Monte Carlo" modal or page exists
+- "Compute Monte Carlo" button removed from base page sidebar
+- All Monte Carlo functionality now accessed through Scenarios tab's "Run Simulation" button
+- mcResult, showMcModal, mcComputing state variables removed
+- teachingScenarios computation and Scenarios tab functionality preserved
+- MonteCarloSimulationResult interface and runMonteCarloSimulation function kept (used by Scenarios tab)
+
+**Checks:**
+- [x] No separate "Monte Carlo" modal or page exists
+- [x] The "Compute Monte Carlo" button from the base page is removed
+- [x] All Monte Carlo functionality is accessed through the Scenarios tab button
+- [x] mcResult state and related modal state removed
+- [x] teachingScenarios computation intact
+- [x] Scenarios tab functionality works correctly
+
+---
