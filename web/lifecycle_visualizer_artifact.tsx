@@ -231,6 +231,7 @@ interface SimulationState {
   t: number;                    // Current period (0-indexed)
   age: number;                  // Current age (Python: age)
   year: number;                 // Current year (derived from age - startAge)
+  isWorking: boolean;           // True if before retirement (Python: is_working)
 
   // Market state
   currentRate: number;          // Current interest rate (Python: current_rate)
@@ -246,10 +247,29 @@ interface SimulationState {
   // Wealth measures
   financialWealth: number;      // Current FW (Python: financial_wealth)
   totalWealth: number;          // HC + FW (Python: total_wealth)
+  netWorth: number;             // HC + FW - PV(expenses) (Python: net_worth)
 
   // Cash flows
   earnings: number;             // Current period earnings (Python: earnings)
   expenses: number;             // Current period expenses/subsistence (Python: expenses)
+
+  // HC decomposition (for LDI hedge) - Python: hc_stock_component, hc_bond_component, hc_cash_component
+  hcStockComponent: number;     // Stock-like portion of human capital
+  hcBondComponent: number;      // Bond-like portion of human capital
+  hcCashComponent: number;      // Cash-like portion of human capital
+
+  // Expense liability decomposition (for LDI hedge) - Python: exp_bond_component, exp_cash_component
+  expBondComponent: number;     // Bond-like portion of expense liability
+  expCashComponent: number;     // Cash-like portion of expense liability
+
+  // Target allocations from MV optimization
+  targetStock: number;          // Target stock allocation (Python: target_stock)
+  targetBond: number;           // Target bond allocation (Python: target_bond)
+  targetCash: number;           // Target cash allocation (Python: target_cash)
+
+  // Parameters (read-only reference)
+  params: LifecycleParams;      // Lifecycle parameters
+  econParams: EconomicParams;   // Economic parameters
 }
 
 /**
@@ -1210,6 +1230,7 @@ function simulateWithStrategy(
         t: t,
         age: age,
         year: t,
+        isWorking: isWorking,
         currentRate: currentRate,
         humanCapital: hc,
         pvExpenses: pvExp,
@@ -1217,8 +1238,19 @@ function simulateWithStrategy(
         durationExp: durationExp,
         financialWealth: fw,
         totalWealth: totalWealth,
+        netWorth: netWorth,
         earnings: currentEarnings,
         expenses: expenses[t],
+        hcStockComponent: hcStock,
+        hcBondComponent: hcBond,
+        hcCashComponent: hcCash,
+        expBondComponent: expBond,
+        expCashComponent: expCash,
+        targetStock: targetStock,
+        targetBond: targetBond,
+        targetCash: targetCash,
+        params: params,
+        econParams: econParams,
       };
 
       // Get actions from strategy
@@ -1333,6 +1365,118 @@ function simulateWithStrategy(
     finalWealth: finalWealth,
     description: description,
   };
+}
+
+// =============================================================================
+// LDI Strategy Implementation
+// =============================================================================
+
+/**
+ * Configuration options for LDI strategy.
+ */
+interface LDIStrategyOptions {
+  /** Share of net worth consumed above subsistence (null = derive from expected return) */
+  consumptionRate?: number | null;
+  /** Allow shorting and leverage in portfolio */
+  allowLeverage?: boolean;
+}
+
+/**
+ * Create an LDI (Liability-Driven Investment) strategy.
+ *
+ * This implements the optimal lifecycle strategy from Python core/strategies.py:
+ * - Consumption: subsistence + consumption_rate * max(0, net_worth)
+ * - Allocation: LDI hedge (target - HC component + expense hedge)
+ *
+ * The allocation adjusts financial holdings to offset implicit positions
+ * in human capital (an asset) and expense liabilities (a liability).
+ *
+ * @param options - Configuration options
+ * @returns Strategy object implementing the Strategy interface
+ *
+ * @example
+ * const ldi = createLDIStrategy({ allowLeverage: false });
+ * const result = simulateWithStrategy(ldi, params, econ, rateShocks, stockShocks);
+ */
+function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
+  const { consumptionRate = null, allowLeverage = false } = options;
+
+  const strategy = function ldiStrategy(state: SimulationState): StrategyActions {
+    // Compute consumption rate if not specified
+    let effectiveConsumptionRate: number;
+    if (consumptionRate === null) {
+      const r = state.econParams.rBar;
+      const expectedStockReturn = r + state.econParams.muExcess;
+      const avgReturn =
+        state.targetStock * expectedStockReturn +
+        state.targetBond * r +
+        state.targetCash * r;
+      effectiveConsumptionRate = avgReturn + state.params.consumptionBoost;
+    } else {
+      effectiveConsumptionRate = consumptionRate;
+    }
+
+    // Consumption: subsistence + rate * max(0, net_worth)
+    let subsistence = state.expenses;
+    let variable = Math.max(0, effectiveConsumptionRate * state.netWorth);
+    let totalCons = subsistence + variable;
+
+    // Apply constraints based on lifecycle stage
+    if (state.isWorking) {
+      // During working years: can't consume more than earnings
+      if (totalCons > state.earnings) {
+        totalCons = state.earnings;
+        variable = Math.max(0, state.earnings - subsistence);
+      }
+    } else {
+      // Retirement: can't consume more than financial wealth
+      if (state.financialWealth <= 0) {
+        return {
+          consumption: 0.0,
+          stockWeight: state.targetStock,
+          bondWeight: state.targetBond,
+          cashWeight: state.targetCash,
+        };
+      }
+      if (totalCons > state.financialWealth) {
+        totalCons = state.financialWealth;
+        variable = Math.max(0, state.financialWealth - subsistence);
+        if (variable < 0) {
+          subsistence = state.financialWealth;
+          variable = 0.0;
+        }
+      }
+    }
+
+    // LDI allocation: target financial holdings
+    // Target = target_pct * total_wealth - HC_component + expense_component
+    const targetFinStock = state.targetStock * state.totalWealth - state.hcStockComponent;
+    const targetFinBond = state.targetBond * state.totalWealth - state.hcBondComponent + state.expBondComponent;
+    const targetFinCash = state.targetCash * state.totalWealth - state.hcCashComponent + state.expCashComponent;
+
+    // Normalize to weights
+    const [wS, wB, wC] = normalizePortfolioWeights(
+      targetFinStock,
+      targetFinBond,
+      targetFinCash,
+      state.financialWealth,
+      state.targetStock,
+      state.targetBond,
+      state.targetCash,
+      allowLeverage
+    );
+
+    return {
+      consumption: totalCons,
+      stockWeight: wS,
+      bondWeight: wB,
+      cashWeight: wC,
+    };
+  } as Strategy;
+
+  strategy.name = 'LDI';
+
+  return strategy;
 }
 
 function computeEarningsProfile(params: Params): number[] {
