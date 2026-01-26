@@ -92,7 +92,8 @@
       "description": "Create fan chart panel showing stock market returns across simulations",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Panel already exists at lines 5345-5383 with AreaChart, stacked percentile bands (p5-p25, p25-p75, p75-p95), median line, log scale Y-axis, retirement age reference line, and purple color scheme matching PDF"
     },
     {
       "id": 11,
@@ -146,7 +147,8 @@
       "description": "Create histogram showing distribution of terminal wealth outcomes",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Panel already implemented in lifecycle_visualizer_artifact.tsx lines 5543-5562. Shows terminal wealth histogram with LDI (blue) and RoT (gold) grouped bars, log-scale bins, and median values in legend."
     },
     {
       "id": 17,
