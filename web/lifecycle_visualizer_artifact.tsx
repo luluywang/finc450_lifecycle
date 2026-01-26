@@ -4,8 +4,8 @@
 
 import React, { useState, useMemo } from 'react';
 import {
-  LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine
+  LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell
 } from 'recharts';
 
 // =============================================================================
@@ -3895,12 +3895,60 @@ export default function LifecycleVisualizer() {
   }, [params, currentPage]);
 
   // Scenario state
-  const [scenarioType, setScenarioType] = useState<'sequenceRisk' | 'rateShock' | 'optimalVsRuleOfThumb'>('optimalVsRuleOfThumb');
+  const [scenarioType, setScenarioType] = useState<'summary' | 'sequenceRisk' | 'rateShock' | 'optimalVsRuleOfThumb'>('summary');
   const [rateShockAge, setRateShockAge] = useState(50);
   const [rateShockMagnitude, setRateShockMagnitude] = useState(-0.02);
   const [scenarioRetirementAge, setScenarioRetirementAge] = useState(params.retirementAge);
   const [scenarioEndAge, setScenarioEndAge] = useState(params.endAge);
   // scenarioBadReturns is handled by the scenarioType - sequenceRisk forces bad returns
+
+  // Create LifecycleParams for runTeachingScenarios
+  const lifecycleParams = useMemo((): LifecycleParams => ({
+    startAge: params.startAge,
+    retirementAge: scenarioRetirementAge,
+    endAge: scenarioEndAge,
+    initialEarnings: params.initialEarnings,
+    earningsGrowth: params.earningsGrowth,
+    earningsHumpAge: params.earningsHumpAge,
+    earningsDecline: params.earningsDecline,
+    baseExpenses: params.baseExpenses,
+    expenseGrowth: params.expenseGrowth,
+    retirementExpenses: params.retirementExpenses,
+    subsistenceRatio: 1.0,
+    consumptionRate: 0.04,
+    gamma: params.gamma,
+    stockBetaHumanCapital: params.stockBetaHC,
+    targetStock: 0.6,
+    targetBond: 0.3,
+    targetCash: 0.1,
+    allowLeverage: false,
+    mvOptimize: true,
+    initialWealth: params.initialWealth,
+  }), [params, scenarioRetirementAge, scenarioEndAge]);
+
+  // Create EconomicParams for runTeachingScenarios
+  const econParams = useMemo((): EconomicParams => ({
+    rBar: params.rBar,
+    phi: params.phi,
+    sigmaR: params.sigmaR,
+    muExcess: params.muStock,
+    bondSharpe: params.bondSharpe,
+    sigmaS: params.sigmaS,
+    rho: params.rho,
+    bondDuration: params.bondDuration,
+  }), [params]);
+
+  // Compute Teaching Scenarios (3-scenario comparison)
+  const teachingScenarios = useMemo(() => {
+    if (currentPage !== 'scenarios') return null;
+    return runTeachingScenarios(lifecycleParams, econParams, {
+      numSims: 500,
+      seed: 42,
+      rotSavingsRate: 0.15,
+      rotWithdrawalRate: 0.04,
+      rotTargetDuration: 6.0,
+    });
+  }, [lifecycleParams, econParams, currentPage]);
 
   // Create modified params for scenarios with custom ages
   const scenarioParams = useMemo(() => ({
@@ -4760,12 +4808,26 @@ export default function LifecycleVisualizer() {
               marginBottom: '24px',
             }}>
               <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px', color: '#2c3e50' }}>
-                Optimal vs Rule of Thumb
+                LDI vs Rule-of-Thumb: Strategy Comparison
               </div>
               <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
-                Comparing lifecycle-optimal strategy vs common "rules of thumb" (save 20%, 100-age in stocks, 4% withdrawal)
+                Comparing Liability-Driven Investment (LDI) strategy vs Rule-of-Thumb (15% savings, 100-age stocks, 4% withdrawal)
               </div>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setScenarioType('summary')}
+                  style={{
+                    padding: '8px 16px',
+                    border: 'none',
+                    borderBottom: scenarioType === 'summary' ? '3px solid #27ae60' : '3px solid transparent',
+                    background: scenarioType === 'summary' ? '#e8f8f5' : 'transparent',
+                    cursor: 'pointer',
+                    fontWeight: scenarioType === 'summary' ? 'bold' : 'normal',
+                    color: scenarioType === 'summary' ? '#27ae60' : '#666',
+                  }}
+                >
+                  3-Scenario Summary
+                </button>
                 <button
                   onClick={() => setScenarioType('optimalVsRuleOfThumb')}
                   style={{
@@ -4778,7 +4840,7 @@ export default function LifecycleVisualizer() {
                     color: scenarioType === 'optimalVsRuleOfThumb' ? '#2c3e50' : '#666',
                   }}
                 >
-                  Normal Market
+                  Baseline (Normal)
                 </button>
                 <button
                   onClick={() => setScenarioType('sequenceRisk')}
@@ -4792,7 +4854,7 @@ export default function LifecycleVisualizer() {
                     color: scenarioType === 'sequenceRisk' ? '#c0392b' : '#666',
                   }}
                 >
-                  Bad Early Returns
+                  Sequence Risk
                 </button>
                 <button
                   onClick={() => setScenarioType('rateShock')}
@@ -4806,7 +4868,7 @@ export default function LifecycleVisualizer() {
                     color: scenarioType === 'rateShock' ? '#d68910' : '#666',
                   }}
                 >
-                  Interest Rate Shock
+                  Rate Shock
                 </button>
               </div>
 
@@ -4964,6 +5026,11 @@ export default function LifecycleVisualizer() {
             )}
 
             {/* Loading state */}
+            {scenarioType === 'summary' && !teachingScenarios && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                Computing 500 simulation runs across 3 scenarios...
+              </div>
+            )}
             {scenarioType === 'optimalVsRuleOfThumb' && !strategyResults && (
               <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
                 Computing 50 simulation runs...
@@ -4973,6 +5040,345 @@ export default function LifecycleVisualizer() {
               <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
                 Computing 50 simulation runs...
               </div>
+            )}
+
+            {/* 3-Scenario Summary - Matching teaching_scenarios.pdf */}
+            {scenarioType === 'summary' && teachingScenarios && (
+              <>
+                {/* Description */}
+                <div style={{
+                  background: '#e8f8f5',
+                  border: '1px solid #27ae60',
+                  borderRadius: '8px',
+                  padding: '16px',
+                  marginBottom: '24px',
+                }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#27ae60' }}>
+                    Teaching Scenarios: LDI vs Rule-of-Thumb
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#1e8449', lineHeight: 1.5 }}>
+                    <p style={{ margin: '0 0 8px 0' }}>
+                      <strong>Baseline:</strong> Normal stochastic market conditions - shows typical strategy performance
+                    </p>
+                    <p style={{ margin: '0 0 8px 0' }}>
+                      <strong>Sequence Risk:</strong> Forces bad stock returns (~-12%/yr) in first 5 years of retirement - tests vulnerability to early losses
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <strong>Rate Shock:</strong> Interest rate drop (~4% cumulative) in 5 years before retirement - tests duration matching effectiveness
+                    </p>
+                  </div>
+                </div>
+
+                {/* Three Metrics Bar Charts */}
+                <ChartSection title="Strategy Performance Across Scenarios">
+                  {/* Default Rates Bar Chart */}
+                  <ChartCard title="Default Rates (%)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart
+                        data={[
+                          {
+                            scenario: 'Baseline',
+                            LDI: teachingScenarios.baseline.ldi.defaultRate * 100,
+                            RoT: teachingScenarios.baseline.rot.defaultRate * 100,
+                          },
+                          {
+                            scenario: 'Sequence\nRisk',
+                            LDI: teachingScenarios.sequenceRisk.ldi.defaultRate * 100,
+                            RoT: teachingScenarios.sequenceRisk.rot.defaultRate * 100,
+                          },
+                          {
+                            scenario: 'Rate\nShock',
+                            LDI: teachingScenarios.rateShock.ldi.defaultRate * 100,
+                            RoT: teachingScenarios.rateShock.rot.defaultRate * 100,
+                          },
+                        ]}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="scenario" fontSize={11} />
+                        <YAxis fontSize={10} domain={[0, 60]} tickFormatter={(v) => `${v}%`} />
+                        <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
+                        <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                      Lower is better. LDI consistently outperforms RoT across all scenarios.
+                    </div>
+                  </ChartCard>
+
+                  {/* PV Consumption Bar Chart */}
+                  <ChartCard title="Median PV Lifetime Consumption ($k)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart
+                        data={[
+                          {
+                            scenario: 'Baseline',
+                            LDI: teachingScenarios.baseline.ldi.medianPvConsumption,
+                            RoT: teachingScenarios.baseline.rot.medianPvConsumption,
+                          },
+                          {
+                            scenario: 'Sequence\nRisk',
+                            LDI: teachingScenarios.sequenceRisk.ldi.medianPvConsumption,
+                            RoT: teachingScenarios.sequenceRisk.rot.medianPvConsumption,
+                          },
+                          {
+                            scenario: 'Rate\nShock',
+                            LDI: teachingScenarios.rateShock.ldi.medianPvConsumption,
+                            RoT: teachingScenarios.rateShock.rot.medianPvConsumption,
+                          },
+                        ]}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="scenario" fontSize={11} />
+                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
+                        <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                      Higher is better. Present value of lifetime consumption discounted at risk-free rate.
+                    </div>
+                  </ChartCard>
+
+                  {/* Terminal Wealth Bar Chart */}
+                  <ChartCard title={`Median Terminal Wealth at Age ${scenarioEndAge} ($k)`}>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart
+                        data={[
+                          {
+                            scenario: 'Baseline',
+                            LDI: Math.max(0, teachingScenarios.baseline.ldi.medianFinalWealth),
+                            RoT: Math.max(0, teachingScenarios.baseline.rot.medianFinalWealth),
+                          },
+                          {
+                            scenario: 'Sequence\nRisk',
+                            LDI: Math.max(0, teachingScenarios.sequenceRisk.ldi.medianFinalWealth),
+                            RoT: Math.max(0, teachingScenarios.sequenceRisk.rot.medianFinalWealth),
+                          },
+                          {
+                            scenario: 'Rate\nShock',
+                            LDI: Math.max(0, teachingScenarios.rateShock.ldi.medianFinalWealth),
+                            RoT: Math.max(0, teachingScenarios.rateShock.rot.medianFinalWealth),
+                          },
+                        ]}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="scenario" fontSize={11} />
+                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
+                        <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                      Higher is better. RoT shows $0 in stress scenarios due to high default rates.
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Detailed Metrics Table */}
+                <ChartSection title="Detailed Metrics Comparison">
+                  <ChartCard title="All Metrics by Scenario and Strategy">
+                    <div style={{ padding: '16px', overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr style={{ background: '#f5f5f5' }}>
+                            <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #ddd' }}>Scenario</th>
+                            <th style={{ padding: '8px', textAlign: 'center', borderBottom: '2px solid #ddd' }}>Strategy</th>
+                            <th style={{ padding: '8px', textAlign: 'right', borderBottom: '2px solid #ddd' }}>Default Rate</th>
+                            <th style={{ padding: '8px', textAlign: 'right', borderBottom: '2px solid #ddd' }}>PV Consumption</th>
+                            <th style={{ padding: '8px', textAlign: 'right', borderBottom: '2px solid #ddd' }}>Terminal Wealth</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* Baseline */}
+                          <tr>
+                            <td rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #eee', verticalAlign: 'middle' }}>
+                              <strong>Baseline</strong>
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'center', color: '#2980b9' }}>LDI</td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              {(teachingScenarios.baseline.ldi.defaultRate * 100).toFixed(1)}%
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.baseline.ldi.medianPvConsumption)}k
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.baseline.ldi.medianFinalWealth)}k
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'center', color: '#d4a84c' }}>RoT</td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right' }}>
+                              {(teachingScenarios.baseline.rot.defaultRate * 100).toFixed(1)}%
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.baseline.rot.medianPvConsumption)}k
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.baseline.rot.medianFinalWealth)}k
+                            </td>
+                          </tr>
+                          {/* Sequence Risk */}
+                          <tr>
+                            <td rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #eee', verticalAlign: 'middle' }}>
+                              <strong>Sequence Risk</strong>
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'center', color: '#2980b9' }}>LDI</td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              {(teachingScenarios.sequenceRisk.ldi.defaultRate * 100).toFixed(1)}%
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.sequenceRisk.ldi.medianPvConsumption)}k
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.sequenceRisk.ldi.medianFinalWealth)}k
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'center', color: '#d4a84c' }}>RoT</td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right', color: teachingScenarios.sequenceRisk.rot.defaultRate > 0.3 ? '#e74c3c' : 'inherit' }}>
+                              {(teachingScenarios.sequenceRisk.rot.defaultRate * 100).toFixed(1)}%
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.sequenceRisk.rot.medianPvConsumption)}k
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right', color: teachingScenarios.sequenceRisk.rot.medianFinalWealth < 1 ? '#e74c3c' : 'inherit' }}>
+                              ${Math.round(teachingScenarios.sequenceRisk.rot.medianFinalWealth)}k
+                            </td>
+                          </tr>
+                          {/* Rate Shock */}
+                          <tr>
+                            <td rowSpan={2} style={{ padding: '8px', borderBottom: '1px solid #eee', verticalAlign: 'middle' }}>
+                              <strong>Rate Shock</strong>
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'center', color: '#2980b9' }}>LDI</td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              {(teachingScenarios.rateShock.ldi.defaultRate * 100).toFixed(1)}%
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.rateShock.ldi.medianPvConsumption)}k
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #eee', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.rateShock.ldi.medianFinalWealth)}k
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'center', color: '#d4a84c' }}>RoT</td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right', color: teachingScenarios.rateShock.rot.defaultRate > 0.3 ? '#e74c3c' : 'inherit' }}>
+                              {(teachingScenarios.rateShock.rot.defaultRate * 100).toFixed(1)}%
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right' }}>
+                              ${Math.round(teachingScenarios.rateShock.rot.medianPvConsumption)}k
+                            </td>
+                            <td style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'right', color: teachingScenarios.rateShock.rot.medianFinalWealth < 1 ? '#e74c3c' : 'inherit' }}>
+                              ${Math.round(teachingScenarios.rateShock.rot.medianFinalWealth)}k
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Wealth Fan Charts for Baseline Scenario */}
+                <ChartSection title="Baseline Scenario: Financial Wealth Fan Charts">
+                  <ChartCard title="LDI Strategy - Financial Wealth ($k)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <AreaChart
+                        data={teachingScenarios.baseline.ldi.result.ages.map((age, i) => ({
+                          age,
+                          p05: teachingScenarios.baseline.ldi.percentiles.financialWealth.p5[i],
+                          p25: teachingScenarios.baseline.ldi.percentiles.financialWealth.p25[i],
+                          p50: teachingScenarios.baseline.ldi.percentiles.financialWealth.p50[i],
+                          p75: teachingScenarios.baseline.ldi.percentiles.financialWealth.p75[i],
+                          p95: teachingScenarios.baseline.ldi.percentiles.financialWealth.p95[i],
+                          band_5_25: teachingScenarios.baseline.ldi.percentiles.financialWealth.p25[i] - teachingScenarios.baseline.ldi.percentiles.financialWealth.p5[i],
+                          band_25_75: teachingScenarios.baseline.ldi.percentiles.financialWealth.p75[i] - teachingScenarios.baseline.ldi.percentiles.financialWealth.p25[i],
+                          band_75_95: teachingScenarios.baseline.ldi.percentiles.financialWealth.p95[i] - teachingScenarios.baseline.ldi.percentiles.financialWealth.p75[i],
+                        }))}
+                        margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                        <Area type="monotone" dataKey="p05" stackId="band" fill="transparent" stroke="transparent" />
+                        <Area type="monotone" dataKey="band_5_25" stackId="band" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                        <Area type="monotone" dataKey="band_25_75" stackId="band" fill="#2980b9" fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                        <Area type="monotone" dataKey="band_75_95" stackId="band" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                        <Line type="monotone" dataKey="p50" stroke="#2980b9" strokeWidth={2} dot={false} name="Median" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                      Vertical line marks retirement. Fan shows percentile bands (p5-p95).
+                    </div>
+                  </ChartCard>
+
+                  <ChartCard title="RoT Strategy - Financial Wealth ($k)">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <AreaChart
+                        data={teachingScenarios.baseline.rot.result.ages.map((age, i) => ({
+                          age,
+                          p05: teachingScenarios.baseline.rot.percentiles.financialWealth.p5[i],
+                          p25: teachingScenarios.baseline.rot.percentiles.financialWealth.p25[i],
+                          p50: teachingScenarios.baseline.rot.percentiles.financialWealth.p50[i],
+                          p75: teachingScenarios.baseline.rot.percentiles.financialWealth.p75[i],
+                          p95: teachingScenarios.baseline.rot.percentiles.financialWealth.p95[i],
+                          band_5_25: teachingScenarios.baseline.rot.percentiles.financialWealth.p25[i] - teachingScenarios.baseline.rot.percentiles.financialWealth.p5[i],
+                          band_25_75: teachingScenarios.baseline.rot.percentiles.financialWealth.p75[i] - teachingScenarios.baseline.rot.percentiles.financialWealth.p25[i],
+                          band_75_95: teachingScenarios.baseline.rot.percentiles.financialWealth.p95[i] - teachingScenarios.baseline.rot.percentiles.financialWealth.p75[i],
+                        }))}
+                        margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="age" fontSize={10} />
+                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                        <Area type="monotone" dataKey="p05" stackId="band" fill="transparent" stroke="transparent" />
+                        <Area type="monotone" dataKey="band_5_25" stackId="band" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                        <Area type="monotone" dataKey="band_25_75" stackId="band" fill="#d4a84c" fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                        <Area type="monotone" dataKey="band_75_95" stackId="band" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                        <Line type="monotone" dataKey="p50" stroke="#d4a84c" strokeWidth={2} dot={false} name="Median" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                      Wider bands indicate higher uncertainty. Note p5 can go negative (default).
+                    </div>
+                  </ChartCard>
+                </ChartSection>
+
+                {/* Key Takeaways */}
+                <div style={{
+                  background: '#2c3e50',
+                  color: '#fff',
+                  borderRadius: '8px',
+                  padding: '20px',
+                  marginTop: '24px',
+                }}>
+                  <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px' }}>
+                    Key Takeaways
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', lineHeight: 1.6 }}>
+                    <li><strong>LDI has lower default rates</strong> across all scenarios - adaptive consumption protects subsistence</li>
+                    <li><strong>Sequence Risk is most damaging to RoT</strong> - fixed 4% withdrawal from falling portfolio leads to ruin</li>
+                    <li><strong>Rate Shock shows duration matching benefit</strong> - LDI hedges against rate changes</li>
+                    <li><strong>PV Consumption is similar</strong> - LDI doesn't sacrifice much consumption for safety</li>
+                    <li><strong>Terminal wealth varies</strong> - RoT can leave more in good scenarios but nothing in bad ones</li>
+                  </ul>
+                </div>
+              </>
             )}
 
             {/* Strategy Comparison: Optimal vs Rule of Thumb */}
