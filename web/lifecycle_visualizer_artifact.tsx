@@ -462,7 +462,7 @@ interface MonteCarloResult {
   interestRate_p95: number[];
 }
 
-type PageType = 'base' | 'monteCarlo' | 'scenarios';
+type PageType = 'base' | 'scenarios';
 
 type ConsumptionRule = 'adaptive' | 'fourPercent';
 
@@ -1474,7 +1474,7 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
     };
   } as Strategy;
 
-  strategy.name = 'LDI';
+  Object.defineProperty(strategy, 'name', { value: 'LDI', writable: true });
 
   return strategy;
 }
@@ -1618,7 +1618,7 @@ function createRuleOfThumbStrategy(options: RuleOfThumbStrategyOptions = {}): St
     };
   } as Strategy;
 
-  strategy.name = 'RuleOfThumb';
+  Object.defineProperty(strategy, 'name', { value: 'RuleOfThumb', writable: true });
 
   // Reset method to clear state between simulations
   strategy.reset = function(): void {
@@ -1753,9 +1753,11 @@ interface PercentileStats {
   financialWealth: FieldPercentiles;
   consumption: FieldPercentiles;
   stockWeight: FieldPercentiles;
+  bondWeight: FieldPercentiles;
   humanCapital: FieldPercentiles;
   interestRates: FieldPercentiles;
   stockReturns: FieldPercentiles;
+  cumulativeStockReturns: FieldPercentiles;
 }
 
 /**
@@ -1899,20 +1901,32 @@ function runMonteCarloSimulation(
   const financialWealthPaths = result.financialWealth as number[][];
   const consumptionPaths = result.consumption as number[][];
   const stockWeightPaths = result.stockWeight as number[][];
+  const bondWeightPaths = result.bondWeight as number[][];
   const humanCapitalPaths = result.humanCapital as number[][];
   const interestRatePaths = result.interestRates as number[][];
   const stockReturnPaths = result.stockReturns as number[][];
   const defaultedFlags = result.defaulted as boolean[];
   const finalWealthValues = result.finalWealth as number[];
 
+  // Compute cumulative stock returns for each simulation
+  const cumulativeStockReturnPaths: number[][] = stockReturnPaths.map(returns => {
+    const cumulative: number[] = [1.0];
+    for (let t = 1; t < returns.length; t++) {
+      cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+    }
+    return cumulative;
+  });
+
   // Compute percentile statistics
   const percentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(financialWealthPaths),
     consumption: computeFieldPercentiles(consumptionPaths),
     stockWeight: computeFieldPercentiles(stockWeightPaths),
+    bondWeight: computeFieldPercentiles(bondWeightPaths),
     humanCapital: computeFieldPercentiles(humanCapitalPaths),
     interestRates: computeFieldPercentiles(interestRatePaths),
     stockReturns: computeFieldPercentiles(stockReturnPaths),
+    cumulativeStockReturns: computeFieldPercentiles(cumulativeStockReturnPaths),
   };
 
   // Compute summary statistics
@@ -2037,23 +2051,45 @@ function runMonteCarloStrategyComparison(
     null, "RuleOfThumb (Monte Carlo)"
   );
 
+  // Compute cumulative stock returns for percentiles
+  const ldiStockReturns = ldiResult.stockReturns as number[][];
+  const rotStockReturns = rotResult.stockReturns as number[][];
+  const ldiCumulativeStockReturns = ldiStockReturns.map(returns => {
+    const cumulative: number[] = [1.0];
+    for (let t = 1; t < returns.length; t++) {
+      cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+    }
+    return cumulative;
+  });
+  const rotCumulativeStockReturns = rotStockReturns.map(returns => {
+    const cumulative: number[] = [1.0];
+    for (let t = 1; t < returns.length; t++) {
+      cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+    }
+    return cumulative;
+  });
+
   // Compute percentile statistics for both
   const ldiPercentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
     consumption: computeFieldPercentiles(ldiResult.consumption as number[][]),
     stockWeight: computeFieldPercentiles(ldiResult.stockWeight as number[][]),
+    bondWeight: computeFieldPercentiles(ldiResult.bondWeight as number[][]),
     humanCapital: computeFieldPercentiles(ldiResult.humanCapital as number[][]),
     interestRates: computeFieldPercentiles(ldiResult.interestRates as number[][]),
-    stockReturns: computeFieldPercentiles(ldiResult.stockReturns as number[][]),
+    stockReturns: computeFieldPercentiles(ldiStockReturns),
+    cumulativeStockReturns: computeFieldPercentiles(ldiCumulativeStockReturns),
   };
 
   const rotPercentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(rotResult.financialWealth as number[][]),
     consumption: computeFieldPercentiles(rotResult.consumption as number[][]),
     stockWeight: computeFieldPercentiles(rotResult.stockWeight as number[][]),
+    bondWeight: computeFieldPercentiles(rotResult.bondWeight as number[][]),
     humanCapital: computeFieldPercentiles(rotResult.humanCapital as number[][]),
     interestRates: computeFieldPercentiles(rotResult.interestRates as number[][]),
-    stockReturns: computeFieldPercentiles(rotResult.stockReturns as number[][]),
+    stockReturns: computeFieldPercentiles(rotStockReturns),
+    cumulativeStockReturns: computeFieldPercentiles(rotCumulativeStockReturns),
   };
 
   // Compute summary statistics
@@ -2349,14 +2385,34 @@ function runTeachingScenarios(
       `RuleOfThumb (${scenarioName})`
     );
 
+    // Compute cumulative stock returns for percentiles
+    const ldiStockReturns = ldiResult.stockReturns as number[][];
+    const rotStockReturns = rotResult.stockReturns as number[][];
+    const ldiCumulativeStockReturns = ldiStockReturns.map(returns => {
+      const cumulative: number[] = [1.0];
+      for (let t = 1; t < returns.length; t++) {
+        cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+      }
+      return cumulative;
+    });
+    const rotCumulativeStockReturns = rotStockReturns.map(returns => {
+      const cumulative: number[] = [1.0];
+      for (let t = 1; t < returns.length; t++) {
+        cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+      }
+      return cumulative;
+    });
+
     // Compute percentiles and summary stats for LDI
     const ldiPercentiles: PercentileStats = {
       financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
       consumption: computeFieldPercentiles(ldiResult.consumption as number[][]),
       stockWeight: computeFieldPercentiles(ldiResult.stockWeight as number[][]),
+      bondWeight: computeFieldPercentiles(ldiResult.bondWeight as number[][]),
       humanCapital: computeFieldPercentiles(ldiResult.humanCapital as number[][]),
       interestRates: computeFieldPercentiles(ldiResult.interestRates as number[][]),
-      stockReturns: computeFieldPercentiles(ldiResult.stockReturns as number[][]),
+      stockReturns: computeFieldPercentiles(ldiStockReturns),
+      cumulativeStockReturns: computeFieldPercentiles(ldiCumulativeStockReturns),
     };
     const ldiDefaulted = ldiResult.defaulted as boolean[];
     const ldiFinalWealth = ldiResult.finalWealth as number[];
@@ -2366,9 +2422,11 @@ function runTeachingScenarios(
       financialWealth: computeFieldPercentiles(rotResult.financialWealth as number[][]),
       consumption: computeFieldPercentiles(rotResult.consumption as number[][]),
       stockWeight: computeFieldPercentiles(rotResult.stockWeight as number[][]),
+      bondWeight: computeFieldPercentiles(rotResult.bondWeight as number[][]),
       humanCapital: computeFieldPercentiles(rotResult.humanCapital as number[][]),
       interestRates: computeFieldPercentiles(rotResult.interestRates as number[][]),
-      stockReturns: computeFieldPercentiles(rotResult.stockReturns as number[][]),
+      stockReturns: computeFieldPercentiles(rotStockReturns),
+      cumulativeStockReturns: computeFieldPercentiles(rotCumulativeStockReturns),
     };
     const rotDefaulted = rotResult.defaulted as boolean[];
     const rotFinalWealth = rotResult.finalWealth as number[];
@@ -2656,6 +2714,13 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     cashWeight[i] = wC;
   }
 
+  // For median path, interest rate is constant at rBar
+  // and expected cumulative stock return grows at expected rate
+  const interestRate = Array(totalYears).fill(r);
+  const cumulativeStockReturn = Array.from({ length: totalYears }, (_, i) =>
+    Math.pow(1 + expectedStockReturn, i)
+  );
+
   return {
     ages,
     earnings,
@@ -2682,6 +2747,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     targetStock,
     targetBond,
     targetCash,
+    cumulativeStockReturn,
+    interestRate,
   };
 }
 
@@ -3888,11 +3955,21 @@ export default function LifecycleVisualizer() {
   // Compute lifecycle results
   const result = useMemo(() => computeLifecycleMedianPath(params), [params]);
 
-  // Compute Monte Carlo results (only when on that page for performance)
-  const mcResult = useMemo(() => {
-    if (currentPage !== 'monteCarlo') return null;
-    return computeMonteCarloSimulation(params, 50);
-  }, [params, currentPage]);
+  // Monte Carlo state - computed on demand via button click
+  const [mcResult, setMcResult] = useState<MonteCarloSimulationResult | null>(null);
+  const [showMcModal, setShowMcModal] = useState(false);
+  const [mcComputing, setMcComputing] = useState(false);
+
+  const handleComputeMC = () => {
+    setMcComputing(true);
+    // Use setTimeout to allow UI to update before blocking computation
+    setTimeout(() => {
+      const result = computeMonteCarloSimulation(params, 50);
+      setMcResult(result);
+      setMcComputing(false);
+      setShowMcModal(true);
+    }, 50);
+  };
 
   // Scenario state
   const [scenarioType, setScenarioType] = useState<'summary' | 'sequenceRisk' | 'rateShock' | 'optimalVsRuleOfThumb'>('summary');
@@ -3900,7 +3977,12 @@ export default function LifecycleVisualizer() {
   const [rateShockMagnitude, setRateShockMagnitude] = useState(-0.02);
   const [scenarioRetirementAge, setScenarioRetirementAge] = useState(params.retirementAge);
   const [scenarioEndAge, setScenarioEndAge] = useState(params.endAge);
+  // Beta toggle for teaching scenarios: 0 = Bond-like HC, 0.4 = Risky HC
+  const [scenarioBeta, setScenarioBeta] = useState<0 | 0.4>(0);
   // scenarioBadReturns is handled by the scenarioType - sequenceRisk forces bad returns
+  // Simulation control state for deferred computation
+  const [simulationRun, setSimulationRun] = useState(false);
+  const [scenarioComputing, setScenarioComputing] = useState(false);
 
   // Create LifecycleParams for runTeachingScenarios
   const lifecycleParams = useMemo((): LifecycleParams => ({
@@ -3914,17 +3996,17 @@ export default function LifecycleVisualizer() {
     baseExpenses: params.baseExpenses,
     expenseGrowth: params.expenseGrowth,
     retirementExpenses: params.retirementExpenses,
-    subsistenceRatio: 1.0,
-    consumptionRate: 0.04,
+    consumptionShare: 0.05,
+    consumptionBoost: 0.0,
     gamma: params.gamma,
-    stockBetaHumanCapital: params.stockBetaHC,
-    targetStock: 0.6,
-    targetBond: 0.3,
-    targetCash: 0.1,
+    stockBetaHumanCapital: scenarioBeta,  // Use beta toggle instead of params
+    targetStockAllocation: 0.6,
+    targetBondAllocation: 0.3,
     allowLeverage: false,
-    mvOptimize: true,
+    riskFreeRate: params.rBar,
+    equityPremium: params.muStock,
     initialWealth: params.initialWealth,
-  }), [params, scenarioRetirementAge, scenarioEndAge]);
+  }), [params, scenarioRetirementAge, scenarioEndAge, scenarioBeta]);
 
   // Create EconomicParams for runTeachingScenarios
   const econParams = useMemo((): EconomicParams => ({
@@ -4099,7 +4181,7 @@ export default function LifecycleVisualizer() {
       pvEarnings: result.pvEarnings[i],
       pvExpenses: -result.pvExpenses[i],
       durationEarnings: result.durationEarnings[i],
-      durationExpenses: -result.durationExpenses[i],
+      durationExpenses: result.durationExpenses[i],  // Positive for easier comparison with HC duration
       humanCapital: result.humanCapital[i],
       financialWealth: result.financialWealth[i],
       hcStock: result.hcStock[i],
@@ -4116,8 +4198,9 @@ export default function LifecycleVisualizer() {
       subsistence: result.subsistenceConsumption[i],
       variable: result.variableConsumption[i],
       totalConsumption: result.totalConsumption[i],
-      // Cash Flow / Savings (earnings - consumption)
-      savings: result.earnings[i] - result.totalConsumption[i],
+      // Market assumptions
+      cumulativeStockReturn: result.cumulativeStockReturn[i],
+      interestRate: result.interestRate[i] * 100,  // Convert to percentage
       // Total Wealth (HC + FW)
       totalWealth: result.totalWealth[i],
     }));
@@ -4354,6 +4437,26 @@ export default function LifecycleVisualizer() {
           <div>Bonds: {Math.round(result.targetBond * 100)}%</div>
           <div>Cash: {Math.round(result.targetCash * 100)}%</div>
         </div>
+
+        {/* Monte Carlo Button */}
+        <button
+          onClick={handleComputeMC}
+          disabled={mcComputing}
+          style={{
+            width: '100%',
+            padding: '10px 16px',
+            marginTop: '16px',
+            background: mcComputing ? '#ccc' : '#3498db',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: mcComputing ? 'wait' : 'pointer',
+            fontWeight: 'bold',
+            fontSize: '12px',
+          }}
+        >
+          {mcComputing ? 'Computing...' : 'Compute Monte Carlo'}
+        </button>
       </div>
 
       {/* Main Content - Charts */}
@@ -4385,22 +4488,6 @@ export default function LifecycleVisualizer() {
               }}
             >
               Base Case
-            </button>
-            <button
-              onClick={() => setCurrentPage('monteCarlo')}
-              style={{
-                padding: '8px 16px',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: currentPage === 'monteCarlo' ? 'bold' : 'normal',
-                background: currentPage === 'monteCarlo' ? '#fff' : 'transparent',
-                color: currentPage === 'monteCarlo' ? '#2c3e50' : '#666',
-                cursor: 'pointer',
-                boxShadow: currentPage === 'monteCarlo' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-              }}
-            >
-              Monte Carlo (50 runs)
             </button>
             <button
               onClick={() => setCurrentPage('scenarios')}
@@ -4439,24 +4526,30 @@ export default function LifecycleVisualizer() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Cash Flow / Savings ($k)">
+          <ChartCard title="Expected Cumulative Stock Returns">
             <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={chartData}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={10} />
-                <YAxis fontSize={10} tickFormatter={formatDollar} />
-                <Tooltip formatter={dollarTooltipFormatter} />
+                <YAxis fontSize={10} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+                <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${(value * 100).toFixed(0)}%` : ''} />
                 <Legend wrapperStyle={{ fontSize: '10px' }} />
-                <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
-                <Area
-                  type="monotone"
-                  dataKey="savings"
-                  stroke={COLORS.earnings}
-                  fill={COLORS.earnings}
-                  fillOpacity={0.6}
-                  name="Savings (positive) / Drawdown (negative)"
-                />
-              </AreaChart>
+                <ReferenceLine y={1} stroke="#999" strokeDasharray="3 3" />
+                <Line type="monotone" dataKey="cumulativeStockReturn" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Expected Cumulative Return" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Interest Rate (%)">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={10} />
+                <YAxis fontSize={10} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                <Tooltip formatter={percentTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '10px' }} />
+                <Line type="monotone" dataKey="interestRate" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Interest Rate" />
+              </LineChart>
             </ResponsiveContainer>
           </ChartCard>
         </ChartSection>
@@ -4587,216 +4680,6 @@ export default function LifecycleVisualizer() {
           </>
         )}
 
-        {currentPage === 'monteCarlo' && mcResult && (
-          <>
-            <div style={{
-              background: '#e8f4f8',
-              padding: '12px 16px',
-              borderRadius: '8px',
-              marginBottom: '24px',
-              fontSize: '13px',
-              color: '#2c3e50',
-            }}>
-              <strong>Monte Carlo Simulation:</strong> 50 independent runs with stochastic shocks to interest rates and returns.
-              Shocks affect rates, which change forward-looking PVs and durations, affecting consumption and portfolio decisions.
-              Charts show percentile lines: 5th, 25th, median (50th), 75th, and 95th percentiles.
-            </div>
-
-            {/* Consumption Fan Chart */}
-            <ChartSection title="Consumption Evolution">
-              <ChartCard title="Total Consumption Distribution ($k)">
-                <ResponsiveContainer width="100%" height={350}>
-                  <LineChart data={mcChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="age" fontSize={10} />
-                    <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
-                    <Tooltip formatter={dollarKTooltipFormatter} />
-                    <Line type="monotone" dataKey="consumption_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
-                    <Line type="monotone" dataKey="consumption_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
-                    <Line type="monotone" dataKey="consumption_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
-                    <Line type="monotone" dataKey="consumption_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
-                    <Line type="monotone" dataKey="consumption_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartCard>
-            </ChartSection>
-
-            {/* Financial Wealth Fan Chart */}
-            <ChartSection title="Financial Wealth Evolution">
-              <ChartCard title="Financial Wealth Distribution ($M)">
-                <ResponsiveContainer width="100%" height={350}>
-                  <LineChart data={mcChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="age" fontSize={10} />
-                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
-                    <Tooltip formatter={dollarMTooltipFormatter} />
-                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
-                    <Line type="monotone" dataKey="fw_p05" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
-                    <Line type="monotone" dataKey="fw_p25" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
-                    <Line type="monotone" dataKey="fw_p50" stroke={COLORS.fw} strokeWidth={2} dot={false} name="(3) Median" />
-                    <Line type="monotone" dataKey="fw_p75" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
-                    <Line type="monotone" dataKey="fw_p95" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartCard>
-            </ChartSection>
-
-            {/* Net Worth Fan Chart */}
-            <ChartSection title="Net Worth Evolution (HC + FW - Expenses)">
-              <ChartCard title="Net Worth Distribution ($M)">
-                <ResponsiveContainer width="100%" height={350}>
-                  <LineChart data={mcChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="age" fontSize={10} />
-                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
-                    <Tooltip formatter={dollarMTooltipFormatter} />
-                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
-                    <Line type="monotone" dataKey="nw_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
-                    <Line type="monotone" dataKey="nw_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
-                    <Line type="monotone" dataKey="nw_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
-                    <Line type="monotone" dataKey="nw_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
-                    <Line type="monotone" dataKey="nw_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartCard>
-            </ChartSection>
-
-            {/* Terminal Wealth Distribution */}
-            <ChartSection title={`Terminal Values (Age ${params.endAge - 1})`}>
-              <ChartCard title="Terminal Financial Wealth Distribution">
-                <div style={{ padding: '16px' }}>
-                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
-                    Distribution of financial wealth at age {params.endAge - 1} across 50 runs:
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
-                        {formatDollarM(mcResult.financialWealth_p05[mcResult.financialWealth_p05.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
-                        {formatDollarM(mcResult.financialWealth_p25[mcResult.financialWealth_p25.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>Median</div>
-                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.fw }}>
-                        {formatDollarM(mcResult.financialWealth_p50[mcResult.financialWealth_p50.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
-                        {formatDollarM(mcResult.financialWealth_p75[mcResult.financialWealth_p75.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
-                        {formatDollarM(mcResult.financialWealth_p95[mcResult.financialWealth_p95.length - 1])}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: '24px' }}>
-                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
-                      Runs depleted (FW &lt; $10k): {mcResult.runs.filter(r => r.financialWealth[r.financialWealth.length - 1] < 10).length} of 50
-                    </div>
-                  </div>
-                </div>
-              </ChartCard>
-
-              <ChartCard title="Terminal Consumption Distribution">
-                <div style={{ padding: '16px' }}>
-                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
-                    Distribution of annual consumption at age {params.endAge - 1} across 50 runs:
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
-                        {formatDollarM(mcResult.consumption_p05[mcResult.consumption_p05.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
-                        {formatDollarM(mcResult.consumption_p25[mcResult.consumption_p25.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>Median</div>
-                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.variable }}>
-                        {formatDollarM(mcResult.consumption_p50[mcResult.consumption_p50.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
-                        {formatDollarM(mcResult.consumption_p75[mcResult.consumption_p75.length - 1])}
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
-                        {formatDollarM(mcResult.consumption_p95[mcResult.consumption_p95.length - 1])}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </ChartCard>
-            </ChartSection>
-
-            {/* Market Conditions Charts */}
-            <ChartSection title="Market Conditions">
-              <ChartCard title="Cumulative Stock Returns - Percentile Bands (Log Scale)">
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={mcChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="age" fontSize={10} />
-                    <YAxis fontSize={10} tickFormatter={(v) => `${(Math.exp(v) * 100).toFixed(0)}%`} domain={['auto', 'auto']} />
-                    <Tooltip formatter={(v) => v !== undefined ? [`${(Math.exp(v as number) * 100).toFixed(0)}%`, 'Cumulative Return'] : ['', '']} />
-                    <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
-                    <Area type="monotone" dataKey="sr_p05" stackId="sr" fill="transparent" stroke="transparent" />
-                    <Area type="monotone" dataKey="sr_band_5_25" stackId="sr" fill={COLORS.stock} fillOpacity={0.15} stroke="transparent" name="5th-25th" />
-                    <Area type="monotone" dataKey="sr_band_25_75" stackId="sr" fill={COLORS.stock} fillOpacity={0.3} stroke="transparent" name="25th-75th" />
-                    <Area type="monotone" dataKey="sr_band_75_95" stackId="sr" fill={COLORS.stock} fillOpacity={0.15} stroke="transparent" name="75th-95th" />
-                    <Line type="monotone" dataKey="sr_p50" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Median" />
-                    <Line type="monotone" dataKey="sr_p25" stroke={COLORS.stock} strokeWidth={1} strokeDasharray="4 4" dot={false} name="25th %ile" />
-                    <Line type="monotone" dataKey="sr_p75" stroke={COLORS.stock} strokeWidth={1} strokeDasharray="4 4" dot={false} name="75th %ile" />
-                  </AreaChart>
-                </ResponsiveContainer>
-                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
-                  Cumulative stock returns across 50 Monte Carlo runs. Y-axis: 100% = starting value.
-                </div>
-              </ChartCard>
-
-              <ChartCard title="Interest Rate Paths - Percentile Bands">
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={mcChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="age" fontSize={10} />
-                    <YAxis fontSize={10} tickFormatter={(v) => `${v.toFixed(1)}%`} domain={['auto', 'auto']} />
-                    <Tooltip formatter={(v) => v !== undefined ? [`${(v as number).toFixed(2)}%`, 'Interest Rate'] : ['', '']} />
-                    <Area type="monotone" dataKey="ir_p05" stackId="ir" fill="transparent" stroke="transparent" />
-                    <Area type="monotone" dataKey="ir_band_5_25" stackId="ir" fill={COLORS.bond} fillOpacity={0.15} stroke="transparent" name="5th-25th" />
-                    <Area type="monotone" dataKey="ir_band_25_75" stackId="ir" fill={COLORS.bond} fillOpacity={0.3} stroke="transparent" name="25th-75th" />
-                    <Area type="monotone" dataKey="ir_band_75_95" stackId="ir" fill={COLORS.bond} fillOpacity={0.15} stroke="transparent" name="75th-95th" />
-                    <Line type="monotone" dataKey="ir_p50" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Median" />
-                    <Line type="monotone" dataKey="ir_p25" stroke={COLORS.bond} strokeWidth={1} strokeDasharray="4 4" dot={false} name="25th %ile" />
-                    <Line type="monotone" dataKey="ir_p75" stroke={COLORS.bond} strokeWidth={1} strokeDasharray="4 4" dot={false} name="75th %ile" />
-                  </AreaChart>
-                </ResponsiveContainer>
-                <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '8px' }}>
-                  Interest rate paths showing how rates evolve stochastically over time.
-                </div>
-              </ChartCard>
-            </ChartSection>
-          </>
-        )}
-
         {currentPage === 'scenarios' && (
           <>
             {/* Scenario Selection */}
@@ -4873,7 +4756,7 @@ export default function LifecycleVisualizer() {
               </div>
 
               {/* Age Controls */}
-              <div style={{ display: 'flex', gap: '24px', padding: '12px', background: '#f5f5f5', borderRadius: '6px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', gap: '24px', padding: '12px', background: '#f5f5f5', borderRadius: '6px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Retirement Age:</div>
                   <input
@@ -4895,6 +4778,39 @@ export default function LifecycleVisualizer() {
                     max={100}
                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
                   />
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Human Capital Beta (beta):</div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      onClick={() => setScenarioBeta(0)}
+                      style={{
+                        padding: '4px 12px',
+                        border: scenarioBeta === 0 ? '2px solid #2980b9' : '1px solid #ccc',
+                        borderRadius: '4px',
+                        background: scenarioBeta === 0 ? '#e8f4f8' : '#fff',
+                        fontWeight: scenarioBeta === 0 ? 'bold' : 'normal',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                      }}
+                    >
+                      beta=0 (Bond-like)
+                    </button>
+                    <button
+                      onClick={() => setScenarioBeta(0.4)}
+                      style={{
+                        padding: '4px 12px',
+                        border: scenarioBeta === 0.4 ? '2px solid #2980b9' : '1px solid #ccc',
+                        borderRadius: '4px',
+                        background: scenarioBeta === 0.4 ? '#e8f4f8' : '#fff',
+                        fontWeight: scenarioBeta === 0.4 ? 'bold' : 'normal',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                      }}
+                    >
+                      beta=0.4 (Risky)
+                    </button>
+                  </div>
                 </div>
                 {scenarioType === 'sequenceRisk' && (
                   <div style={{ fontSize: '12px', color: '#c0392b', fontStyle: 'italic' }}>
@@ -4928,6 +4844,33 @@ export default function LifecycleVisualizer() {
                   </div>
                 </div>
               )}
+
+              {/* Run Simulation Button */}
+              <div style={{ marginTop: '16px' }}>
+                <button
+                  onClick={() => {
+                    setScenarioComputing(true);
+                    // Use setTimeout to allow UI to update before computation
+                    setTimeout(() => {
+                      setSimulationRun(true);
+                      setScenarioComputing(false);
+                    }, 50);
+                  }}
+                  disabled={scenarioComputing}
+                  style={{
+                    padding: '10px 24px',
+                    background: scenarioComputing ? '#ccc' : '#27ae60',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: scenarioComputing ? 'wait' : 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '14px',
+                  }}
+                >
+                  {scenarioComputing ? 'Running...' : 'Run Simulation'}
+                </button>
+              </div>
             </div>
 
             {/* Concept Explanation */}
@@ -5288,76 +5231,334 @@ export default function LifecycleVisualizer() {
                   </ChartCard>
                 </ChartSection>
 
-                {/* Wealth Fan Charts for Baseline Scenario */}
-                <ChartSection title="Baseline Scenario: Financial Wealth Fan Charts">
-                  <ChartCard title="LDI Strategy - Financial Wealth ($k)">
-                    <ResponsiveContainer width="100%" height={300}>
-                      <AreaChart
-                        data={teachingScenarios.baseline.ldi.result.ages.map((age, i) => ({
-                          age,
-                          p05: teachingScenarios.baseline.ldi.percentiles.financialWealth.p5[i],
-                          p25: teachingScenarios.baseline.ldi.percentiles.financialWealth.p25[i],
-                          p50: teachingScenarios.baseline.ldi.percentiles.financialWealth.p50[i],
-                          p75: teachingScenarios.baseline.ldi.percentiles.financialWealth.p75[i],
-                          p95: teachingScenarios.baseline.ldi.percentiles.financialWealth.p95[i],
-                          band_5_25: teachingScenarios.baseline.ldi.percentiles.financialWealth.p25[i] - teachingScenarios.baseline.ldi.percentiles.financialWealth.p5[i],
-                          band_25_75: teachingScenarios.baseline.ldi.percentiles.financialWealth.p75[i] - teachingScenarios.baseline.ldi.percentiles.financialWealth.p25[i],
-                          band_75_95: teachingScenarios.baseline.ldi.percentiles.financialWealth.p95[i] - teachingScenarios.baseline.ldi.percentiles.financialWealth.p75[i],
-                        }))}
-                        margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
-                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
-                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
-                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
-                        <Area type="monotone" dataKey="p05" stackId="band" fill="transparent" stroke="transparent" />
-                        <Area type="monotone" dataKey="band_5_25" stackId="band" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="5th-25th" />
-                        <Area type="monotone" dataKey="band_25_75" stackId="band" fill="#2980b9" fillOpacity={0.3} stroke="transparent" name="25th-75th" />
-                        <Area type="monotone" dataKey="band_75_95" stackId="band" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="75th-95th" />
-                        <Line type="monotone" dataKey="p50" stroke="#2980b9" strokeWidth={2} dot={false} name="Median" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
-                      Vertical line marks retirement. Fan shows percentile bands (p5-p95).
-                    </div>
-                  </ChartCard>
+                {/* Detailed Charts for Each Scenario */}
+                {(['baseline', 'sequenceRisk', 'rateShock'] as const).map((scenarioKey) => {
+                  const scenario = teachingScenarios[scenarioKey];
+                  const scenarioNames: Record<string, string> = {
+                    baseline: 'Baseline',
+                    sequenceRisk: 'Sequence Risk',
+                    rateShock: 'Rate Shock'
+                  };
+                  const scenarioName = scenarioNames[scenarioKey];
+                  const ages = scenario.ldi.result.ages;
 
-                  <ChartCard title="RoT Strategy - Financial Wealth ($k)">
-                    <ResponsiveContainer width="100%" height={300}>
-                      <AreaChart
-                        data={teachingScenarios.baseline.rot.result.ages.map((age, i) => ({
-                          age,
-                          p05: teachingScenarios.baseline.rot.percentiles.financialWealth.p5[i],
-                          p25: teachingScenarios.baseline.rot.percentiles.financialWealth.p25[i],
-                          p50: teachingScenarios.baseline.rot.percentiles.financialWealth.p50[i],
-                          p75: teachingScenarios.baseline.rot.percentiles.financialWealth.p75[i],
-                          p95: teachingScenarios.baseline.rot.percentiles.financialWealth.p95[i],
-                          band_5_25: teachingScenarios.baseline.rot.percentiles.financialWealth.p25[i] - teachingScenarios.baseline.rot.percentiles.financialWealth.p5[i],
-                          band_25_75: teachingScenarios.baseline.rot.percentiles.financialWealth.p75[i] - teachingScenarios.baseline.rot.percentiles.financialWealth.p25[i],
-                          band_75_95: teachingScenarios.baseline.rot.percentiles.financialWealth.p95[i] - teachingScenarios.baseline.rot.percentiles.financialWealth.p75[i],
-                        }))}
-                        margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="age" fontSize={10} />
-                        <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
-                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
-                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
-                        <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
-                        <Area type="monotone" dataKey="p05" stackId="band" fill="transparent" stroke="transparent" />
-                        <Area type="monotone" dataKey="band_5_25" stackId="band" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="5th-25th" />
-                        <Area type="monotone" dataKey="band_25_75" stackId="band" fill="#d4a84c" fillOpacity={0.3} stroke="transparent" name="25th-75th" />
-                        <Area type="monotone" dataKey="band_75_95" stackId="band" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="75th-95th" />
-                        <Line type="monotone" dataKey="p50" stroke="#d4a84c" strokeWidth={2} dot={false} name="Median" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                    <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
-                      Wider bands indicate higher uncertainty. Note p5 can go negative (default).
+                  // Compute default timing histogram data
+                  const ldiDefaultAges = (scenario.ldi.result.defaultAge as (number | null)[])
+                    .filter((age): age is number => age !== null);
+                  const rotDefaultAges = (scenario.rot.result.defaultAge as (number | null)[])
+                    .filter((age): age is number => age !== null);
+
+                  // Create histogram bins from retirement age to end age
+                  const histogramBins: { age: number; LDI: number; RoT: number }[] = [];
+                  for (let age = scenarioRetirementAge; age <= scenarioEndAge; age += 5) {
+                    const binEnd = Math.min(age + 4, scenarioEndAge);
+                    const ldiCount = ldiDefaultAges.filter(a => a >= age && a <= binEnd).length;
+                    const rotCount = rotDefaultAges.filter(a => a >= age && a <= binEnd).length;
+                    histogramBins.push({ age, LDI: ldiCount, RoT: rotCount });
+                  }
+
+                  // Compute terminal wealth histogram data
+                  const ldiFinalWealth = scenario.ldi.result.finalWealth as number[];
+                  const rotFinalWealth = scenario.rot.result.finalWealth as number[];
+                  const allFinalWealth = [...ldiFinalWealth, ...rotFinalWealth].filter(w => w > 0);
+                  const minWealth = Math.max(1, Math.min(...allFinalWealth));
+                  const maxWealth = Math.max(...allFinalWealth);
+                  const logMin = Math.floor(Math.log10(minWealth));
+                  const logMax = Math.ceil(Math.log10(maxWealth + 1));
+                  const terminalWealthBins: { bin: string; binValue: number; LDI: number; RoT: number }[] = [];
+                  for (let exp = logMin; exp < logMax; exp++) {
+                    const binStart = Math.pow(10, exp);
+                    const binEnd = Math.pow(10, exp + 1);
+                    const ldiCount = ldiFinalWealth.filter(w => w >= binStart && w < binEnd).length;
+                    const rotCount = rotFinalWealth.filter(w => w >= binStart && w < binEnd).length;
+                    terminalWealthBins.push({
+                      bin: `$${binStart >= 1000 ? Math.round(binStart/1000) + 'M' : binStart + 'k'}-${binEnd >= 1000 ? Math.round(binEnd/1000) + 'M' : binEnd + 'k'}`,
+                      binValue: binStart,
+                      LDI: ldiCount,
+                      RoT: rotCount
+                    });
+                  }
+
+                  // Compute PV consumption histogram data
+                  const ldiConsumption = scenario.ldi.result.consumption as number[][];
+                  const rotConsumption = scenario.rot.result.consumption as number[][];
+                  const rBar = econParams.rBar;
+                  const ldiPvConsumption = ldiConsumption.map(c => computePvConsumption(c, rBar));
+                  const rotPvConsumption = rotConsumption.map(c => computePvConsumption(c, rBar));
+                  const allPvConsumption = [...ldiPvConsumption, ...rotPvConsumption];
+                  const minPvCons = Math.floor(Math.min(...allPvConsumption) / 500) * 500;
+                  const maxPvCons = Math.ceil(Math.max(...allPvConsumption) / 500) * 500;
+                  const pvConsBins: { bin: string; binValue: number; LDI: number; RoT: number }[] = [];
+                  for (let start = minPvCons; start < maxPvCons; start += 500) {
+                    const binEnd = start + 500;
+                    const ldiCount = ldiPvConsumption.filter(pv => pv >= start && pv < binEnd).length;
+                    const rotCount = rotPvConsumption.filter(pv => pv >= start && pv < binEnd).length;
+                    pvConsBins.push({
+                      bin: `$${start}k-${binEnd}k`,
+                      binValue: start,
+                      LDI: ldiCount,
+                      RoT: rotCount
+                    });
+                  }
+
+                  return (
+                    <div key={scenarioKey} style={{ marginTop: '32px' }}>
+                      <h3 style={{
+                        fontSize: '18px',
+                        fontWeight: 'bold',
+                        color: '#2c3e50',
+                        borderBottom: '2px solid #3498db',
+                        paddingBottom: '8px',
+                        marginBottom: '16px'
+                      }}>
+                        {scenarioName} Scenario (beta={scenarioBeta})
+                      </h3>
+
+                      {/* Row 1: Market Conditions */}
+                      <ChartSection title={`${scenarioName}: Market Conditions`}>
+                        {/* Cumulative Stock Market Returns Fan Chart */}
+                        <ChartCard title="Cumulative Stock Market Returns">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <AreaChart
+                              data={ages.map((age, i) => ({
+                                age,
+                                p05: scenario.ldi.percentiles.cumulativeStockReturns.p5[i],
+                                p25: scenario.ldi.percentiles.cumulativeStockReturns.p25[i],
+                                p50: scenario.ldi.percentiles.cumulativeStockReturns.p50[i],
+                                p75: scenario.ldi.percentiles.cumulativeStockReturns.p75[i],
+                                p95: scenario.ldi.percentiles.cumulativeStockReturns.p95[i],
+                                band_5_25: scenario.ldi.percentiles.cumulativeStockReturns.p25[i] - scenario.ldi.percentiles.cumulativeStockReturns.p5[i],
+                                band_25_75: scenario.ldi.percentiles.cumulativeStockReturns.p75[i] - scenario.ldi.percentiles.cumulativeStockReturns.p25[i],
+                                band_75_95: scenario.ldi.percentiles.cumulativeStockReturns.p95[i] - scenario.ldi.percentiles.cumulativeStockReturns.p75[i],
+                              }))}
+                              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="age" fontSize={10} />
+                              <YAxis
+                                fontSize={10}
+                                scale="log"
+                                domain={['auto', 'auto']}
+                                tickFormatter={(v) => v.toFixed(1)}
+                              />
+                              <Tooltip formatter={(v: number) => [v.toFixed(2), '']} />
+                              <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                              <ReferenceLine y={1} stroke="#999" strokeDasharray="3 3" />
+                              <Area type="monotone" dataKey="p05" stackId="band" fill="transparent" stroke="transparent" />
+                              <Area type="monotone" dataKey="band_5_25" stackId="band" fill="#9b59b6" fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                              <Area type="monotone" dataKey="band_25_75" stackId="band" fill="#9b59b6" fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                              <Area type="monotone" dataKey="band_75_95" stackId="band" fill="#9b59b6" fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                              <Line type="monotone" dataKey="p50" stroke="#9b59b6" strokeWidth={2} dot={false} name="Median" />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            Log scale. Starting value = 1.0. Purple bands show p5-p95 percentiles.
+                          </div>
+                        </ChartCard>
+
+                        {/* Interest Rate Paths Fan Chart */}
+                        <ChartCard title="Interest Rate Paths">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <AreaChart
+                              data={ages.map((age, i) => ({
+                                age,
+                                p05: scenario.ldi.percentiles.interestRates.p5[i] * 100,
+                                p25: scenario.ldi.percentiles.interestRates.p25[i] * 100,
+                                p50: scenario.ldi.percentiles.interestRates.p50[i] * 100,
+                                p75: scenario.ldi.percentiles.interestRates.p75[i] * 100,
+                                p95: scenario.ldi.percentiles.interestRates.p95[i] * 100,
+                                band_5_25: (scenario.ldi.percentiles.interestRates.p25[i] - scenario.ldi.percentiles.interestRates.p5[i]) * 100,
+                                band_25_75: (scenario.ldi.percentiles.interestRates.p75[i] - scenario.ldi.percentiles.interestRates.p25[i]) * 100,
+                                band_75_95: (scenario.ldi.percentiles.interestRates.p95[i] - scenario.ldi.percentiles.interestRates.p75[i]) * 100,
+                              }))}
+                              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="age" fontSize={10} />
+                              <YAxis fontSize={10} tickFormatter={(v) => `${v.toFixed(1)}%`} />
+                              <Tooltip formatter={(v: number) => [`${v.toFixed(2)}%`, '']} />
+                              <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                              <Area type="monotone" dataKey="p05" stackId="band" fill="transparent" stroke="transparent" />
+                              <Area type="monotone" dataKey="band_5_25" stackId="band" fill="#3498db" fillOpacity={0.15} stroke="transparent" name="5th-25th" />
+                              <Area type="monotone" dataKey="band_25_75" stackId="band" fill="#3498db" fillOpacity={0.3} stroke="transparent" name="25th-75th" />
+                              <Area type="monotone" dataKey="band_75_95" stackId="band" fill="#3498db" fillOpacity={0.15} stroke="transparent" name="75th-95th" />
+                              <Line type="monotone" dataKey="p50" stroke="#3498db" strokeWidth={2} dot={false} name="Median" />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            Blue bands show interest rate percentiles (p5-p95).
+                          </div>
+                        </ChartCard>
+                      </ChartSection>
+
+                      {/* Row 2: Wealth Comparison */}
+                      <ChartSection title={`${scenarioName}: Financial Wealth (Combined)`}>
+                        {/* Combined Wealth Fan Chart with both LDI and RoT medians */}
+                        <ChartCard title="Financial Wealth - LDI vs RoT ($k)">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <LineChart
+                              data={ages.map((age, i) => ({
+                                age,
+                                ldiP50: scenario.ldi.percentiles.financialWealth.p50[i],
+                                ldiP05: scenario.ldi.percentiles.financialWealth.p5[i],
+                                ldiP95: scenario.ldi.percentiles.financialWealth.p95[i],
+                                rotP50: scenario.rot.percentiles.financialWealth.p50[i],
+                                rotP05: scenario.rot.percentiles.financialWealth.p5[i],
+                                rotP95: scenario.rot.percentiles.financialWealth.p95[i],
+                              }))}
+                              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="age" fontSize={10} />
+                              <YAxis fontSize={10} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                              <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                              <Legend wrapperStyle={{ fontSize: '11px' }} />
+                              <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                              <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                              <Line type="monotone" dataKey="ldiP05" stroke="#2980b9" strokeWidth={1} strokeDasharray="3 3" dot={false} name="LDI p5" />
+                              <Line type="monotone" dataKey="ldiP50" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Median" />
+                              <Line type="monotone" dataKey="ldiP95" stroke="#2980b9" strokeWidth={1} strokeDasharray="3 3" dot={false} name="LDI p95" />
+                              <Line type="monotone" dataKey="rotP05" stroke="#d4a84c" strokeWidth={1} strokeDasharray="3 3" dot={false} name="RoT p5" />
+                              <Line type="monotone" dataKey="rotP50" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Median" />
+                              <Line type="monotone" dataKey="rotP95" stroke="#d4a84c" strokeWidth={1} strokeDasharray="3 3" dot={false} name="RoT p95" />
+                            </LineChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            Solid lines = medians, dashed = p5/p95. LDI (blue) vs RoT (gold).
+                          </div>
+                        </ChartCard>
+
+                        {/* Default Timing Histogram */}
+                        <ChartCard title="Default Timing by Age">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <BarChart
+                              data={histogramBins}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="age" fontSize={10} label={{ value: 'Age at Default', position: 'insideBottom', offset: -5, fontSize: 10 }} />
+                              <YAxis fontSize={10} label={{ value: 'Count', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: '11px' }} />
+                              <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
+                              <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                          <div style={{
+                            fontSize: '11px',
+                            background: '#f5f5f5',
+                            padding: '8px',
+                            borderRadius: '4px',
+                            marginTop: '4px',
+                            textAlign: 'center'
+                          }}>
+                            Default Rates: LDI: {(scenario.ldi.defaultRate * 100).toFixed(1)}%, RoT: {(scenario.rot.defaultRate * 100).toFixed(1)}%
+                          </div>
+                        </ChartCard>
+                      </ChartSection>
+
+                      {/* Row 3: Portfolio Allocation */}
+                      <ChartSection title={`${scenarioName}: Portfolio Allocation`}>
+                        {/* Stock Allocation */}
+                        <ChartCard title="Stock Allocation (LDI Dynamic vs RoT Static)">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <LineChart
+                              data={ages.map((age, i) => ({
+                                age,
+                                ldiStock: scenario.ldi.percentiles.stockWeight.p50[i] * 100,
+                                rotStock: scenario.rot.percentiles.stockWeight.p50[i] * 100,
+                              }))}
+                              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="age" fontSize={10} />
+                              <YAxis fontSize={10} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                              <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
+                              <Legend wrapperStyle={{ fontSize: '11px' }} />
+                              <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                              <Line type="monotone" dataKey="ldiStock" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Stock %" />
+                              <Line type="monotone" dataKey="rotStock" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Stock %" />
+                            </LineChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            LDI adjusts dynamically, RoT maintains fixed allocation.
+                          </div>
+                        </ChartCard>
+
+                        {/* Bond Allocation */}
+                        <ChartCard title="Bond Allocation (LDI vs RoT)">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <LineChart
+                              data={ages.map((age, i) => ({
+                                age,
+                                ldiBond: scenario.ldi.percentiles.bondWeight.p50[i] * 100,
+                                rotBond: scenario.rot.percentiles.bondWeight.p50[i] * 100,
+                              }))}
+                              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="age" fontSize={10} />
+                              <YAxis fontSize={10} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                              <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
+                              <Legend wrapperStyle={{ fontSize: '11px' }} />
+                              <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                              <Line type="monotone" dataKey="ldiBond" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Bond %" />
+                              <Line type="monotone" dataKey="rotBond" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Bond %" />
+                            </LineChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            Bond allocation for duration matching.
+                          </div>
+                        </ChartCard>
+                      </ChartSection>
+
+                      {/* Row 4: Outcome Distributions */}
+                      <ChartSection title={`${scenarioName}: Outcome Distributions`}>
+                        {/* Terminal Wealth Histogram */}
+                        <ChartCard title={`Terminal Wealth at Age ${scenarioEndAge}`}>
+                          <ResponsiveContainer width="100%" height={280}>
+                            <BarChart
+                              data={terminalWealthBins}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="bin" fontSize={9} angle={-45} textAnchor="end" height={60} />
+                              <YAxis fontSize={10} label={{ value: 'Count', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: '11px' }} />
+                              <Bar dataKey="LDI" fill="#2980b9" name={`LDI (med=$${Math.round(scenario.ldi.medianFinalWealth)}k)`} />
+                              <Bar dataKey="RoT" fill="#d4a84c" name={`RoT (med=$${Math.round(scenario.rot.medianFinalWealth)}k)`} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            X-axis is log-scale bins. Negative values not shown.
+                          </div>
+                        </ChartCard>
+
+                        {/* PV Consumption Histogram */}
+                        <ChartCard title="PV Lifetime Consumption Distribution">
+                          <ResponsiveContainer width="100%" height={280}>
+                            <BarChart
+                              data={pvConsBins}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="bin" fontSize={9} angle={-45} textAnchor="end" height={60} />
+                              <YAxis fontSize={10} label={{ value: 'Count', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: '11px' }} />
+                              <Bar dataKey="LDI" fill="#2980b9" name={`LDI (med=$${Math.round(scenario.ldi.medianPvConsumption)}k)`} />
+                              <Bar dataKey="RoT" fill="#d4a84c" name={`RoT (med=$${Math.round(scenario.rot.medianPvConsumption)}k)`} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                          <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                            Present value of lifetime consumption discounted at risk-free rate.
+                          </div>
+                        </ChartCard>
+                      </ChartSection>
                     </div>
-                  </ChartCard>
-                </ChartSection>
+                  );
+                })}
 
                 {/* Key Takeaways */}
                 <div style={{
@@ -6039,6 +6240,221 @@ export default function LifecycleVisualizer() {
           </>
         )}
       </div>
+
+      {/* Monte Carlo Modal */}
+      {showMcModal && mcResult && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={() => setShowMcModal(false)}
+        >
+          <div
+            style={{
+              background: '#f5f5f5',
+              borderRadius: '12px',
+              width: '90vw',
+              maxWidth: '1200px',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              padding: '24px',
+              position: 'relative',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => setShowMcModal(false)}
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '12px',
+                background: 'transparent',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#666',
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+
+            <h2 style={{ margin: '0 0 16px', color: '#2c3e50', fontSize: '18px' }}>
+              Monte Carlo Simulation Results (50 runs)
+            </h2>
+
+            <div style={{
+              background: '#e8f4f8',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              marginBottom: '24px',
+              fontSize: '13px',
+              color: '#2c3e50',
+            }}>
+              <strong>Monte Carlo Simulation:</strong> 50 independent runs with stochastic shocks to interest rates and returns.
+              Shocks affect rates, which change forward-looking PVs and durations, affecting consumption and portfolio decisions.
+              Charts show percentile lines: 5th, 25th, median (50th), 75th, and 95th percentiles.
+            </div>
+
+            {/* Consumption Fan Chart */}
+            <ChartSection title="Consumption Evolution">
+              <ChartCard title="Total Consumption Distribution ($k)">
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarKTooltipFormatter} />
+                    <Line type="monotone" dataKey="consumption_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="consumption_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="consumption_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="consumption_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="consumption_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Financial Wealth Fan Chart */}
+            <ChartSection title="Financial Wealth Evolution">
+              <ChartCard title="Financial Wealth Distribution ($M)">
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="fw_p05" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="fw_p25" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="fw_p50" stroke={COLORS.fw} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="fw_p75" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="fw_p95" stroke={COLORS.fw} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Net Worth Fan Chart */}
+            <ChartSection title="Net Worth Evolution (HC + FW - Expenses)">
+              <ChartCard title="Net Worth Distribution ($M)">
+                <ResponsiveContainer width="100%" height={350}>
+                  <LineChart data={mcChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="age" fontSize={10} />
+                    <YAxis fontSize={10} tickFormatter={formatDollarM} domain={['auto', 'auto']} />
+                    <Tooltip formatter={dollarMTooltipFormatter} />
+                    <ReferenceLine y={0} stroke="#999" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="nw_p05" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(1) 5th %ile" />
+                    <Line type="monotone" dataKey="nw_p25" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(2) 25th %ile" />
+                    <Line type="monotone" dataKey="nw_p50" stroke={COLORS.variable} strokeWidth={2} dot={false} name="(3) Median" />
+                    <Line type="monotone" dataKey="nw_p75" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="4 4" dot={false} name="(4) 75th %ile" />
+                    <Line type="monotone" dataKey="nw_p95" stroke={COLORS.variable} strokeWidth={1} strokeDasharray="2 2" dot={false} name="(5) 95th %ile" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </ChartSection>
+
+            {/* Terminal Wealth Distribution */}
+            <ChartSection title={`Terminal Values (Age ${params.endAge - 1})`}>
+              <ChartCard title="Terminal Financial Wealth Distribution">
+                <div style={{ padding: '16px' }}>
+                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
+                    Distribution of financial wealth at age {params.endAge - 1} across 50 runs:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p05[mcResult.financialWealth_p05.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p25[mcResult.financialWealth_p25.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>Median</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p50[mcResult.financialWealth_p50.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p75[mcResult.financialWealth_p75.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.fw }}>
+                        {formatDollarM(mcResult.financialWealth_p95[mcResult.financialWealth_p95.length - 1])}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '24px' }}>
+                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
+                      Runs depleted (FW &lt; $10k): {mcResult.runs.filter(r => r.financialWealth[r.financialWealth.length - 1] < 10).length} of 50
+                    </div>
+                  </div>
+                </div>
+              </ChartCard>
+
+              <ChartCard title="Terminal Consumption Distribution">
+                <div style={{ padding: '16px' }}>
+                  <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
+                    Distribution of annual consumption at age {params.endAge - 1} across 50 runs:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>5th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p05[mcResult.consumption_p05.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>25th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p25[mcResult.consumption_p25.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>Median</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p50[mcResult.consumption_p50.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>75th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p75[mcResult.consumption_p75.length - 1])}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#999' }}>95th %ile</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: COLORS.variable }}>
+                        {formatDollarM(mcResult.consumption_p95[mcResult.consumption_p95.length - 1])}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </ChartCard>
+            </ChartSection>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
