@@ -1778,6 +1778,8 @@ interface MonteCarloSimulationResult {
   defaultRate: number;
   /** Median final wealth */
   medianFinalWealth: number;
+  /** Median present value of lifetime consumption (discounted at risk-free rate) */
+  medianPvConsumption: number;
 }
 
 /**
@@ -1918,6 +1920,14 @@ function runMonteCarloSimulation(
   const defaultRate = defaultCount / numSims;
   const medianFinalWealth = computePercentile(finalWealthValues, 50);
 
+  // Compute PV consumption for each simulation using risk-free rate
+  const pvConsumptionValues: number[] = [];
+  for (let sim = 0; sim < numSims; sim++) {
+    const pv = computePvConsumption(consumptionPaths[sim], econParams.rBar);
+    pvConsumptionValues.push(pv);
+  }
+  const medianPvConsumption = computePercentile(pvConsumptionValues, 50);
+
   return {
     result,
     percentiles,
@@ -1925,6 +1935,7 @@ function runMonteCarloSimulation(
     seed,
     defaultRate,
     medianFinalWealth,
+    medianPvConsumption,
   };
 }
 
@@ -2050,6 +2061,16 @@ function runMonteCarloStrategyComparison(
   const rotDefaulted = rotResult.defaulted as boolean[];
   const ldiFinalWealth = ldiResult.finalWealth as number[];
   const rotFinalWealth = rotResult.finalWealth as number[];
+  const ldiConsumption = ldiResult.consumption as number[][];
+  const rotConsumption = rotResult.consumption as number[][];
+
+  // Compute PV consumption for each simulation
+  const ldiPvConsumptionValues: number[] = [];
+  const rotPvConsumptionValues: number[] = [];
+  for (let sim = 0; sim < numSims; sim++) {
+    ldiPvConsumptionValues.push(computePvConsumption(ldiConsumption[sim], econParams.rBar));
+    rotPvConsumptionValues.push(computePvConsumption(rotConsumption[sim], econParams.rBar));
+  }
 
   return {
     resultA: {
@@ -2059,6 +2080,7 @@ function runMonteCarloStrategyComparison(
       seed,
       defaultRate: ldiDefaulted.filter(d => d).length / numSims,
       medianFinalWealth: computePercentile(ldiFinalWealth, 50),
+      medianPvConsumption: computePercentile(ldiPvConsumptionValues, 50),
     },
     resultB: {
       result: rotResult,
@@ -2067,6 +2089,7 @@ function runMonteCarloStrategyComparison(
       seed,
       defaultRate: rotDefaulted.filter(d => d).length / numSims,
       medianFinalWealth: computePercentile(rotFinalWealth, 50),
+      medianPvConsumption: computePercentile(rotPvConsumptionValues, 50),
     },
     strategyAParams: { allowLeverage: false },
     strategyBParams: {
@@ -2349,6 +2372,16 @@ function runTeachingScenarios(
     };
     const rotDefaulted = rotResult.defaulted as boolean[];
     const rotFinalWealth = rotResult.finalWealth as number[];
+    const ldiConsumption = ldiResult.consumption as number[][];
+    const rotConsumption = rotResult.consumption as number[][];
+
+    // Compute PV consumption for each simulation
+    const ldiPvConsumptionValues: number[] = [];
+    const rotPvConsumptionValues: number[] = [];
+    for (let sim = 0; sim < numSims; sim++) {
+      ldiPvConsumptionValues.push(computePvConsumption(ldiConsumption[sim], econParams.rBar));
+      rotPvConsumptionValues.push(computePvConsumption(rotConsumption[sim], econParams.rBar));
+    }
 
     return {
       ldi: {
@@ -2358,6 +2391,7 @@ function runTeachingScenarios(
         seed,
         defaultRate: ldiDefaulted.filter(d => d).length / numSims,
         medianFinalWealth: computePercentile(ldiFinalWealth, 50),
+        medianPvConsumption: computePercentile(ldiPvConsumptionValues, 50),
       },
       rot: {
         result: rotResult,
@@ -2366,6 +2400,7 @@ function runTeachingScenarios(
         seed,
         defaultRate: rotDefaulted.filter(d => d).length / numSims,
         medianFinalWealth: computePercentile(rotFinalWealth, 50),
+        medianPvConsumption: computePercentile(rotPvConsumptionValues, 50),
       },
     };
   };
