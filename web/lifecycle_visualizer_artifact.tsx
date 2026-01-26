@@ -2077,6 +2077,353 @@ function runMonteCarloStrategyComparison(
   };
 }
 
+// ==============================================================================
+// Teaching Scenarios: Baseline, Sequence Risk, Rate Shock
+// ==============================================================================
+
+/**
+ * Teaching scenario types for demonstrating different market conditions.
+ *
+ * - Baseline: Normal stochastic shocks (regular Monte Carlo)
+ * - SequenceRisk: Forces bad stock returns in first 5 years of retirement
+ * - RateShock: Applies a one-time interest rate shock at retirement
+ */
+type TeachingScenarioType = 'Baseline' | 'SequenceRisk' | 'RateShock';
+
+/**
+ * Options for generating teaching scenario shocks.
+ */
+interface TeachingScenarioOptions {
+  /** Number of Monte Carlo simulations (default: 50) */
+  numSims?: number;
+  /** Random seed for reproducibility (default: 42) */
+  seed?: number;
+  /** Number of years with bad returns for Sequence Risk (default: 5) */
+  sequenceRiskYears?: number;
+  /** Stock shock magnitude during sequence risk (default: -1.5 = 1.5 std devs below mean) */
+  sequenceRiskStockShock?: number;
+  /** Rate shock magnitude at retirement for Rate Shock scenario (default: -0.02 = -2%) */
+  rateShockMagnitude?: number;
+  /** Rule-of-Thumb savings rate (default: 0.15) */
+  rotSavingsRate?: number;
+  /** Rule-of-Thumb withdrawal rate (default: 0.04) */
+  rotWithdrawalRate?: number;
+  /** Rule-of-Thumb target duration (default: 6.0) */
+  rotTargetDuration?: number;
+}
+
+/**
+ * Generate shock arrays for a specific teaching scenario.
+ *
+ * Each scenario type produces different shock patterns:
+ *
+ * **Baseline**: Normal stochastic shocks using standard MC generation.
+ * Represents typical market conditions where returns follow the assumed
+ * distribution with correlation structure.
+ *
+ * **SequenceRisk**: Forces strongly negative stock returns in the first
+ * 5 years of retirement. This demonstrates the vulnerability to poor
+ * returns early in the decumulation phase when the portfolio is largest.
+ * Rate shocks remain stochastic.
+ *
+ * **RateShock**: Applies a one-time large negative interest rate shock
+ * at retirement (e.g., -2%). This shows how rate changes affect:
+ * - Present value of future liabilities (PV increases when rates fall)
+ * - Bond prices (prices rise when rates fall)
+ * - Duration matching effectiveness
+ * Stock shocks remain stochastic.
+ *
+ * @param scenarioType - Type of teaching scenario
+ * @param nPeriods - Total number of periods in simulation
+ * @param numSims - Number of MC simulations
+ * @param rho - Correlation between stock and rate shocks
+ * @param params - Lifecycle parameters (for retirement age)
+ * @param seed - Random seed
+ * @param options - Scenario-specific options
+ * @returns Object with rateShocks and stockShocks arrays (numSims x nPeriods)
+ */
+function generateTeachingScenarioShocks(
+  scenarioType: TeachingScenarioType,
+  nPeriods: number,
+  numSims: number,
+  rho: number,
+  params: LifecycleParams,
+  seed: number,
+  options: TeachingScenarioOptions = {}
+): { rateShocks: number[][]; stockShocks: number[][] } {
+  const {
+    sequenceRiskYears = 5,
+    sequenceRiskStockShock = -1.5,
+    rateShockMagnitude = -0.02,
+  } = options;
+
+  const workingYears = params.retirementAge - params.startAge;
+  const rateShocks: number[][] = [];
+  const stockShocks: number[][] = [];
+
+  for (let sim = 0; sim < numSims; sim++) {
+    const rand = mulberry32(seed + sim * 1000);
+    const simRateShocks: number[] = [];
+    const simStockShocks: number[] = [];
+
+    for (let t = 0; t < nPeriods; t++) {
+      // Generate correlated shocks as baseline
+      const [stockShock, rateShock] = generateCorrelatedShocks(rand, rho);
+
+      if (scenarioType === 'SequenceRisk') {
+        // Sequence Risk: Force bad stock returns in first N years of retirement
+        // Bad returns mean negative shocks (below expected return)
+        if (t >= workingYears && t < workingYears + sequenceRiskYears) {
+          simStockShocks.push(sequenceRiskStockShock);
+        } else {
+          simStockShocks.push(stockShock);
+        }
+        simRateShocks.push(rateShock);
+      } else if (scenarioType === 'RateShock') {
+        // Rate Shock: Apply one-time rate shock at retirement
+        // Rate drops (negative shock = falling rates = higher bond prices but higher PV liabilities)
+        simStockShocks.push(stockShock);
+        if (t === workingYears) {
+          // Convert rate change to shock units: shock = deltaR / sigmaR
+          // Using large shock to represent the rate drop
+          // Note: sigmaR is typically small (0.003), so to get -2% rate change
+          // we need a very large shock. Instead, we pass the rate change directly
+          // and handle it in the simulation. For now, use a large negative shock.
+          simRateShocks.push(rateShockMagnitude / 0.003); // ~-6.67 std devs for -2% rate drop
+        } else {
+          simRateShocks.push(rateShock);
+        }
+      } else {
+        // Baseline: Normal stochastic shocks
+        simStockShocks.push(stockShock);
+        simRateShocks.push(rateShock);
+      }
+    }
+
+    rateShocks.push(simRateShocks);
+    stockShocks.push(simStockShocks);
+  }
+
+  return { rateShocks, stockShocks };
+}
+
+/**
+ * Result for a single teaching scenario with both strategies.
+ */
+interface TeachingScenarioResult {
+  /** Scenario type */
+  scenarioType: TeachingScenarioType;
+  /** Human-readable description */
+  description: string;
+  /** LDI strategy Monte Carlo result */
+  ldi: MonteCarloSimulationResult;
+  /** Rule-of-Thumb strategy Monte Carlo result */
+  rot: MonteCarloSimulationResult;
+}
+
+/**
+ * Result containing all three teaching scenarios.
+ */
+interface TeachingScenarioComparison {
+  /** Baseline scenario: normal stochastic returns */
+  baseline: TeachingScenarioResult;
+  /** Sequence Risk scenario: bad returns early in retirement */
+  sequenceRisk: TeachingScenarioResult;
+  /** Rate Shock scenario: sudden rate drop at retirement */
+  rateShock: TeachingScenarioResult;
+}
+
+/**
+ * Run all three teaching scenarios for both LDI and Rule-of-Thumb strategies.
+ *
+ * The three teaching scenarios demonstrate key lifecycle investment concepts:
+ *
+ * **Baseline**: Represents typical market conditions with normal stochastic
+ * returns. Shows how each strategy performs under expected market behavior.
+ * Use this as the reference point for comparison.
+ *
+ * **Sequence Risk**: Demonstrates the vulnerability to poor returns early
+ * in retirement. Even with the same average return, getting bad returns
+ * when the portfolio is largest (just after retirement) causes permanent
+ * wealth destruction. LDI's duration matching may mitigate some of this.
+ *
+ * **Rate Shock**: Shows impact of sudden interest rate changes on portfolios.
+ * When rates fall:
+ * - PV of future liabilities increases (bad for retirees)
+ * - Bond prices rise (good for bondholders)
+ * - Duration-matched portfolios should be hedged
+ * LDI's explicit duration matching should outperform RoT here.
+ *
+ * @param params - Lifecycle parameters
+ * @param econParams - Economic parameters
+ * @param options - Configuration options for scenarios
+ * @returns TeachingScenarioComparison with all three scenarios
+ *
+ * @example
+ * const scenarios = runTeachingScenarios();
+ *
+ * // Compare default rates across scenarios
+ * console.log('Baseline LDI default:', scenarios.baseline.ldi.defaultRate);
+ * console.log('Sequence Risk LDI default:', scenarios.sequenceRisk.ldi.defaultRate);
+ * console.log('Rate Shock LDI default:', scenarios.rateShock.ldi.defaultRate);
+ *
+ * // Show that sequence risk hits RoT harder than LDI
+ * console.log('Baseline RoT default:', scenarios.baseline.rot.defaultRate);
+ * console.log('Sequence Risk RoT default:', scenarios.sequenceRisk.rot.defaultRate);
+ */
+function runTeachingScenarios(
+  params: LifecycleParams = DEFAULT_LIFECYCLE_PARAMS,
+  econParams: EconomicParams = DEFAULT_ECON_PARAMS,
+  options: TeachingScenarioOptions = {}
+): TeachingScenarioComparison {
+  const {
+    numSims = 50,
+    seed = 42,
+    rotSavingsRate = 0.15,
+    rotWithdrawalRate = 0.04,
+    rotTargetDuration = 6.0,
+  } = options;
+
+  const nPeriods = params.endAge - params.startAge;
+  const rho = econParams.rho;
+
+  // Create strategies
+  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const rotStrategy = createRuleOfThumbStrategy({
+    savingsRate: rotSavingsRate,
+    withdrawalRate: rotWithdrawalRate,
+    targetDuration: rotTargetDuration,
+  });
+
+  // Helper to run both strategies with given shocks
+  const runBothStrategies = (
+    rateShocks: number[][],
+    stockShocks: number[][],
+    scenarioName: string
+  ): { ldi: MonteCarloSimulationResult; rot: MonteCarloSimulationResult } => {
+    // LDI
+    const ldiResult = simulateWithStrategy(
+      ldiStrategy,
+      params,
+      econParams,
+      rateShocks,
+      stockShocks,
+      null,
+      `LDI (${scenarioName})`
+    );
+
+    // Reset RoT state for new simulation
+    rotStrategy.reset?.();
+
+    // RoT
+    const rotResult = simulateWithStrategy(
+      rotStrategy,
+      params,
+      econParams,
+      rateShocks,
+      stockShocks,
+      null,
+      `RuleOfThumb (${scenarioName})`
+    );
+
+    // Compute percentiles and summary stats for LDI
+    const ldiPercentiles: PercentileStats = {
+      financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
+      consumption: computeFieldPercentiles(ldiResult.consumption as number[][]),
+      stockWeight: computeFieldPercentiles(ldiResult.stockWeight as number[][]),
+      humanCapital: computeFieldPercentiles(ldiResult.humanCapital as number[][]),
+      interestRates: computeFieldPercentiles(ldiResult.interestRates as number[][]),
+      stockReturns: computeFieldPercentiles(ldiResult.stockReturns as number[][]),
+    };
+    const ldiDefaulted = ldiResult.defaulted as boolean[];
+    const ldiFinalWealth = ldiResult.finalWealth as number[];
+
+    // Compute percentiles and summary stats for RoT
+    const rotPercentiles: PercentileStats = {
+      financialWealth: computeFieldPercentiles(rotResult.financialWealth as number[][]),
+      consumption: computeFieldPercentiles(rotResult.consumption as number[][]),
+      stockWeight: computeFieldPercentiles(rotResult.stockWeight as number[][]),
+      humanCapital: computeFieldPercentiles(rotResult.humanCapital as number[][]),
+      interestRates: computeFieldPercentiles(rotResult.interestRates as number[][]),
+      stockReturns: computeFieldPercentiles(rotResult.stockReturns as number[][]),
+    };
+    const rotDefaulted = rotResult.defaulted as boolean[];
+    const rotFinalWealth = rotResult.finalWealth as number[];
+
+    return {
+      ldi: {
+        result: ldiResult,
+        percentiles: ldiPercentiles,
+        numSims,
+        seed,
+        defaultRate: ldiDefaulted.filter(d => d).length / numSims,
+        medianFinalWealth: computePercentile(ldiFinalWealth, 50),
+      },
+      rot: {
+        result: rotResult,
+        percentiles: rotPercentiles,
+        numSims,
+        seed,
+        defaultRate: rotDefaulted.filter(d => d).length / numSims,
+        medianFinalWealth: computePercentile(rotFinalWealth, 50),
+      },
+    };
+  };
+
+  // Generate shocks and run scenarios
+
+  // 1. Baseline: Normal stochastic shocks
+  const baselineShocks = generateTeachingScenarioShocks(
+    'Baseline', nPeriods, numSims, rho, params, seed, options
+  );
+  const baselineResults = runBothStrategies(
+    baselineShocks.rateShocks,
+    baselineShocks.stockShocks,
+    'Baseline'
+  );
+
+  // 2. Sequence Risk: Bad returns early in retirement
+  const sequenceRiskShocks = generateTeachingScenarioShocks(
+    'SequenceRisk', nPeriods, numSims, rho, params, seed, options
+  );
+  const sequenceRiskResults = runBothStrategies(
+    sequenceRiskShocks.rateShocks,
+    sequenceRiskShocks.stockShocks,
+    'Sequence Risk'
+  );
+
+  // 3. Rate Shock: Interest rate drop at retirement
+  const rateShockShocks = generateTeachingScenarioShocks(
+    'RateShock', nPeriods, numSims, rho, params, seed, options
+  );
+  const rateShockResults = runBothStrategies(
+    rateShockShocks.rateShocks,
+    rateShockShocks.stockShocks,
+    'Rate Shock'
+  );
+
+  return {
+    baseline: {
+      scenarioType: 'Baseline',
+      description: 'Normal stochastic market conditions - regular Monte Carlo simulation',
+      ldi: baselineResults.ldi,
+      rot: baselineResults.rot,
+    },
+    sequenceRisk: {
+      scenarioType: 'SequenceRisk',
+      description: 'Sequence risk - forced bad stock returns in first 5 years of retirement',
+      ldi: sequenceRiskResults.ldi,
+      rot: sequenceRiskResults.rot,
+    },
+    rateShock: {
+      scenarioType: 'RateShock',
+      description: 'Interest rate shock - sudden 2% rate drop at retirement',
+      ldi: rateShockResults.ldi,
+      rot: rateShockResults.rot,
+    },
+  };
+}
+
 function computeEarningsProfile(params: Params): number[] {
   const workingYears = params.retirementAge - params.startAge;
   const earnings: number[] = [];
