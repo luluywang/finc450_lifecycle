@@ -1631,6 +1631,103 @@ function createRuleOfThumbStrategy(options: RuleOfThumbStrategyOptions = {}): St
   return strategy;
 }
 
+// =============================================================================
+// Strategy Comparison Types and Functions
+// =============================================================================
+
+/**
+ * Comparison of two strategies using identical market conditions.
+ * Matches Python StrategyComparison from core/params.py.
+ *
+ * Simply holds two SimulationResult objects that used the same shocks.
+ * Percentiles and summary statistics are computed on demand via methods.
+ */
+interface StrategyComparison {
+  resultA: SimulationResult;        // First strategy result (typically LDI)
+  resultB: SimulationResult;        // Second strategy result (typically RoT)
+  strategyAParams: Record<string, unknown>;  // Strategy A parameters for display
+  strategyBParams: Record<string, unknown>;  // Strategy B parameters for display
+}
+
+/**
+ * Options for Rule-of-Thumb strategy in median path comparison.
+ */
+interface MedianPathComparisonOptions {
+  rotSavingsRate?: number;          // Savings rate during working years (default: 0.15)
+  rotTargetDuration?: number;       // Target FI duration (default: 6.0)
+  rotWithdrawalRate?: number;       // Withdrawal rate in retirement (default: 0.04)
+}
+
+/**
+ * Compare LDI strategy vs Rule-of-Thumb on deterministic median paths.
+ * Matches Python compute_median_path_comparison from core/simulation.py.
+ *
+ * Both strategies use expected returns (zero shocks = deterministic path).
+ * This enables side-by-side comparison of median paths to understand
+ * structural differences between strategies without Monte Carlo noise.
+ *
+ * @param params - Lifecycle parameters (uses defaults if not provided)
+ * @param econParams - Economic parameters (uses defaults if not provided)
+ * @param options - Rule-of-thumb strategy options
+ * @returns StrategyComparison with resultA = LDI, resultB = RuleOfThumb
+ *
+ * @example
+ * const comparison = computeMedianPathComparison();
+ * console.log(comparison.resultA.strategyName); // 'LDI'
+ * console.log(comparison.resultB.strategyName); // 'RuleOfThumb'
+ * console.log(comparison.resultA.finalWealth);  // LDI final wealth
+ * console.log(comparison.resultB.finalWealth);  // RoT final wealth
+ */
+function computeMedianPathComparison(
+  params: LifecycleParams = DEFAULT_LIFECYCLE_PARAMS,
+  econParams: EconomicParams = DEFAULT_ECON_PARAMS,
+  options: MedianPathComparisonOptions = {}
+): StrategyComparison {
+  const {
+    rotSavingsRate = 0.15,
+    rotTargetDuration = 6.0,
+    rotWithdrawalRate = 0.04,
+  } = options;
+
+  // Zero shocks for deterministic median paths
+  const nPeriods = params.endAge - params.startAge;
+  const zeroRateShocks = [Array(nPeriods).fill(0)];    // [1][nPeriods]
+  const zeroStockShocks = [Array(nPeriods).fill(0)];   // [1][nPeriods]
+
+  // Strategy 1: LDI (Liability-Driven Investment)
+  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const ldiResult = simulateWithStrategy(
+    ldiStrategy, params, econParams,
+    zeroRateShocks, zeroStockShocks,
+    null,
+    "LDI (Liability-Driven Investment)"
+  );
+
+  // Strategy 2: Rule-of-Thumb (100-age rule)
+  const rotStrategy = createRuleOfThumbStrategy({
+    savingsRate: rotSavingsRate,
+    withdrawalRate: rotWithdrawalRate,
+    targetDuration: rotTargetDuration,
+  });
+  const rotResult = simulateWithStrategy(
+    rotStrategy, params, econParams,
+    zeroRateShocks, zeroStockShocks,
+    null,
+    "Rule-of-Thumb (100-age rule)"
+  );
+
+  return {
+    resultA: ldiResult,
+    resultB: rotResult,
+    strategyAParams: { allowLeverage: false },
+    strategyBParams: {
+      savingsRate: rotSavingsRate,
+      withdrawalRate: rotWithdrawalRate,
+      targetDuration: rotTargetDuration,
+    },
+  };
+}
+
 function computeEarningsProfile(params: Params): number[] {
   const workingYears = params.retirementAge - params.startAge;
   const earnings: number[] = [];
