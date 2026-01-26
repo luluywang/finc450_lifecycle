@@ -29,6 +29,9 @@ interface EconomicParams {
 
 /**
  * Default economic parameters matching Python EconomicParams defaults exactly.
+ *
+ * TEST FIXTURE: Use as the standard baseline for unit tests and simulation verification.
+ * All values are economically reasonable and match the Python implementation in core/params.py.
  */
 const DEFAULT_ECON_PARAMS: EconomicParams = {
   rBar: 0.02,             // Long-run mean real rate
@@ -97,6 +100,9 @@ interface LifecycleParams {
 
 /**
  * Default lifecycle parameters matching Python LifecycleParams defaults exactly.
+ *
+ * TEST FIXTURE: Use as the standard baseline for unit tests and simulation verification.
+ * All values are economically reasonable and match the Python implementation in core/params.py.
  */
 const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
   // Age parameters
@@ -136,6 +142,80 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
 
   // Initial wealth
   initialWealth: 100,           // $100k starting wealth
+};
+
+// =============================================================================
+// Test Fixture Variants
+// =============================================================================
+
+/**
+ * TEST FIXTURE: Aggressive economic environment for edge case testing.
+ * Higher volatility and equity premium to stress-test portfolio strategies.
+ */
+const AGGRESSIVE_ECON_PARAMS: EconomicParams = {
+  rBar: 0.02,             // Same mean rate
+  phi: 1.0,               // Random walk persistence
+  sigmaR: 0.006,          // 2x rate volatility (0.6 pp vs 0.3 pp)
+  muExcess: 0.06,         // Higher equity premium (6% vs 4%)
+  bondSharpe: 0.037,      // Same bond Sharpe
+  sigmaS: 0.25,           // Higher stock volatility (25% vs 18%)
+  rho: -0.2,              // Negative stock-rate correlation (flight to quality)
+  bondDuration: 20.0,     // Same duration
+};
+
+/**
+ * TEST FIXTURE: Conservative lifecycle parameters for edge case testing.
+ * Higher risk aversion (gamma=5) and lower consumption share for cautious investors.
+ */
+const CONSERVATIVE_LIFECYCLE_PARAMS: LifecycleParams = {
+  // Age parameters (same as default)
+  startAge: 25,
+  retirementAge: 65,
+  endAge: 95,
+
+  // Income parameters (same as default)
+  initialEarnings: 200,
+  earningsGrowth: 0.0,
+  earningsHumpAge: 65,
+  earningsDecline: 0.0,
+
+  // Expense parameters (same as default)
+  baseExpenses: 100,
+  expenseGrowth: 0.0,
+  retirementExpenses: 100,
+
+  // Consumption parameters (more cautious)
+  consumptionShare: 0.03,       // Lower consumption share (3% vs 5%)
+  consumptionBoost: 0.0,
+
+  // Asset allocation parameters
+  stockBetaHumanCapital: 0.0,   // Bond-like human capital
+
+  // Mean-variance optimization parameters (more risk averse)
+  gamma: 5.0,                   // Higher risk aversion (5 vs 2)
+  targetStockAllocation: 0.40,  // Lower stock target (40% vs 60%)
+  targetBondAllocation: 0.50,   // Higher bond target (50% vs 30%)
+
+  // Portfolio constraint parameters
+  allowLeverage: false,
+
+  // Economic parameters
+  riskFreeRate: 0.02,
+  equityPremium: 0.04,
+
+  // Initial wealth
+  initialWealth: 100,
+};
+
+/**
+ * TEST FIXTURE: High-beta human capital lifecycle parameters.
+ * For testing scenarios where human capital is stock-like (e.g., tech entrepreneurs).
+ */
+const HIGH_BETA_LIFECYCLE_PARAMS: LifecycleParams = {
+  ...DEFAULT_LIFECYCLE_PARAMS,
+  stockBetaHumanCapital: 0.6,   // Stock-like human capital (beta = 0.6)
+  gamma: 3.0,                   // Moderately risk averse
+  allowLeverage: true,          // Allow leverage for aggressive hedging
 };
 
 /**
