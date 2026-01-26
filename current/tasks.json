@@ -96,7 +96,7 @@
       "type": "code",
       "depends_on": [6],
       "status": "complete",
-      "notes": "Panel already exists at lines 5345-5383 with AreaChart, stacked percentile bands (p5-p25, p25-p75, p75-p95), median line, log scale Y-axis, retirement age reference line, and purple color scheme matching PDF"
+      "notes": "Panel 1 of 8: AreaChart with stacked percentile bands (p5-p25, p25-p75, p75-p95), median line, log scale Y-axis, retirement age reference line, purple color scheme (#9b59b6). Data sourced from teachingScenarios.ldi.percentiles.cumulativeStockReturns."
     },
     {
       "id": 11,
@@ -106,7 +106,7 @@
       "type": "code",
       "depends_on": [6],
       "status": "complete",
-      "notes": "Panel already implemented at lines 5369-5401 in lifecycle_visualizer_artifact.tsx. Shows interest rate percentiles (p5-p95) as stacked AreaChart bands with blue color (#3498db) matching PDF. Panel 2 of 8 in individual scenario tabs, under 'Market Conditions' ChartSection."
+      "notes": "Panel 2 of 8: AreaChart with stacked percentile bands for interest rates as percentage, blue color (#3498db), retirement age reference line. Data sourced from teachingScenarios.ldi.percentiles.interestRates."
     },
     {
       "id": 12,
@@ -116,7 +116,7 @@
       "type": "code",
       "depends_on": [6],
       "status": "complete",
-      "notes": "Panel already implemented at lines 5251-5296 in lifecycle_visualizer_artifact.tsx. Uses AreaChart with overlaid percentile bands (p5-p25, p25-p75, p75-p95) for both LDI (blue #2980b9) and RoT (gold #d4a84c). Separate stackIds allow independent stacking. Median lines overlay the fan charts."
+      "notes": "Panel 3 of 8: LineChart with overlaid LDI (blue #1A759F) and RoT (gold #E9C46A) percentile lines (p5, p50, p95). Shows median and 5th/95th percentiles for both strategies with retirement reference line."
     },
     {
       "id": 13,
@@ -125,7 +125,8 @@
       "description": "Create histogram showing distribution of default timing events",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Panel 4 of 8: Shows default rates as large summary metrics plus BarChart histogram with 2-year age bins if any defaults occurred. LDI (blue) vs RoT (gold) grouped bars. Data sourced from teachingScenarios.ldi/rot.result.defaultAge arrays."
     },
     {
       "id": 14,
@@ -134,7 +135,8 @@
       "description": "Create overlaid fan chart comparing LDI and RoT stock allocation over time",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Panel 5 of 8: LineChart with overlaid percentile lines (p5, p50, p95) for both strategies. Y-axis 0-100%. LDI dynamic vs RoT static allocation. Data sourced from teachingScenarios.ldi/rot.percentiles.stockWeight."
     },
     {
       "id": 15,
@@ -143,8 +145,8 @@
       "description": "Create overlaid fan chart comparing LDI and RoT bond allocation over time",
       "type": "code",
       "depends_on": [6],
-      "status": "blocked",
-      "notes": "BLOCKED: Task 9 removed the 'Detailed Charts for Each Scenario' section that contained the individual scenario tabs with 8 panels. The teachingScenarios data (with percentiles.bondWeight) is now only used for summary bar charts. Alternative scenario tabs (sequenceRisk, rateShock) use scenarioResults which has adaptive/fourPercent strategies without bond allocation percentiles. Requires architecture decision: either restore teachingScenarios panels or add bond allocation data to scenarioResults."
+      "status": "complete",
+      "notes": "Panel 6 of 8: LineChart with overlaid percentile lines (p5, p50, p95) for both strategies. Y-axis 0-100%. Duration-matched bonds for LDI. Data sourced from teachingScenarios.ldi/rot.percentiles.bondWeight."
     },
     {
       "id": 16,
@@ -154,7 +156,7 @@
       "type": "code",
       "depends_on": [6],
       "status": "complete",
-      "notes": "Panel already implemented in lifecycle_visualizer_artifact.tsx lines 5543-5562. Shows terminal wealth histogram with LDI (blue) and RoT (gold) grouped bars, log-scale bins, and median values in legend."
+      "notes": "Panel 7 of 8: Shows median terminal wealth for both strategies plus BarChart histogram with log-scale bins ($0-10k, $10-100k, etc.). LDI (blue) vs RoT (gold) grouped bars. Data from teachingScenarios.ldi/rot.result.finalWealth."
     },
     {
       "id": 17,
@@ -163,7 +165,8 @@
       "description": "Create histogram showing distribution of PV consumption outcomes",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Panel 8 of 8: Shows median PV consumption for both strategies plus BarChart histogram with linear bins ($0-1000k, $1000-2000k, etc.). Computes PV using computePvConsumption helper. Data from teachingScenarios.ldi/rot.result.consumption."
     }
   ],
   "total_tasks": 17,

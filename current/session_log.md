@@ -461,6 +461,53 @@ The TSX implementation includes:
 
 ---
 
+## Tasks 10-17 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Tasks 10-17 require implementing the 8-panel individual scenario views matching the teaching_scenarios.pdf layout. The current implementation used `scenarioResults` (with `adaptive`/`fourPercent` strategies) for the sequenceRisk and rateShock tabs, but the PDF uses `teachingScenarios` data (with `ldi`/`rot` strategies). The task required restructuring the scenario tabs to use the correct data source and implementing all 8 panels.
+
+**Action:**
+1. Changed scenario type state from `'summary' | 'sequenceRisk' | 'rateShock' | 'optimalVsRuleOfThumb'` to `'summary' | 'baseline' | 'sequenceRisk' | 'rateShock'`
+2. Replaced the old `optimalVsRuleOfThumb` tab and `sequenceRisk`/`rateShock` tabs with a unified 8-panel component
+3. The new component uses `teachingScenarios` data from `cachedTeachingScenarios` which contains:
+   - `baseline`, `sequenceRisk`, `rateShock` scenarios
+   - Each with `ldi` and `rot` strategies having `percentiles` and `result` data
+4. Implemented responsive 2-column grid layout (`gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))'`)
+5. Removed unused `scenarioResults`, `strategyResults`, `scenarioPercentileData`, and `scenarioParams` useMemo hooks (~140 lines of dead code)
+
+**8 Panels Implemented:**
+1. **Cumulative Stock Market Returns** (Panel 1): AreaChart fan chart with purple bands, log scale Y-axis, retirement reference line
+2. **Interest Rate Paths** (Panel 2): AreaChart fan chart with blue bands, percentage Y-axis, retirement reference line
+3. **Financial Wealth - LDI vs RoT** (Panel 3): LineChart with overlaid 5th/50th/95th percentile lines for both strategies
+4. **Default Timing** (Panel 4): Summary metrics cards + BarChart histogram with 2-year age bins (if defaults exist)
+5. **Stock Allocation - LDI vs RoT** (Panel 5): LineChart with overlaid percentile lines, Y-axis 0-100%
+6. **Bond Allocation - LDI vs RoT** (Panel 6): LineChart with overlaid percentile lines, Y-axis 0-100%
+7. **Terminal Wealth Distribution** (Panel 7): Summary median metrics + BarChart histogram with log-scale bins
+8. **PV Consumption Distribution** (Panel 8): Summary median metrics + BarChart histogram with linear bins
+
+**Results:**
+- All 3 individual scenario tabs (Baseline, Sequence Risk, Rate Shock) now display 8 panels matching PDF layout
+- Panels use correct colors: LDI = #1A759F (blue), RoT = #E9C46A (gold), Rates = #3498db, Stocks = #9b59b6
+- Data sourced correctly from `teachingScenarios[scenarioKey].ldi/rot.percentiles` and `.result`
+- Responsive grid collapses to single column on mobile
+- Key Takeaways box at bottom with scenario-specific insights
+
+**Checks:**
+- [x] Panel 1: Shows fan chart of cumulative stock market returns with percentile bands
+- [x] Panel 2: Shows fan chart of interest rate paths with percentile bands
+- [x] Panel 3: Shows overlaid LDI/RoT financial wealth with p5/p50/p95 lines
+- [x] Panel 4: Shows default timing histogram with LDI/RoT comparison
+- [x] Panel 5: Shows overlaid LDI/RoT stock allocation with p5/p50/p95 lines
+- [x] Panel 6: Shows overlaid LDI/RoT bond allocation with p5/p50/p95 lines
+- [x] Panel 7: Shows terminal wealth distribution histogram
+- [x] Panel 8: Shows PV consumption distribution histogram
+- [x] Responsive 2-column layout on desktop, 1-column on mobile
+- [x] All 3 scenarios (Baseline, Sequence Risk, Rate Shock) display correctly
+- [x] Data sourced from teachingScenarios (not scenarioResults)
+
+---
+
 ## Task 7 — 2026-01-26
 
 **Status:** complete
