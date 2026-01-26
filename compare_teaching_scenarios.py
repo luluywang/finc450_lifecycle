@@ -43,135 +43,287 @@ from visualization import plot_fan_chart, save_panel_as_png
 
 
 # =============================================================================
-# PNG Export Helpers
+# Color Constants (colorblind-friendly)
 # =============================================================================
 
-def save_axes_as_png(
-    fig: plt.Figure,
+COLOR_LDI = '#1A759F'    # Deep blue
+COLOR_ROT = '#E9C46A'    # Amber
+COLOR_RATES = '#3498db'  # Blue
+COLOR_STOCKS = '#9b59b6' # Purple
+
+
+# =============================================================================
+# Reusable Panel Plot Functions
+# =============================================================================
+
+def _plot_cumulative_stock_returns(
     ax: plt.Axes,
-    panel_name: str,
-    output_dir: str = "output/teaching_panels",
-) -> str:
-    """
-    Extract a single axes from a figure and save it as a standalone PNG.
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot cumulative stock returns fan chart."""
+    x_returns = np.arange(result.cumulative_stock_returns.shape[1])
+    plot_fan_chart(ax, result.cumulative_stock_returns, x_returns, color=COLOR_STOCKS, label_prefix='')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=1.0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Cumulative Return (starting at 1.0)')
+    ax.set_title('Cumulative Stock Market Returns')
+    ax.set_yscale('log')
+    ax.grid(True, alpha=0.3)
 
-    Args:
-        fig: The source figure containing the axes
-        ax: The axes to extract and save
-        panel_name: Filename for the PNG (without extension)
-        output_dir: Directory to save the PNG file
 
-    Returns:
-        The absolute path to the saved PNG file
-    """
-    import os
-    from matplotlib.transforms import Bbox
+def _plot_interest_rates(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot interest rate paths fan chart."""
+    rate_paths_pct = result.rate_paths * 100  # Convert to percentage
+    x_rates = np.arange(rate_paths_pct.shape[1])
+    plot_fan_chart(ax, rate_paths_pct, x_rates, color=COLOR_RATES, label_prefix='')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Interest Rate Paths')
+    ax.grid(True, alpha=0.3)
 
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
 
-    # Get the extent of the axes in figure coordinates
-    renderer = fig.canvas.get_renderer()
-    ax_bbox = ax.get_tightbbox(renderer)
+def _plot_financial_wealth(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot financial wealth fan charts (LDI vs RoT overlaid)."""
+    x = np.arange(len(result.ages))
+    plot_fan_chart(ax, result.ldi_financial_wealth_paths, x, color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_financial_wealth_paths, x, color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Financial Wealth')
+    ax.legend(loc='upper left', fontsize=9)
+    ax.set_yscale('symlog', linthresh=50, linscale=0.5)
+    ax.grid(True, alpha=0.3)
 
-    # Convert to display coordinates and back to figure coordinates
-    # This gives us the bounding box including labels and titles
-    bbox_inches = ax_bbox.transformed(fig.dpi_scale_trans.inverted())
 
-    # Add padding to ensure all elements are captured
-    bbox_padded = Bbox.from_bounds(
-        bbox_inches.x0 - 0.1,
-        bbox_inches.y0 - 0.1,
-        bbox_inches.width + 0.2,
-        bbox_inches.height + 0.2
-    )
+def _plot_default_timing(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    params: LifecycleParams,
+) -> None:
+    """Plot default timing histogram."""
+    ldi_default_rate = np.mean(result.ldi_default_flags) * 100
+    rot_default_rate = np.mean(result.rot_default_flags) * 100
 
-    # Construct full path with .png extension
-    if not panel_name.endswith('.png'):
-        filename = f"{panel_name}.png"
+    # Show default timing histogram as main content (dodged)
+    ldi_ages = result.ldi_default_ages[result.ldi_default_flags]
+    rot_ages = result.rot_default_ages[result.rot_default_flags]
+    bins = np.arange(params.retirement_age, params.end_age + 1, 2)
+
+    if len(ldi_ages) > 0 or len(rot_ages) > 0:
+        # Compute histogram counts
+        ldi_counts, _ = np.histogram(ldi_ages, bins=bins)
+        rot_counts, _ = np.histogram(rot_ages, bins=bins)
+        bin_width = bins[1] - bins[0]
+        bar_width = bin_width * 0.4
+        bin_centers = (bins[:-1] + bins[1:]) / 2
+
+        ax.bar(bin_centers - bar_width / 2, ldi_counts, width=bar_width,
+               color=COLOR_LDI, label='LDI', edgecolor='white', align='center')
+        ax.bar(bin_centers + bar_width / 2, rot_counts, width=bar_width,
+               color=COLOR_ROT, label='RoT', edgecolor='white', align='center')
+        ax.set_xlabel('Age at Default')
+        ax.set_ylabel('Count')
+        ax.legend(fontsize=9)
     else:
-        filename = panel_name
+        ax.text(0.5, 0.5, 'No Defaults', ha='center', va='center',
+                fontsize=14, transform=ax.transAxes)
+        ax.set_xlabel('Age at Default')
+        ax.set_ylabel('Count')
 
-    filepath = os.path.join(output_dir, filename)
+    ax.set_title('Default Timing')
 
-    # Save just this axes region
-    fig.savefig(
-        filepath,
-        dpi=300,
-        bbox_inches=bbox_padded,
-        facecolor='white',
-        edgecolor='none'
+    # Add text annotation box with default rates
+    textstr = f'Default Rates:\nLDI: {ldi_default_rate:.1f}%\nRoT: {rot_default_rate:.1f}%'
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+    ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
+            verticalalignment='top', bbox=props)
+
+
+def _plot_stock_allocation(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot stock allocation fan charts."""
+    x = np.arange(len(result.ages))
+    plot_fan_chart(ax, result.ldi_stock_weight_paths * 100, x,
+                   color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_stock_weight_paths * 100, x,
+                   color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Stock Weight (%)')
+    ax.set_title('Stock Allocation (LDI Dynamic vs RoT Static)')
+    ax.set_ylim(0, 100)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_bond_allocation(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot bond allocation fan charts."""
+    x = np.arange(len(result.ages))
+    plot_fan_chart(ax, result.ldi_bond_weight_paths * 100, x,
+                   color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_bond_weight_paths * 100, x,
+                   color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Bond Weight (%)')
+    ax.set_title('Bond Allocation (LDI Dynamic vs RoT Static)')
+    ax.set_ylim(0, 100)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_terminal_wealth(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+) -> None:
+    """Plot terminal wealth distribution."""
+    ldi_final = result.ldi_financial_wealth_paths[:, -1]
+    rot_final = result.rot_financial_wealth_paths[:, -1]
+
+    floor_val = 10
+    ldi_floored = np.maximum(ldi_final, floor_val)
+    rot_floored = np.maximum(rot_final, floor_val)
+    max_val = max(np.percentile(ldi_floored, 99), np.percentile(rot_floored, 99))
+    if max_val > floor_val:
+        bins = np.geomspace(floor_val, max_val, 20)
+        plot_dodged_histogram(
+            ax, ldi_floored, rot_floored, bins,
+            COLOR_LDI, COLOR_ROT,
+            f'LDI (med=${np.median(ldi_final):,.0f}k)',
+            f'RoT (med=${np.median(rot_final):,.0f}k)',
+            log_scale=True
+        )
+    else:
+        bins = np.linspace(ldi_final.min(), ldi_final.max(), 20)
+        plot_dodged_histogram(
+            ax, ldi_final, rot_final, bins,
+            COLOR_LDI, COLOR_ROT,
+            f'LDI (med=${np.median(ldi_final):,.0f}k)',
+            f'RoT (med=${np.median(rot_final):,.0f}k)',
+            log_scale=False
+        )
+    ax.axvline(x=max(np.median(ldi_final), floor_val), color=COLOR_LDI, linestyle='--', linewidth=2)
+    ax.axvline(x=max(np.median(rot_final), floor_val), color=COLOR_ROT, linestyle='--', linewidth=2)
+    ax.set_xlabel('Terminal Wealth at Age 95 ($ 000s)')
+    ax.set_ylabel('Count')
+    ax.set_title('Terminal Wealth Distribution')
+    ax.legend(loc='upper right', fontsize=9)
+
+
+def _plot_pv_consumption(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+) -> None:
+    """Plot PV consumption distribution."""
+    ldi_pv = result.ldi_pv_consumption
+    rot_pv = result.rot_pv_consumption
+
+    floor_val = 100
+    ldi_pv_floored = np.maximum(ldi_pv, floor_val)
+    rot_pv_floored = np.maximum(rot_pv, floor_val)
+    min_val = min(ldi_pv_floored.min(), rot_pv_floored.min())
+    max_val = max(np.percentile(ldi_pv_floored, 99), np.percentile(rot_pv_floored, 99))
+    bins = np.geomspace(min_val, max_val, 20)
+    plot_dodged_histogram(
+        ax, ldi_pv_floored, rot_pv_floored, bins,
+        COLOR_LDI, COLOR_ROT,
+        f'LDI (med=${np.median(ldi_pv):,.0f}k)',
+        f'RoT (med=${np.median(rot_pv):,.0f}k)',
+        log_scale=True
     )
+    ax.axvline(x=max(np.median(ldi_pv), floor_val), color=COLOR_LDI, linestyle='--', linewidth=2)
+    ax.axvline(x=max(np.median(rot_pv), floor_val), color=COLOR_ROT, linestyle='--', linewidth=2)
+    ax.set_xlabel('PV Lifetime Consumption ($ 000s)')
+    ax.set_ylabel('Count')
+    ax.set_title('PV Consumption (Realized Rates)')
+    ax.legend(loc='upper right', fontsize=9)
 
-    return os.path.abspath(filepath)
 
+# =============================================================================
+# PNG Export Functions
+# =============================================================================
 
-def save_scenario_panels(
-    fig: plt.Figure,
-    axes: np.ndarray,
+def _save_scenario_panels(
+    result: 'ScenarioResult',
     scenario_name: str,
-    beta: float,
+    params: LifecycleParams,
     output_dir: str = "output/teaching_panels",
 ) -> List[str]:
     """
-    Save all 8 panels from a scenario figure as individual PNGs.
+    Save all 8 panels from a scenario as individual PNGs.
 
-    Panel naming convention: scenario_{scenario}_{beta_label}_{panel_desc}.png
+    Creates standalone figures for each panel, avoiding the suptitle bleed
+    issue that occurs when extracting axes from composite figures.
 
     Args:
-        fig: The scenario figure (4x2 grid)
-        axes: The 4x2 axes array
+        result: ScenarioResult with simulation data
         scenario_name: Name of the scenario (baseline, sequence_risk, rate_shock)
-        beta: Human capital stock beta value
+        params: Lifecycle parameters
         output_dir: Directory to save PNGs
 
     Returns:
         List of absolute paths to saved PNG files
     """
-    # Panel descriptions for naming
-    panel_names = [
-        ('stock_returns', 0, 0),       # Cumulative Stock Returns
-        ('interest_rates', 0, 1),      # Interest Rate Paths
-        ('financial_wealth', 1, 0),    # Financial Wealth
-        ('default_timing', 1, 1),      # Default Risk/Timing
-        ('stock_allocation', 2, 0),    # Stock Allocation
-        ('bond_allocation', 2, 1),     # Bond Allocation
-        ('terminal_wealth', 3, 0),     # Terminal Wealth Distribution
-        ('pv_consumption', 3, 1),      # PV Consumption Distribution
+    saved_paths = []
+    beta_label = f"beta{result.stock_beta}".replace('.', '')  # e.g., beta00 or beta04
+    retirement_x = params.retirement_age - params.start_age
+
+    panels = [
+        ('stock_returns', lambda ax: _plot_cumulative_stock_returns(ax, result, retirement_x)),
+        ('interest_rates', lambda ax: _plot_interest_rates(ax, result, retirement_x)),
+        ('financial_wealth', lambda ax: _plot_financial_wealth(ax, result, retirement_x)),
+        ('default_timing', lambda ax: _plot_default_timing(ax, result, params)),
+        ('stock_allocation', lambda ax: _plot_stock_allocation(ax, result, retirement_x)),
+        ('bond_allocation', lambda ax: _plot_bond_allocation(ax, result, retirement_x)),
+        ('terminal_wealth', lambda ax: _plot_terminal_wealth(ax, result)),
+        ('pv_consumption', lambda ax: _plot_pv_consumption(ax, result)),
     ]
 
-    beta_label = f"beta{beta}".replace('.', '')  # e.g., beta0 or beta04
-    saved_paths = []
-
-    for desc, row, col in panel_names:
-        panel_name = f"scenario_{scenario_name}_{beta_label}_{desc}"
-        ax = axes[row, col]
-        path = save_axes_as_png(fig, ax, panel_name, output_dir)
+    for name_suffix, plot_fn in panels:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        plot_fn(ax)
+        fig.tight_layout()
+        panel_name = f"scenario_{scenario_name}_{beta_label}_{name_suffix}"
+        path = save_panel_as_png(fig, panel_name, output_dir)
         saved_paths.append(path)
+        plt.close(fig)
 
     return saved_paths
 
 
-def save_summary_panels(
-    fig: plt.Figure,
-    axes: np.ndarray,
+def _save_summary_panels(
+    results: Dict[str, Dict[float, 'ScenarioResult']],
     beta_values: List[float],
     output_dir: str = "output/teaching_panels",
 ) -> List[str]:
     """
-    Save all panels from the summary figure as individual PNGs.
+    Save all panels from the summary as individual PNGs.
 
-    For 2-beta case (3x2 grid = 6 panels):
-    - Row 0: Default Rates (left: beta0, right: beta_risky)
-    - Row 1: PV Consumption (left: beta0, right: beta_risky)
-    - Row 2: Terminal Wealth (left: beta0, right: beta_risky)
-
-    For 1-beta case (1x3 grid = 3 panels):
-    - Default Rates, PV Consumption, Terminal Wealth
+    Creates standalone figures for each panel, avoiding the suptitle bleed
+    issue that occurs when extracting axes from composite figures.
 
     Args:
-        fig: The summary figure
-        axes: The axes array (3x2 for 2-beta, 1x3 for 1-beta)
+        results: Nested dict {scenario_name: {beta: ScenarioResult}}
         beta_values: List of beta values used
         output_dir: Directory to save PNGs
 
@@ -179,32 +331,71 @@ def save_summary_panels(
         List of absolute paths to saved PNG files
     """
     saved_paths = []
+    scenarios = ['baseline', 'sequence_risk', 'rate_shock']
+    scenario_labels = ['Baseline', 'Sequence\nRisk', 'Rate\nShock']
+    x = np.arange(len(scenarios))
+    width = 0.35
 
-    if len(beta_values) == 1:
-        # Single beta case: 1x3 layout
-        panel_names = [
-            ('default_rates', 0),
-            ('pv_consumption', 1),
-            ('terminal_wealth', 2),
-        ]
-        beta_label = f"beta{beta_values[0]}".replace('.', '')
+    # Compute metrics for each scenario and beta
+    metrics = {beta: {
+        'ldi_default': [],
+        'rot_default': [],
+        'ldi_pv': [],
+        'rot_pv': [],
+        'ldi_terminal': [],
+        'rot_terminal': [],
+    } for beta in beta_values}
 
-        for desc, col in panel_names:
-            panel_name = f"scenario_summary_{beta_label}_{desc}"
-            ax = axes[col]
-            path = save_axes_as_png(fig, ax, panel_name, output_dir)
+    for scenario in scenarios:
+        for beta in beta_values:
+            r = results[scenario][beta]
+            metrics[beta]['ldi_default'].append(np.mean(r.ldi_default_flags) * 100)
+            metrics[beta]['rot_default'].append(np.mean(r.rot_default_flags) * 100)
+            metrics[beta]['ldi_pv'].append(np.median(r.ldi_pv_consumption))
+            metrics[beta]['rot_pv'].append(np.median(r.rot_pv_consumption))
+            metrics[beta]['ldi_terminal'].append(np.median(r.ldi_financial_wealth_paths[:, -1]))
+            metrics[beta]['rot_terminal'].append(np.median(r.rot_financial_wealth_paths[:, -1]))
+
+    # Panel definitions
+    panel_configs = [
+        ('default_rates', 'Default Rates', 'Default Rate (%)', 'ldi_default', 'rot_default', '{:.1f}%'),
+        ('pv_consumption', 'PV Lifetime Consumption', 'Median PV Consumption ($k)', 'ldi_pv', 'rot_pv', '${:,.0f}k'),
+        ('terminal_wealth', 'Terminal Wealth at Age 95', 'Median Terminal Wealth ($k)', 'ldi_terminal', 'rot_terminal', '${:,.0f}k'),
+    ]
+
+    for beta in beta_values:
+        beta_label = f"beta{beta}".replace('.', '')  # e.g., beta00 or beta04
+        beta_title = "β=0 (Bond-like HC)" if beta == 0 else f"β={beta} (Risky HC)"
+
+        for panel_name, title_base, ylabel, ldi_key, rot_key, fmt in panel_configs:
+            fig, ax = plt.subplots(figsize=(8, 6))
+
+            bars1 = ax.bar(x - width/2, metrics[beta][ldi_key], width,
+                           label='LDI', color=COLOR_LDI, alpha=0.8)
+            bars2 = ax.bar(x + width/2, metrics[beta][rot_key], width,
+                           label='RoT', color=COLOR_ROT, alpha=0.8)
+            ax.set_ylabel(ylabel)
+            ax.set_title(f'{title_base} - {beta_title}')
+            ax.set_xticks(x)
+            ax.set_xticklabels(scenario_labels)
+            ax.legend(loc='upper left', fontsize=9)
+            ax.grid(True, alpha=0.3, axis='y')
+
+            # Add value annotations
+            for bars in [bars1, bars2]:
+                for bar in bars:
+                    height = bar.get_height()
+                    if height > 0.5 or panel_name != 'default_rates':
+                        ax.annotate(fmt.format(height),
+                                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                                    xytext=(0, 3), textcoords="offset points",
+                                    ha='center', va='bottom', fontsize=8)
+
+            fig.tight_layout()
+            full_panel_name = f"scenario_summary_{beta_label}_{panel_name}"
+            path = save_panel_as_png(fig, full_panel_name, output_dir)
             saved_paths.append(path)
-    else:
-        # Two beta case: 3x2 layout
-        row_names = ['default_rates', 'pv_consumption', 'terminal_wealth']
-
-        for row_idx, desc in enumerate(row_names):
-            for col_idx, beta in enumerate(beta_values[:2]):
-                beta_label = f"beta{beta}".replace('.', '')
-                panel_name = f"scenario_summary_{beta_label}_{desc}"
-                ax = axes[row_idx, col_idx]
-                path = save_axes_as_png(fig, ax, panel_name, output_dir)
-                saved_paths.append(path)
+            plt.close(fig)
 
     return saved_paths
 
@@ -480,13 +671,6 @@ def run_all_teaching_scenarios(
 # Visualization
 # =============================================================================
 
-# Colors for strategies (colorblind-friendly)
-COLOR_LDI = '#1A759F'   # Deep blue (was green)
-COLOR_ROT = '#E9C46A'   # Amber (was red)
-COLOR_RATES = '#3498db'  # Blue (unchanged)
-COLOR_STOCKS = '#9b59b6'  # Purple (unchanged)
-
-
 def plot_dodged_histogram(
     ax: plt.Axes,
     data1: np.ndarray,
@@ -564,171 +748,17 @@ def create_scenario_figure(
     beta_label = f"(β={result.stock_beta})" if result.stock_beta > 0 else "(β=0, Bond-like HC)"
     fig.suptitle(f'{config.title} {beta_label}\n{config.description}', fontsize=14, fontweight='bold')
 
-    x = np.arange(len(result.ages))
     retirement_x = params.retirement_age - params.start_age
-    n_sims = result.ldi_financial_wealth_paths.shape[0]
 
-    # ---- (0,0): Cumulative Stock Returns ----
-    ax = axes[0, 0]
-    x_returns = np.arange(result.cumulative_stock_returns.shape[1])
-    plot_fan_chart(ax, result.cumulative_stock_returns, x_returns, color=COLOR_STOCKS, label_prefix='')
-    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
-    ax.axhline(y=1.0, color='gray', linestyle='-', alpha=0.3)
-    ax.set_xlabel('Years from Career Start')
-    ax.set_ylabel('Cumulative Return (starting at 1.0)')
-    ax.set_title('Cumulative Stock Market Returns')
-    ax.set_yscale('log')
-    ax.grid(True, alpha=0.3)
-
-    # ---- (0,1): Interest Rate Paths ----
-    ax = axes[0, 1]
-    rate_paths_pct = result.rate_paths * 100  # Convert to percentage
-    x_rates = np.arange(rate_paths_pct.shape[1])
-    plot_fan_chart(ax, rate_paths_pct, x_rates, color=COLOR_RATES, label_prefix='')
-    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Years from Career Start')
-    ax.set_ylabel('Interest Rate (%)')
-    ax.set_title('Interest Rate Paths')
-    ax.grid(True, alpha=0.3)
-
-    # ---- (1,0): Financial Wealth Fan Charts ----
-    ax = axes[1, 0]
-    plot_fan_chart(ax, result.ldi_financial_wealth_paths, x, color=COLOR_LDI, label_prefix='LDI')
-    plot_fan_chart(ax, result.rot_financial_wealth_paths, x, color=COLOR_ROT, label_prefix='RoT')
-    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
-    ax.set_xlabel('Years from Career Start')
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Financial Wealth')
-    ax.legend(loc='upper left', fontsize=9)
-    ax.set_yscale('symlog', linthresh=50, linscale=0.5)
-    ax.grid(True, alpha=0.3)
-
-    # ---- (1,1): Default Risk (histogram + text annotation) ----
-    ax = axes[1, 1]
-    ldi_default_rate = np.mean(result.ldi_default_flags) * 100
-    rot_default_rate = np.mean(result.rot_default_flags) * 100
-
-    # Show default timing histogram as main content (dodged)
-    ldi_ages = result.ldi_default_ages[result.ldi_default_flags]
-    rot_ages = result.rot_default_ages[result.rot_default_flags]
-    bins = np.arange(params.retirement_age, params.end_age + 1, 2)
-
-    if len(ldi_ages) > 0 or len(rot_ages) > 0:
-        # Compute histogram counts
-        ldi_counts, _ = np.histogram(ldi_ages, bins=bins)
-        rot_counts, _ = np.histogram(rot_ages, bins=bins)
-        bin_width = bins[1] - bins[0]
-        bar_width = bin_width * 0.4
-        bin_centers = (bins[:-1] + bins[1:]) / 2
-
-        ax.bar(bin_centers - bar_width / 2, ldi_counts, width=bar_width,
-               color=COLOR_LDI, label='LDI', edgecolor='white', align='center')
-        ax.bar(bin_centers + bar_width / 2, rot_counts, width=bar_width,
-               color=COLOR_ROT, label='RoT', edgecolor='white', align='center')
-        ax.set_xlabel('Age at Default')
-        ax.set_ylabel('Count')
-        ax.legend(fontsize=9)
-    else:
-        ax.text(0.5, 0.5, 'No Defaults', ha='center', va='center',
-                fontsize=14, transform=ax.transAxes)
-        ax.set_xlabel('Age at Default')
-        ax.set_ylabel('Count')
-
-    ax.set_title('Default Timing')
-
-    # Add text annotation box with default rates
-    textstr = f'Default Rates:\nLDI: {ldi_default_rate:.1f}%\nRoT: {rot_default_rate:.1f}%'
-    props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
-    ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', bbox=props)
-
-    # ---- (2,0): Stock Allocation Fan Charts ----
-    ax = axes[2, 0]
-    plot_fan_chart(ax, result.ldi_stock_weight_paths * 100, x,
-                   color=COLOR_LDI, label_prefix='LDI')
-    plot_fan_chart(ax, result.rot_stock_weight_paths * 100, x,
-                   color=COLOR_ROT, label_prefix='RoT')
-    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Years from Career Start')
-    ax.set_ylabel('Stock Weight (%)')
-    ax.set_title('Stock Allocation (LDI Dynamic vs RoT Static)')
-    ax.set_ylim(0, 100)
-    ax.legend(loc='upper right', fontsize=9)
-    ax.grid(True, alpha=0.3)
-
-    # ---- (2,1): Bond Allocation Fan Charts ----
-    ax = axes[2, 1]
-    plot_fan_chart(ax, result.ldi_bond_weight_paths * 100, x,
-                   color=COLOR_LDI, label_prefix='LDI')
-    plot_fan_chart(ax, result.rot_bond_weight_paths * 100, x,
-                   color=COLOR_ROT, label_prefix='RoT')
-    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Years from Career Start')
-    ax.set_ylabel('Bond Weight (%)')
-    ax.set_title('Bond Allocation (LDI Dynamic vs RoT Static)')
-    ax.set_ylim(0, 100)
-    ax.legend(loc='upper right', fontsize=9)
-    ax.grid(True, alpha=0.3)
-
-    # ---- (3,0): Terminal Wealth Distribution (dodged) ----
-    ax = axes[3, 0]
-    ldi_final = result.ldi_financial_wealth_paths[:, -1]
-    rot_final = result.rot_financial_wealth_paths[:, -1]
-
-    floor_val = 10
-    ldi_floored = np.maximum(ldi_final, floor_val)
-    rot_floored = np.maximum(rot_final, floor_val)
-    max_val = max(np.percentile(ldi_floored, 99), np.percentile(rot_floored, 99))
-    if max_val > floor_val:
-        bins = np.geomspace(floor_val, max_val, 20)
-        plot_dodged_histogram(
-            ax, ldi_floored, rot_floored, bins,
-            COLOR_LDI, COLOR_ROT,
-            f'LDI (med=${np.median(ldi_final):,.0f}k)',
-            f'RoT (med=${np.median(rot_final):,.0f}k)',
-            log_scale=True
-        )
-    else:
-        bins = np.linspace(ldi_final.min(), ldi_final.max(), 20)
-        plot_dodged_histogram(
-            ax, ldi_final, rot_final, bins,
-            COLOR_LDI, COLOR_ROT,
-            f'LDI (med=${np.median(ldi_final):,.0f}k)',
-            f'RoT (med=${np.median(rot_final):,.0f}k)',
-            log_scale=False
-        )
-    ax.axvline(x=max(np.median(ldi_final), floor_val), color=COLOR_LDI, linestyle='--', linewidth=2)
-    ax.axvline(x=max(np.median(rot_final), floor_val), color=COLOR_ROT, linestyle='--', linewidth=2)
-    ax.set_xlabel('Terminal Wealth at Age 95 ($ 000s)')
-    ax.set_ylabel('Count')
-    ax.set_title('Terminal Wealth Distribution')
-    ax.legend(loc='upper right', fontsize=9)
-
-    # ---- (3,1): PV Consumption Distribution (Realized Rates, dodged) ----
-    ax = axes[3, 1]
-    ldi_pv = result.ldi_pv_consumption
-    rot_pv = result.rot_pv_consumption
-
-    floor_val = 100
-    ldi_pv_floored = np.maximum(ldi_pv, floor_val)
-    rot_pv_floored = np.maximum(rot_pv, floor_val)
-    min_val = min(ldi_pv_floored.min(), rot_pv_floored.min())
-    max_val = max(np.percentile(ldi_pv_floored, 99), np.percentile(rot_pv_floored, 99))
-    bins = np.geomspace(min_val, max_val, 20)
-    plot_dodged_histogram(
-        ax, ldi_pv_floored, rot_pv_floored, bins,
-        COLOR_LDI, COLOR_ROT,
-        f'LDI (med=${np.median(ldi_pv):,.0f}k)',
-        f'RoT (med=${np.median(rot_pv):,.0f}k)',
-        log_scale=True
-    )
-    ax.axvline(x=max(np.median(ldi_pv), floor_val), color=COLOR_LDI, linestyle='--', linewidth=2)
-    ax.axvline(x=max(np.median(rot_pv), floor_val), color=COLOR_ROT, linestyle='--', linewidth=2)
-    ax.set_xlabel('PV Lifetime Consumption ($ 000s)')
-    ax.set_ylabel('Count')
-    ax.set_title('PV Consumption (Realized Rates)')
-    ax.legend(loc='upper right', fontsize=9)
+    # Use the reusable plot functions
+    _plot_cumulative_stock_returns(axes[0, 0], result, retirement_x)
+    _plot_interest_rates(axes[0, 1], result, retirement_x)
+    _plot_financial_wealth(axes[1, 0], result, retirement_x)
+    _plot_default_timing(axes[1, 1], result, params)
+    _plot_stock_allocation(axes[2, 0], result, retirement_x)
+    _plot_bond_allocation(axes[2, 1], result, retirement_x)
+    _plot_terminal_wealth(axes[3, 0], result)
+    _plot_pv_consumption(axes[3, 1], result)
 
     plt.tight_layout()
     return fig, axes
@@ -1005,11 +1035,12 @@ def generate_teaching_scenarios_pdf(
         print("  Creating summary figure...")
         fig_summary, axes_summary = create_summary_figure(results, beta_values)
         pdf.savefig(fig_summary, bbox_inches='tight')
-        # Save summary panels as PNGs
-        print("    Saving summary panels as PNG...")
-        summary_paths = save_summary_panels(fig_summary, axes_summary, beta_values, png_output_dir)
-        all_png_paths.extend(summary_paths)
         plt.close(fig_summary)
+
+        # Save summary panels as standalone PNGs (no suptitle bleed)
+        print("    Saving summary panels as PNG...")
+        summary_paths = _save_summary_panels(results, beta_values, png_output_dir)
+        all_png_paths.extend(summary_paths)
 
         # Pages grouped by beta, then by scenario
         for beta in beta_values:
@@ -1022,13 +1053,14 @@ def generate_teaching_scenarios_pdf(
                     results[scenario_name][beta], config, params
                 )
                 pdf.savefig(fig_scenario, bbox_inches='tight')
-                # Save scenario panels as PNGs
+                plt.close(fig_scenario)
+
+                # Save scenario panels as standalone PNGs (no suptitle bleed)
                 print(f"      Saving {scenario_name} panels as PNG...")
-                scenario_paths = save_scenario_panels(
-                    fig_scenario, axes_scenario, scenario_name, beta, png_output_dir
+                scenario_paths = _save_scenario_panels(
+                    results[scenario_name][beta], scenario_name, params, png_output_dir
                 )
                 all_png_paths.extend(scenario_paths)
-                plt.close(fig_scenario)
 
     print(f"Saved PDF to {output_path}")
     print(f"Saved {len(all_png_paths)} PNG panels to {png_output_dir}/")

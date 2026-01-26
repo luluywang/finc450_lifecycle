@@ -171,7 +171,7 @@ make help         # Show available targets
 ```
 
 Outputs are written to `output/`:
-- `output/lifecycle_report.pdf` - Main lifecycle analysis
+- `output/lifecycle_strategy.pdf` - Main lifecycle analysis
 - `output/strategy_comparison.pdf` - LDI vs RoT comparison
 - `output/figures/` - Lecture figures (PNG)
 

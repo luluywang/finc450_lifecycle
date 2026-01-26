@@ -25,5 +25,11 @@ Thumbs.db
 .idea/
 *.swp
 
+# Claude skills
+.claude/
+web/app/
+node_modules/
+current/
+
 # Prevent accidental figures/ at project root (use output/figures/ instead)
 figures/
