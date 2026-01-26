@@ -660,6 +660,27 @@ function computePvConsumption(consumption: number[], rate: number): number {
 }
 
 /**
+ * Calculate present value of consumption stream using realized interest rate paths.
+ * This matches Python's approach: PV_realized = sum(C_t / prod(1 + r_s for s < t))
+ *
+ * @param consumption - Array of consumption values over time
+ * @param rates - Array of realized interest rates over time
+ * @returns Present value of total lifetime consumption at time 0
+ */
+function computePvConsumptionRealized(consumption: number[], rates: number[]): number {
+  if (consumption.length === 0) return 0;
+
+  const T = consumption.length;
+  let pv = consumption[0];  // t=0 not discounted
+  let cumulativeGrowth = 1.0;
+  for (let t = 1; t < T; t++) {
+    cumulativeGrowth *= (1 + rates[t - 1]);
+    pv += consumption[t] / cumulativeGrowth;
+  }
+  return pv;
+}
+
+/**
  * Calculate present value of liability stream (constant consumption annuity).
  *
  * If rBar and phi are provided, uses the mean-reverting term structure:
@@ -1349,15 +1370,31 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
     let effectiveConsumptionRate: number;
     if (consumptionRate === null) {
       const r = state.econParams.rBar;
-      // Use median (geometric) return for consistency with simulation
-      // The -sigma^2/2 is the median return adjustment (Jensen's inequality)
       const sigmaS = state.econParams.sigmaS;
-      const medianStockReturn = r + state.econParams.muExcess - 0.5 * sigmaS * sigmaS;
-      const avgReturn =
-        state.targetStock * medianStockReturn +
-        state.targetBond * r +
+      const sigmaR = state.econParams.sigmaR;
+      const rho = state.econParams.rho;
+      const D = state.econParams.bondDuration;
+      const muBond = computeMuBondFromEcon(state.econParams);
+
+      const wS = state.targetStock;
+      const wB = state.targetBond;
+
+      // Expected (arithmetic mean) portfolio return - includes bond excess return
+      const expectedReturn =
+        wS * (r + state.econParams.muExcess) +
+        wB * (r + muBond) +
         state.targetCash * r;
-      effectiveConsumptionRate = avgReturn + state.params.consumptionBoost;
+
+      // Full portfolio variance with correlation
+      // Bond volatility = duration * rate volatility
+      const sigmaB = D * sigmaR;
+      // Stock-bond covariance (negative when rho > 0: rising rates hurt bonds)
+      const covSB = -D * sigmaS * sigmaR * rho;
+      const portfolioVar = wS * wS * sigmaS * sigmaS + wB * wB * sigmaB * sigmaB + 2 * wS * wB * covSB;
+
+      // Median portfolio return = expected - 0.5 * variance (Jensen's correction)
+      const medianReturn = expectedReturn - 0.5 * portfolioVar;
+      effectiveConsumptionRate = medianReturn + state.params.consumptionBoost;
     } else {
       effectiveConsumptionRate = consumptionRate;
     }
@@ -1883,10 +1920,10 @@ function runMonteCarloSimulation(
   const defaultRate = defaultCount / numSims;
   const medianFinalWealth = computePercentile(finalWealthValues, 50);
 
-  // Compute PV consumption for each simulation using risk-free rate
+  // Compute PV consumption for each simulation using realized rate paths
   const pvConsumptionValues: number[] = [];
   for (let sim = 0; sim < numSims; sim++) {
-    const pv = computePvConsumption(consumptionPaths[sim], econParams.rBar);
+    const pv = computePvConsumptionRealized(consumptionPaths[sim], interestRatePaths[sim]);
     pvConsumptionValues.push(pv);
   }
   const medianPvConsumption = computePercentile(pvConsumptionValues, 50);
@@ -2049,13 +2086,15 @@ function runMonteCarloStrategyComparison(
   const rotFinalWealth = rotResult.finalWealth as number[];
   const ldiConsumption = ldiResult.consumption as number[][];
   const rotConsumption = rotResult.consumption as number[][];
+  const ldiInterestRates = ldiResult.interestRates as number[][];
+  const rotInterestRates = rotResult.interestRates as number[][];
 
-  // Compute PV consumption for each simulation
+  // Compute PV consumption for each simulation using realized rate paths
   const ldiPvConsumptionValues: number[] = [];
   const rotPvConsumptionValues: number[] = [];
   for (let sim = 0; sim < numSims; sim++) {
-    ldiPvConsumptionValues.push(computePvConsumption(ldiConsumption[sim], econParams.rBar));
-    rotPvConsumptionValues.push(computePvConsumption(rotConsumption[sim], econParams.rBar));
+    ldiPvConsumptionValues.push(computePvConsumptionRealized(ldiConsumption[sim], ldiInterestRates[sim]));
+    rotPvConsumptionValues.push(computePvConsumptionRealized(rotConsumption[sim], rotInterestRates[sim]));
   }
 
   return {
@@ -2111,9 +2150,9 @@ interface TeachingScenarioOptions {
   seed?: number;
   /** Number of years with bad returns for Sequence Risk (default: 5) */
   sequenceRiskYears?: number;
-  /** Stock shock magnitude during sequence risk (default: -1.5 = 1.5 std devs below mean) */
+  /** Stock shock magnitude during sequence risk (default: -1.0 = 1.0 std devs below mean, ~-12% returns) */
   sequenceRiskStockShock?: number;
-  /** Rate shock magnitude at retirement for Rate Shock scenario (default: -0.02 = -2%) */
+  /** Rate shock magnitude (currently unused - Rate Shock uses -1.33 std devs for 5 years before retirement) */
   rateShockMagnitude?: number;
   /** Rule-of-Thumb savings rate (default: 0.15) */
   rotSavingsRate?: number;
@@ -2164,7 +2203,7 @@ function generateTeachingScenarioShocks(
 ): { rateShocks: number[][]; stockShocks: number[][] } {
   const {
     sequenceRiskYears = 5,
-    sequenceRiskStockShock = -1.5,
+    sequenceRiskStockShock = -1.0,  // -1.0 std devs matches Python (~-12% returns)
     rateShockMagnitude = -0.02,
   } = options;
 
@@ -2191,16 +2230,13 @@ function generateTeachingScenarioShocks(
         }
         simRateShocks.push(rateShock);
       } else if (scenarioType === 'RateShock') {
-        // Rate Shock: Apply one-time rate shock at retirement
+        // Rate Shock: Apply rate shock for 5 years BEFORE retirement (matches Python)
         // Rate drops (negative shock = falling rates = higher bond prices but higher PV liabilities)
         simStockShocks.push(stockShock);
-        if (t === workingYears) {
-          // Convert rate change to shock units: shock = deltaR / sigmaR
-          // Using large shock to represent the rate drop
-          // Note: sigmaR is typically small (0.003), so to get -2% rate change
-          // we need a very large shock. Instead, we pass the rate change directly
-          // and handle it in the simulation. For now, use a large negative shock.
-          simRateShocks.push(rateShockMagnitude / 0.003); // ~-6.67 std devs for -2% rate drop
+        const shockStart = Math.max(0, workingYears - 5);
+        if (t >= shockStart && t < workingYears) {
+          // Use -1.33 std devs directly (matches Python's rate_shocks[:, shock_start:shock_end] = -1.33)
+          simRateShocks.push(-1.33);
         } else {
           simRateShocks.push(rateShock);
         }
@@ -2342,15 +2378,15 @@ function runTeachingScenarios(
     const rotStockReturns = rotResult.stockReturns as number[][];
     const ldiCumulativeStockReturns = ldiStockReturns.map(returns => {
       const cumulative: number[] = [1.0];
-      for (let t = 1; t < returns.length; t++) {
-        cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+      for (let t = 0; t < returns.length; t++) {
+        cumulative.push(cumulative[t] * (1 + returns[t]));
       }
       return cumulative;
     });
     const rotCumulativeStockReturns = rotStockReturns.map(returns => {
       const cumulative: number[] = [1.0];
-      for (let t = 1; t < returns.length; t++) {
-        cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+      for (let t = 0; t < returns.length; t++) {
+        cumulative.push(cumulative[t] * (1 + returns[t]));
       }
       return cumulative;
     });
@@ -2384,13 +2420,15 @@ function runTeachingScenarios(
     const rotFinalWealth = rotResult.finalWealth as number[];
     const ldiConsumption = ldiResult.consumption as number[][];
     const rotConsumption = rotResult.consumption as number[][];
+    const ldiInterestRates = ldiResult.interestRates as number[][];
+    const rotInterestRates = rotResult.interestRates as number[][];
 
-    // Compute PV consumption for each simulation
+    // Compute PV consumption for each simulation using realized rate paths
     const ldiPvConsumptionValues: number[] = [];
     const rotPvConsumptionValues: number[] = [];
     for (let sim = 0; sim < numSims; sim++) {
-      ldiPvConsumptionValues.push(computePvConsumption(ldiConsumption[sim], econParams.rBar));
-      rotPvConsumptionValues.push(computePvConsumption(rotConsumption[sim], econParams.rBar));
+      ldiPvConsumptionValues.push(computePvConsumptionRealized(ldiConsumption[sim], ldiInterestRates[sim]));
+      rotPvConsumptionValues.push(computePvConsumptionRealized(rotConsumption[sim], rotInterestRates[sim]));
     }
 
     return {
@@ -2552,10 +2590,11 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     // Remaining expenses
     const remainingExpenses = expenses.slice(i);
 
-    pvEarnings[i] = computePresentValue(remainingEarnings, r, null, null);
-    pvExpenses[i] = computePresentValue(remainingExpenses, r, null, null);
-    durationEarnings[i] = computeDuration(remainingEarnings, r, null, null);
-    durationExpenses[i] = computeDuration(remainingExpenses, r, null, null);
+    // Use VCV term structure (phi, rBar) to match Python compute_static_pvs
+    pvEarnings[i] = computePresentValue(remainingEarnings, r, phi, r);
+    pvExpenses[i] = computePresentValue(remainingExpenses, r, phi, r);
+    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r);
+    durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r);
   }
 
   // Human capital = PV of future earnings
@@ -2602,20 +2641,41 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const variableConsumption = Array(totalYears).fill(0);
   const totalConsumption = Array(totalYears).fill(0);
 
-  // Expected portfolio return (using geometric/median returns for consistency)
-  // The -sigma^2/2 is the median return adjustment (Jensen's inequality)
-  const medianStockReturn = r + params.muStock - 0.5 * params.sigmaS * params.sigmaS;
-  const expectedBondReturn = r;
-  const avgReturn = targetStock * medianStockReturn +
-                    targetBond * expectedBondReturn +
-                    targetCash * r;
+  // Consumption rate calculation - matches Python simulate_paths exactly
+  // CRITICAL: Python uses different returns for consumption vs wealth evolution
+  // For consumption rate: bond component is just r, NOT r + mu_bond
+  // This matches Python's avg_return in simulate_paths (lines 720-727)
+  const avgReturnForConsumption = (
+    targetStock * (r + params.muStock) +  // r + mu_excess
+    targetBond * r +                       // Just r, NO mu_bond!
+    targetCash * r
+  );
+  // consumption_boost defaults to 0.0 in Python, matching the default behavior
+  const consumptionRate = avgReturnForConsumption + 0.0;  // No boost for default params
 
-  // Consumption rate = median return + 1pp
-  const consumptionRate = avgReturn + 0.01;
+  // For wealth evolution: use full portfolio return including mu_bond
+  // Stock: r + mu_excess, Bond: r + mu_bond, Cash: r
+  const stockReturn = r + params.muStock;
+  const bondReturn = r + muBond;
+  const cashReturn = r;
 
-  // Simulate wealth accumulation
+  // Initialize total wealth and weight arrays (computed inside the loop)
+  const totalWealth = Array(totalYears).fill(0);
+  const stockWeight = Array(totalYears).fill(0);
+  const bondWeight = Array(totalYears).fill(0);
+  const cashWeight = Array(totalYears).fill(0);
+
+  // Simulate wealth accumulation with step-by-step portfolio weight calculation
+  // This matches Python's simulate_paths which computes weights at each time step
   for (let i = 0; i < totalYears; i++) {
-    netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
+    // Current financial wealth and human capital
+    const fw = financialWealth[i];
+    const hc = humanCapital[i];
+    const tw = fw + hc;
+    totalWealth[i] = tw;
+
+    // Compute net worth and consumption
+    netWorth[i] = hc + fw - pvExpenses[i];
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
@@ -2625,7 +2685,6 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
       variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
     } else if (earnings[i] === 0) {
       // Retirement: cap consumption at financial wealth
-      const fw = financialWealth[i];
       if (subsistenceConsumption[i] > fw) {
         // Bankruptcy: can't even meet subsistence, consume whatever remains
         totalConsumption[i] = fw;
@@ -2638,40 +2697,38 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
       }
     }
 
-    const savings = earnings[i] - totalConsumption[i];
+    // Compute portfolio weights at THIS time step (before wealth evolution)
+    // Target financial holdings = target total - HC component + expense component
+    const targetFinStock = targetStock * tw - hcStock[i];
+    const targetFinBond = targetBond * tw - hcBond[i] + expBond[i];
+    const targetFinCash = targetCash * tw - hcCash[i] + expCash[i];
 
-    if (i < totalYears - 1) {
-      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + avgReturn) + savings);
-    }
-  }
-
-  // Total wealth
-  const totalWealth = financialWealth.map((fw, i) => fw + humanCapital[i]);
-
-  // Target financial holdings
-  const targetFinStocks = totalWealth.map((tw, i) => targetStock * tw - hcStock[i]);
-  const targetFinBonds = totalWealth.map((tw, i) => targetBond * tw - hcBond[i]);
-  const targetFinCash = totalWealth.map((tw, i) => targetCash * tw - hcCash[i]);
-
-  // Apply no-short constraints to get portfolio weights using normalize helper
-  const stockWeight = Array(totalYears).fill(0);
-  const bondWeight = Array(totalYears).fill(0);
-  const cashWeight = Array(totalYears).fill(0);
-
-  for (let i = 0; i < totalYears; i++) {
     const [wS, wB, wC] = normalizePortfolioWeights(
-      targetFinStocks[i], targetFinBonds[i], targetFinCash[i],
-      financialWealth[i], targetStock, targetBond, targetCash,
+      targetFinStock, targetFinBond, targetFinCash,
+      fw, targetStock, targetBond, targetCash,
       false  // no leverage for median path
     );
+
     stockWeight[i] = wS;
     bondWeight[i] = wB;
     cashWeight[i] = wC;
+
+    // Compute portfolio return using CURRENT weights
+    // This is the key fix: Python uses time-varying portfolio returns
+    const portfolioReturn = wS * stockReturn + wB * bondReturn + wC * cashReturn;
+
+    const savings = earnings[i] - totalConsumption[i];
+
+    if (i < totalYears - 1) {
+      financialWealth[i + 1] = Math.max(0, fw * (1 + portfolioReturn) + savings);
+    }
   }
 
   // For median path, interest rate is constant at rBar
   // and cumulative stock return grows at median (geometric) rate
   const interestRate = Array(totalYears).fill(r);
+  // Jensen's correction: geometric mean = arithmetic mean - 0.5 * variance
+  const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
   const cumulativeStockReturn = Array.from({ length: totalYears }, (_, i) =>
     Math.pow(1 + medianStockReturn, i)
   );
@@ -2705,6 +2762,239 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     cumulativeStockReturn,
     interestRate,
   };
+}
+
+// =============================================================================
+// Verification Export Function
+// =============================================================================
+
+/**
+ * Generate verification data for comparison with Python implementation.
+ * This exports all key values to JSON for systematic verification.
+ *
+ * Usage:
+ *   1. Click "Debug" button in the UI
+ *   2. Copy the JSON output
+ *   3. Save to output/typescript_verification.json
+ *   4. Run: python compare_implementations.py --compare output/typescript_verification.json
+ */
+function generateVerificationData(params: Params): Record<string, unknown> {
+  const r = params.rBar;
+  const phi = params.phi;
+  const muBond = computeMuBond(params);
+
+  // Economic function tests
+  const economicFunctions = {
+    effective_duration_20_085: effectiveDuration(20, 0.85),
+    effective_duration_20_100: effectiveDuration(20, 1.0),
+    effective_duration_10_085: effectiveDuration(10, 0.85),
+    effective_duration_5_085: effectiveDuration(5, 0.85),
+    zero_coupon_price_002_20: zeroCouponPrice(0.02, 20, 0.02, 1.0),
+    zero_coupon_price_003_20: zeroCouponPrice(0.03, 20, 0.02, 1.0),
+    zero_coupon_price_002_10_085: zeroCouponPrice(0.02, 10, 0.02, 0.85),
+    mu_bond: muBond,
+    mu_bond_formula: params.bondSharpe * params.bondDuration * params.sigmaR,
+  };
+
+  // PV function tests
+  const earnings40 = Array(40).fill(100.0);
+  const expenses30 = Array(30).fill(100.0);
+  const pvFunctions = {
+    pv_earnings_40yr_flat: computePresentValue(earnings40, r),
+    pv_expenses_30yr_flat: computePresentValue(expenses30, r),
+    pv_earnings_40yr_vcv: computePresentValue(earnings40, r, phi, r),
+    pv_expenses_30yr_vcv: computePresentValue(expenses30, r, phi, r),
+    duration_earnings_40yr_flat: computeDuration(earnings40, r),
+    duration_expenses_30yr_flat: computeDuration(expenses30, r),
+    duration_earnings_40yr_vcv: computeDuration(earnings40, r, phi, r),
+    duration_expenses_30yr_vcv: computeDuration(expenses30, r, phi, r),
+  };
+
+  // MV optimization tests
+  const [stockU, bondU, cashU] = computeFullMertonAllocation(
+    params.muStock, muBond, params.sigmaS, params.sigmaR,
+    params.rho, params.bondDuration, params.gamma
+  );
+  const [stockC, bondC, cashC] = computeFullMertonAllocationConstrained(
+    params.muStock, muBond, params.sigmaS, params.sigmaR,
+    params.rho, params.bondDuration, params.gamma
+  );
+  const mvOptimization = {
+    target_stock_unconstrained: stockU,
+    target_bond_unconstrained: bondU,
+    target_cash_unconstrained: cashU,
+    target_stock: stockC,
+    target_bond: bondC,
+    target_cash: cashC,
+    gamma: params.gamma,
+  };
+
+  // Lifecycle arrays
+  const result = computeLifecycleMedianPath(params);
+  const lifecycleArrays = {
+    ages: result.ages,
+    earnings: result.earnings,
+    expenses: result.expenses,
+    pv_earnings: result.pvEarnings,
+    pv_expenses: result.pvExpenses,
+    duration_earnings: result.durationEarnings,
+    duration_expenses: result.durationExpenses,
+    human_capital: result.humanCapital,
+    hc_stock: result.hcStock,
+    hc_bond: result.hcBond,
+    hc_cash: result.hcCash,
+    exp_bond: result.expBond,
+    exp_cash: result.expCash,
+    // Sample values at key ages
+    pv_earnings_age_25: result.pvEarnings[0],
+    pv_earnings_age_45: result.pvEarnings[20],
+    pv_earnings_age_64: result.pvEarnings[39],
+    pv_expenses_age_25: result.pvExpenses[0],
+    pv_expenses_age_65: result.pvExpenses[40],
+    pv_expenses_age_85: result.pvExpenses[60],
+    duration_earnings_age_25: result.durationEarnings[0],
+    duration_earnings_age_45: result.durationEarnings[20],
+    duration_expenses_age_65: result.durationExpenses[40],
+  };
+
+  // Median path
+  const medianPath = {
+    ages: result.ages,
+    financial_wealth: result.financialWealth,
+    total_wealth: result.totalWealth,
+    net_worth: result.netWorth,
+    stock_weight: result.stockWeight,
+    bond_weight: result.bondWeight,
+    cash_weight: result.cashWeight,
+    total_consumption: result.totalConsumption,
+    subsistence_consumption: result.subsistenceConsumption,
+    variable_consumption: result.variableConsumption,
+    // Sample values at key ages
+    fw_age_25: result.financialWealth[0],
+    fw_age_45: result.financialWealth[20],
+    fw_age_65: result.financialWealth[40],
+    fw_age_85: result.financialWealth[60],
+    stock_weight_age_25: result.stockWeight[0],
+    stock_weight_age_45: result.stockWeight[20],
+    stock_weight_age_65: result.stockWeight[40],
+    stock_weight_age_85: result.stockWeight[60],
+    consumption_age_65: result.totalConsumption[40],
+    consumption_age_85: result.totalConsumption[60],
+  };
+
+  // Simulation test with zero shocks
+  const totalYears = params.endAge - params.startAge;
+  const zeroShocks = [Array(totalYears).fill(0)];
+
+  // Convert Params to LifecycleParams and EconomicParams for simulateWithStrategy
+  const lp: LifecycleParams = {
+    startAge: params.startAge,
+    retirementAge: params.retirementAge,
+    endAge: params.endAge,
+    initialEarnings: params.initialEarnings,
+    earningsGrowth: params.earningsGrowth,
+    earningsHumpAge: params.earningsHumpAge,
+    earningsDecline: params.earningsDecline,
+    baseExpenses: params.baseExpenses,
+    expenseGrowth: params.expenseGrowth,
+    retirementExpenses: params.retirementExpenses,
+    consumptionShare: 0.05,
+    consumptionBoost: 0.0,
+    stockBetaHumanCapital: params.stockBetaHC,
+    gamma: params.gamma,
+    targetStockAllocation: 0.6,
+    targetBondAllocation: 0.3,
+    allowLeverage: false,
+    riskFreeRate: params.rBar,
+    equityPremium: params.muStock,
+    initialWealth: params.initialWealth,
+  };
+  const ep: EconomicParams = {
+    rBar: params.rBar,
+    phi: params.phi,
+    sigmaR: params.sigmaR,
+    muExcess: params.muStock,
+    bondSharpe: params.bondSharpe,
+    sigmaS: params.sigmaS,
+    rho: params.rho,
+    bondDuration: params.bondDuration,
+  };
+
+  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const simResult = simulateWithStrategy(ldiStrategy, lp, ep, zeroShocks, zeroShocks);
+
+  const simulationTest = {
+    zero_shock_fw: simResult.financialWealth as number[],
+    zero_shock_hc: simResult.humanCapital as number[],
+    zero_shock_stock_weight: simResult.stockWeight as number[],
+    zero_shock_consumption: simResult.consumption as number[],
+    target_stock: stockC,
+    target_bond: bondC,
+    target_cash: cashC,
+  };
+
+  return {
+    metadata: {
+      source: "TypeScript (web visualizer)",
+      version: "1.0",
+      parameters: {
+        r_bar: params.rBar,
+        phi: params.phi,
+        sigma_r: params.sigmaR,
+        mu_excess: params.muStock,
+        bond_sharpe: params.bondSharpe,
+        sigma_s: params.sigmaS,
+        rho: params.rho,
+        bond_duration: params.bondDuration,
+        start_age: params.startAge,
+        retirement_age: params.retirementAge,
+        end_age: params.endAge,
+        initial_earnings: params.initialEarnings,
+        base_expenses: params.baseExpenses,
+        gamma: params.gamma,
+        initial_wealth: params.initialWealth,
+        stock_beta_human_capital: params.stockBetaHC,
+      },
+    },
+    economic_functions: economicFunctions,
+    pv_functions: pvFunctions,
+    mv_optimization: mvOptimization,
+    lifecycle_arrays: lifecycleArrays,
+    median_path: medianPath,
+    simulation_test: simulationTest,
+  };
+}
+
+/**
+ * Export verification data to console and clipboard.
+ * Call this function from the Debug button.
+ */
+function exportVerificationData(params: Params): void {
+  const data = generateVerificationData(params);
+  const json = JSON.stringify(data, null, 2);
+  console.log("=== TYPESCRIPT VERIFICATION DATA ===");
+  console.log(json);
+  console.log("=== END VERIFICATION DATA ===");
+
+  // Copy to clipboard if available
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(json).then(() => {
+      console.log("Verification data copied to clipboard!");
+    }).catch(err => {
+      console.error("Failed to copy to clipboard:", err);
+    });
+  }
+
+  // Also create a downloadable file
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'typescript_verification.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // =============================================================================
@@ -3721,6 +4011,24 @@ export default function LifecycleVisualizer() {
           <div>Bonds: {Math.round(result.targetBond * 100)}%</div>
           <div>Cash: {Math.round(result.targetCash * 100)}%</div>
         </div>
+
+        {/* Debug button for verification */}
+        <button
+          onClick={() => exportVerificationData(params)}
+          style={{
+            marginTop: '16px',
+            padding: '8px 12px',
+            background: '#6c757d',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '11px',
+            cursor: 'pointer',
+            width: '100%',
+          }}
+        >
+          Export Verification Data
+        </button>
       </div>
 
       {/* Main Content - Charts */}
