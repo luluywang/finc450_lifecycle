@@ -7,7 +7,7 @@
       "description": "Add utility functions to save matplotlib figures as PNG",
       "type": "code",
       "depends_on": [],
-      "status": "pending"
+      "status": "complete"
     },
     {
       "id": 2,
@@ -43,7 +43,8 @@
       "description": "Add button to trigger scenario computation on demand",
       "type": "code",
       "depends_on": [],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Added simulationRun and scenarioComputing state variables; button visible at top of Scenarios tab with loading state"
     },
     {
       "id": 6,
@@ -52,7 +53,8 @@
       "description": "Trigger simulation by button click, not tab navigation",
       "type": "code",
       "depends_on": [5],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Changed from useMemo to useEffect+useState pattern; simulationVersion counter triggers computation; cachedTeachingScenarios holds results; results persist when params change"
     },
     {
       "id": 7,

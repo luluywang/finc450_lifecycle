@@ -2,7 +2,7 @@
 // Interactive visualization for lifecycle investment strategy
 // Copy this entire file into a Claude artifact (React type)
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell
@@ -3981,8 +3981,11 @@ export default function LifecycleVisualizer() {
   const [scenarioBeta, setScenarioBeta] = useState<0 | 0.4>(0);
   // scenarioBadReturns is handled by the scenarioType - sequenceRisk forces bad returns
   // Simulation control state for deferred computation
-  const [simulationRun, setSimulationRun] = useState(false);
+  // simulationVersion increments each time "Run Simulation" is clicked
+  const [simulationVersion, setSimulationVersion] = useState(0);
   const [scenarioComputing, setScenarioComputing] = useState(false);
+  // Cache teaching scenarios results - kept even when params change
+  const [cachedTeachingScenarios, setCachedTeachingScenarios] = useState<ReturnType<typeof runTeachingScenarios> | null>(null);
 
   // Create LifecycleParams for runTeachingScenarios
   const lifecycleParams = useMemo((): LifecycleParams => ({
@@ -4021,16 +4024,27 @@ export default function LifecycleVisualizer() {
   }), [params]);
 
   // Compute Teaching Scenarios (3-scenario comparison)
-  const teachingScenarios = useMemo(() => {
-    if (currentPage !== 'scenarios') return null;
-    return runTeachingScenarios(lifecycleParams, econParams, {
+  // Deferred computation: only runs after "Run Simulation" button is clicked
+  // Keeps old results when params change (don't auto-clear on param changes)
+  // Uses useEffect to trigger computation only when simulationVersion changes
+  useEffect(() => {
+    if (simulationVersion === 0) return; // Don't run until button clicked
+    if (currentPage !== 'scenarios') return;
+
+    // Compute and cache the results
+    const results = runTeachingScenarios(lifecycleParams, econParams, {
       numSims: 500,
       seed: 42,
       rotSavingsRate: 0.15,
       rotWithdrawalRate: 0.04,
       rotTargetDuration: 6.0,
     });
-  }, [lifecycleParams, econParams, currentPage]);
+    setCachedTeachingScenarios(results);
+    setScenarioComputing(false);
+  }, [simulationVersion]); // Only re-run when button is clicked (version changes)
+
+  // teachingScenarios is just the cached value
+  const teachingScenarios = cachedTeachingScenarios;
 
   // Create modified params for scenarios with custom ages
   const scenarioParams = useMemo(() => ({
@@ -4851,9 +4865,10 @@ export default function LifecycleVisualizer() {
                   onClick={() => {
                     setScenarioComputing(true);
                     // Use setTimeout to allow UI to update before computation
+                    // Increment simulationVersion to trigger useEffect computation
                     setTimeout(() => {
-                      setSimulationRun(true);
-                      setScenarioComputing(false);
+                      setSimulationVersion(v => v + 1);
+                      // Note: setScenarioComputing(false) is called in the useEffect after computation
                     }, 50);
                   }}
                   disabled={scenarioComputing}
@@ -4968,10 +4983,21 @@ export default function LifecycleVisualizer() {
               </div>
             )}
 
-            {/* Loading state */}
+            {/* Loading/placeholder state for Summary tab */}
             {scenarioType === 'summary' && !teachingScenarios && (
               <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-                Computing 500 simulation runs across 3 scenarios...
+                {scenarioComputing ? (
+                  'Computing 500 simulation runs across 3 scenarios...'
+                ) : (
+                  <>
+                    <div style={{ fontSize: '16px', marginBottom: '8px' }}>
+                      Click "Run Simulation" to compute teaching scenarios
+                    </div>
+                    <div style={{ fontSize: '13px' }}>
+                      This will run 500 Monte Carlo simulations for LDI vs Rule-of-Thumb comparison
+                    </div>
+                  </>
+                )}
               </div>
             )}
             {scenarioType === 'optimalVsRuleOfThumb' && !strategyResults && (
