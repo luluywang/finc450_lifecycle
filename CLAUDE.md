@@ -48,8 +48,50 @@ finc450_lifecycle/
 ├── compare_strategies.py           # LDI vs RoT comparison PDF
 ├── generate_lecture_figures.py     # Lecture figure generation
 ├── Makefile                        # Build automation
-└── requirements.txt                # Python dependencies
+├── requirements.txt                # Python dependencies
+│
+├── web/                            # Interactive web visualizer
+│   ├── lifecycle_visualizer_artifact.tsx  # SOURCE OF TRUTH (tracked in git)
+│   ├── ISSUES.md                   # Known issues and bugs
+│   └── app/                        # Vite React app (gitignored)
+│       ├── src/
+│       │   └── LifecycleVisualizer.tsx  # Working copy (NOT tracked)
+│       └── ...
 ```
+
+## Web Visualizer
+
+The `web/` directory contains an interactive TypeScript/React visualizer.
+
+### File Structure & Workflow
+
+**IMPORTANT:** The `web/app/` directory is gitignored. The source of truth is:
+
+```
+web/lifecycle_visualizer_artifact.tsx  ← SOURCE OF TRUTH (tracked in git)
+web/app/src/LifecycleVisualizer.tsx    ← Working copy (gitignored)
+```
+
+### Development Workflow
+
+1. **Copy artifact to app for development:**
+   ```bash
+   cp web/lifecycle_visualizer_artifact.tsx web/app/src/LifecycleVisualizer.tsx
+   ```
+
+2. **Start dev server:**
+   ```bash
+   cd web/app && npm install && npm run dev
+   ```
+
+3. **Make changes** to `web/app/src/LifecycleVisualizer.tsx` and test at `http://localhost:5173/`
+
+4. **Copy back to artifact when done:**
+   ```bash
+   cp web/app/src/LifecycleVisualizer.tsx web/lifecycle_visualizer_artifact.tsx
+   ```
+
+5. **Commit the artifact file** (not the app directory)
 
 ### Core Module
 
