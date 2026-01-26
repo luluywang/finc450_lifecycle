@@ -224,3 +224,42 @@ The implementation includes:
 - [x] Panel appears in each individual scenario tab view (Baseline, Sequence Risk, Rate Shock)
 
 ---
+
+## Task 16 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 16 requires implementing the Terminal Wealth Distribution panel (histogram) as the seventh panel in the 4x2 grid for individual scenario tabs. Upon reviewing the codebase, this panel is already fully implemented in lifecycle_visualizer_artifact.tsx at lines 5543-5562.
+
+The PDF reference (compare_teaching_scenarios.py lines 674-706) shows:
+- Panel position: axes[3, 0] (Row 4, first column - "Row 4: Outcome Distributions")
+- Histogram with log-scale bins using geometric spacing
+- Side-by-side (dodged) bars for LDI and RoT
+- Median values shown in legend
+- X-axis: Terminal Wealth at Age 95 ($000s), Y-axis: Count
+
+The TSX implementation:
+1. Creates log-scale bins using powers of 10 (lines 5286-5305)
+2. Uses BarChart with grouped LDI (blue) and RoT (gold) bars
+3. Legend shows median terminal wealth for each strategy
+4. Proper axis labels and explanatory note about log-scale bins
+5. Data sourced from `scenario.ldi.result.finalWealth` and `scenario.rot.result.finalWealth`
+
+**Action:** Verified existing implementation matches PDF specification, no code changes needed
+
+**Results:**
+- Panel renders in "Row 4: Outcome Distributions" section of each individual scenario tab
+- Log-scale bins: $1k-10k, $10k-100k, $100k-1M, etc.
+- LDI color: #2980b9 (blue), RoT color: #d4a84c (gold)
+- Median terminal wealth displayed in legend: e.g., `LDI (med=$123k)`, `RoT (med=$456k)`
+- Negative wealth values not shown (filtered with `w > 0`)
+
+**Checks:**
+- [x] Panel shows histogram of terminal wealth distribution
+- [x] Shows both LDI and RoT distributions (grouped bar chart)
+- [x] Uses distinct colors for LDI (blue) vs RoT (gold)
+- [x] X-axis: Terminal Wealth ($), Y-axis: Frequency/count
+- [x] Data comes from teachingScenarios
+- [x] Panel appears as seventh panel in each individual scenario tab view
+
+---
