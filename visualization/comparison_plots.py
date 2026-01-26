@@ -748,3 +748,302 @@ def plot_strategy_comparison_bars(
 
     plt.tight_layout()
     return fig
+
+
+# =============================================================================
+# SINGLE-PANEL GAUGE FIGURES (for flexible slide layouts)
+# =============================================================================
+
+def create_gauge_net_worth_figure(
+    params: 'LifecycleParams' = None,
+    econ_params: 'EconomicParams' = None,
+    figsize: Tuple[int, int] = (10, 6),
+    use_years: bool = True,
+) -> plt.Figure:
+    """
+    Single panel: Net Worth = HC + FW - PV(Expenses).
+
+    This is the key gauge showing "distance to destination" - whether you're
+    on track to fund your retirement expenses.
+    """
+    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path
+
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    result = compute_lifecycle_median_path(params, econ_params)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    color_nw = '#1D3557'  # Dark blue
+
+    net_worth = result.human_capital + result.financial_wealth - result.pv_expenses
+
+    ax.fill_between(x, 0, net_worth, where=net_worth >= 0, alpha=0.7, color=color_nw,
+                    label='Net Worth')
+    ax.fill_between(x, 0, net_worth, where=net_worth < 0, alpha=0.7, color='#E07A5F',
+                    label='Underfunded')
+    ax.plot(x, net_worth, color='black', linewidth=2)
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.7, label='Retirement')
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Net Worth: HC + FW - PV(Expenses)', fontweight='bold', fontsize=14)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.set_xlim(x[0] - 1, x[-1] + 1)
+
+    plt.tight_layout()
+    return fig
+
+
+def create_gauge_wealth_composition_figure(
+    params: 'LifecycleParams' = None,
+    econ_params: 'EconomicParams' = None,
+    figsize: Tuple[int, int] = (10, 6),
+    use_years: bool = True,
+) -> plt.Figure:
+    """
+    Single panel: Human Capital vs Financial Wealth composition.
+
+    Shows how wealth composition shifts from HC-dominated to FW-dominated
+    over the lifecycle. This drives portfolio allocation decisions.
+    """
+    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path
+
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    result = compute_lifecycle_median_path(params, econ_params)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    color_hc = '#e67e22'  # Orange
+    color_fw = '#457B9D'  # Blue
+
+    # Stacked area showing composition
+    ax.fill_between(x, 0, result.financial_wealth,
+                    alpha=0.8, color=color_fw, label='Financial Wealth')
+    ax.fill_between(x, result.financial_wealth,
+                    result.financial_wealth + result.human_capital,
+                    alpha=0.8, color=color_hc, label='Human Capital')
+
+    # Total wealth line
+    ax.plot(x, result.total_wealth, color='black', linewidth=2,
+            linestyle='--', label='Total Wealth')
+
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Wealth Composition: Human Capital + Financial Wealth', fontweight='bold', fontsize=14)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.set_xlim(x[0] - 1, x[-1] + 1)
+    ax.set_ylim(0, None)
+
+    plt.tight_layout()
+    return fig
+
+
+def create_control_allocation_figure(
+    params: 'LifecycleParams' = None,
+    econ_params: 'EconomicParams' = None,
+    figsize: Tuple[int, int] = (10, 6),
+    use_years: bool = True,
+) -> plt.Figure:
+    """
+    Single panel: Portfolio allocation stackplot.
+
+    Shows how the financial portfolio allocation responds to changing
+    wealth composition over the lifecycle.
+    """
+    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path
+
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    result = compute_lifecycle_median_path(params, econ_params)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    color_stock = '#F4A261'  # Coral
+    color_bond = '#9b59b6'   # Purple
+    color_cash = '#95a5a6'   # Gray
+
+    ax.stackplot(x,
+                 result.stock_weight_no_short * 100,
+                 result.bond_weight_no_short * 100,
+                 result.cash_weight_no_short * 100,
+                 labels=['Stocks', 'Bonds', 'Cash'],
+                 colors=[color_stock, color_bond, color_cash],
+                 alpha=0.8)
+    ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Allocation (%)')
+    ax.set_title('Portfolio Allocation (Responds to Wealth Composition)', fontweight='bold', fontsize=14)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.set_ylim(0, 100)
+    ax.set_xlim(x[0], x[-1])
+
+    plt.tight_layout()
+    return fig
+
+
+def create_control_consumption_figure(
+    params: 'LifecycleParams' = None,
+    econ_params: 'EconomicParams' = None,
+    figsize: Tuple[int, int] = (10, 6),
+    use_years: bool = True,
+) -> plt.Figure:
+    """
+    Single panel: Consumption path with subsistence and variable components.
+
+    Shows how consumption responds to net worth - the variable component
+    adjusts automatically to market conditions.
+    """
+    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path
+
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    result = compute_lifecycle_median_path(params, econ_params)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    color_subsistence = '#95a5a6'  # Gray
+    color_variable = '#2A9D8F'     # Teal
+
+    ax.fill_between(x, 0, result.subsistence_consumption,
+                    alpha=0.7, color=color_subsistence, label='Subsistence (fixed floor)')
+    ax.fill_between(x, result.subsistence_consumption, result.total_consumption,
+                    alpha=0.7, color=color_variable, label='Variable (net worth-based)')
+    ax.plot(x, result.total_consumption, color='black', linewidth=1.5)
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.7, label='Retirement')
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s per year)')
+    ax.set_title('Consumption: Subsistence + Variable', fontweight='bold', fontsize=14)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.set_xlim(x[0] - 1, x[-1] + 1)
+    ax.set_ylim(0, None)
+
+    plt.tight_layout()
+    return fig
+
+
+def create_gauge_duration_figure(
+    params: 'LifecycleParams' = None,
+    econ_params: 'EconomicParams' = None,
+    figsize: Tuple[int, int] = (10, 6),
+    use_years: bool = True,
+) -> plt.Figure:
+    """
+    Duration Gap gauge: interest rate sensitivity of balance sheet.
+
+    Shows Duration of Earnings (asset) vs Duration of Expenses (liability),
+    and the Duration Gap (difference). This parallels the Net Worth gauge
+    but measures interest rate sensitivity (in years) rather than value (in $).
+
+    Key insight: Duration matching hedges interest rate risk. When the gap is
+    positive, assets have longer duration than liabilities (exposed to rate drops).
+    When negative, liabilities have longer duration (exposed to rate rises).
+    """
+    from core import LifecycleParams, EconomicParams, compute_lifecycle_median_path
+
+    if params is None:
+        params = LifecycleParams()
+    if econ_params is None:
+        econ_params = EconomicParams()
+
+    result = compute_lifecycle_median_path(params, econ_params)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    color_earnings = '#e67e22'   # Orange (asset duration)
+    color_expenses = '#E07A5F'   # Coral (liability duration)
+    color_gap_pos = '#1D3557'    # Dark blue (positive gap)
+    color_gap_neg = '#E07A5F'    # Coral (negative gap)
+
+    # Duration Gap = Duration(Earnings) - Duration(Expenses)
+    duration_gap = result.duration_earnings - result.duration_expenses
+
+    # Plot duration lines
+    ax.plot(x, result.duration_earnings, color=color_earnings, linewidth=2.5,
+            label='Duration of Earnings (Asset)')
+    ax.plot(x, result.duration_expenses, color=color_expenses, linewidth=2.5,
+            label='Duration of Expenses (Liability)')
+
+    # Fill duration gap (positive/negative regions)
+    ax.fill_between(x, result.duration_expenses, result.duration_earnings,
+                    where=duration_gap >= 0, alpha=0.3, color=color_gap_pos,
+                    label='Positive Gap (rate-drop exposure)')
+    ax.fill_between(x, result.duration_expenses, result.duration_earnings,
+                    where=duration_gap < 0, alpha=0.3, color=color_gap_neg,
+                    label='Negative Gap (rate-rise exposure)')
+
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.7, label='Retirement')
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Duration (years)')
+    ax.set_title('Duration Gap: Interest Rate Sensitivity of Balance Sheet',
+                 fontweight='bold', fontsize=14)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.set_xlim(x[0] - 1, x[-1] + 1)
+
+    plt.tight_layout()
+    return fig

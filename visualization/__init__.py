@@ -71,6 +71,12 @@ from .comparison_plots import (
     create_allocation_comparison_page,
     plot_duration_matching_intuition,
     plot_strategy_comparison_bars,
+    # Single-panel gauge/control figures
+    create_gauge_net_worth_figure,
+    create_gauge_wealth_composition_figure,
+    create_control_allocation_figure,
+    create_control_consumption_figure,
+    create_gauge_duration_figure,
 )
 
 # Import report page layouts
@@ -148,6 +154,12 @@ __all__ = [
     'create_allocation_comparison_page',
     'plot_duration_matching_intuition',
     'plot_strategy_comparison_bars',
+    # Single-panel gauge/control figures (for flexible slide layouts)
+    'create_gauge_net_worth_figure',
+    'create_gauge_wealth_composition_figure',
+    'create_control_allocation_figure',
+    'create_control_consumption_figure',
+    'create_gauge_duration_figure',
 
     # Report pages
     'create_base_case_page',

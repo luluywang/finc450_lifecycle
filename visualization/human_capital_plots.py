@@ -146,6 +146,12 @@ def create_hc_stock_sensitivity_figure(
     stock_color = COLORS['stock']      # Coral for stocks
     wage_color = COLORS['earnings']    # Teal-blue for wages/earnings
 
+    # Calculate final percentages above/below expectations for annotations
+    bull_stock_pct = (bull_stocks_rel[-1] - 1) * 100
+    bull_wage_pct = (bull_wages_rel[-1] - 1) * 100
+    bear_stock_pct = (bear_stocks_rel[-1] - 1) * 100
+    bear_wage_pct = (bear_wages_rel[-1] - 1) * 100
+
     # Panel 0: Bull market path (90th percentile)
     ax = axes[0]
     ax.plot(x, bull_stocks_rel, color=stock_color, linewidth=2.5, label='Stocks')
@@ -158,6 +164,12 @@ def create_hc_stock_sensitivity_figure(
     ax.set_xlim(x[0], x[-1])
     ax.set_yscale('log')
 
+    # Add annotation for bull market
+    bull_annotation = f'Stocks: +{bull_stock_pct:.0f}% vs expected\nWages: +{bull_wage_pct:.0f}% vs expected'
+    ax.annotate(bull_annotation, xy=(0.97, 0.03), xycoords='axes fraction',
+                ha='right', va='bottom', fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='gray', alpha=0.9))
+
     # Panel 1: Bear market path (10th percentile)
     ax = axes[1]
     ax.plot(x, bear_stocks_rel, color=stock_color, linewidth=2.5, label='Stocks')
@@ -167,6 +179,12 @@ def create_hc_stock_sensitivity_figure(
     ax.set_title('Bear Market Path (10th percentile)', fontweight='bold')
     ax.legend(loc='upper left', fontsize=9)
     ax.set_xlim(x[0], x[-1])
+
+    # Add annotation for bear market
+    bear_annotation = f'Stocks: {bear_stock_pct:.0f}% vs expected\nWages: {bear_wage_pct:.0f}% vs expected'
+    ax.annotate(bear_annotation, xy=(0.97, 0.97), xycoords='axes fraction',
+                ha='right', va='top', fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='gray', alpha=0.9))
 
     # Ensure y-axis is shared and symmetric around 1.0 on log scale
     all_values = np.concatenate([bull_stocks_rel, bear_stocks_rel,

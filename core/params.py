@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 # Default beta for "risky" human capital scenarios (middle ground between
 # bond-like HC at beta=0 and stock-like HC at beta=1)
-DEFAULT_RISKY_BETA = 0.2
+DEFAULT_RISKY_BETA = 0.4
 
 
 # =============================================================================

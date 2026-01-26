@@ -34,6 +34,12 @@ from visualization import (
     apply_standard_style,
     compute_x_axis_from_ages,  # DRY helper
     create_hc_stock_sensitivity_figure,  # Human capital sensitivity
+    # Single-panel gauge/control figures (for flexible slide layouts)
+    create_gauge_net_worth_figure,
+    create_gauge_wealth_composition_figure,
+    create_control_allocation_figure,
+    create_control_consumption_figure,
+    create_gauge_duration_figure,
 )
 
 # Apply consistent style for all figures
@@ -674,6 +680,39 @@ def generate_all_figures(
         n_simulations=1000, use_years=use_years
     )
     filepath = output_path / f"11_hc_stock_sensitivity.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    # Generate individual gauge/control panel figures (for flexible slide layouts)
+    # These use descriptive names (no numbering) for semantic clarity
+
+    print("  gauge_net_worth: Net Worth = HC + FW - PV(Expenses)")
+    fig = create_gauge_net_worth_figure(params=params, econ_params=econ_params, use_years=use_years)
+    filepath = output_path / f"gauge_net_worth.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    print("  gauge_wealth_composition: Human Capital vs Financial Wealth")
+    fig = create_gauge_wealth_composition_figure(params=params, econ_params=econ_params, use_years=use_years)
+    filepath = output_path / f"gauge_wealth_composition.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    print("  control_allocation: Portfolio allocation over lifecycle")
+    fig = create_control_allocation_figure(params=params, econ_params=econ_params, use_years=use_years)
+    filepath = output_path / f"control_allocation.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    print("  control_consumption: Consumption path with subsistence + variable")
+    fig = create_control_consumption_figure(params=params, econ_params=econ_params, use_years=use_years)
+    filepath = output_path / f"control_consumption.{format}"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+    print("  gauge_duration: Duration Gap (interest rate sensitivity)")
+    fig = create_gauge_duration_figure(params=params, econ_params=econ_params, use_years=use_years)
+    filepath = output_path / f"gauge_duration.{format}"
     fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
