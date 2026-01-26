@@ -1751,6 +1751,8 @@ interface MonteCarloSimulationResult {
   medianFinalWealth: number;
   /** Median present value of lifetime consumption (discounted at risk-free rate) */
   medianPvConsumption: number;
+  /** PV consumption for each simulation (used for histogram) */
+  pvConsumption: number[];
 }
 
 /**
@@ -1919,6 +1921,7 @@ function runMonteCarloSimulation(
     defaultRate,
     medianFinalWealth,
     medianPvConsumption,
+    pvConsumption: pvConsumptionValues,
   };
 }
 
@@ -2086,6 +2089,7 @@ function runMonteCarloStrategyComparison(
       defaultRate: ldiDefaulted.filter(d => d).length / numSims,
       medianFinalWealth: computePercentile(ldiFinalWealth, 50),
       medianPvConsumption: computePercentile(ldiPvConsumptionValues, 50),
+      pvConsumption: ldiPvConsumptionValues,
     },
     resultB: {
       result: rotResult,
@@ -2095,6 +2099,7 @@ function runMonteCarloStrategyComparison(
       defaultRate: rotDefaulted.filter(d => d).length / numSims,
       medianFinalWealth: computePercentile(rotFinalWealth, 50),
       medianPvConsumption: computePercentile(rotPvConsumptionValues, 50),
+      pvConsumption: rotPvConsumptionValues,
     },
     strategyAParams: { allowLeverage: false },
     strategyBParams: {
@@ -2419,6 +2424,7 @@ function runTeachingScenarios(
         defaultRate: ldiDefaulted.filter(d => d).length / numSims,
         medianFinalWealth: computePercentile(ldiFinalWealth, 50),
         medianPvConsumption: computePercentile(ldiPvConsumptionValues, 50),
+        pvConsumption: ldiPvConsumptionValues,
       },
       rot: {
         result: rotResult,
@@ -2428,6 +2434,7 @@ function runTeachingScenarios(
         defaultRate: rotDefaulted.filter(d => d).length / numSims,
         medianFinalWealth: computePercentile(rotFinalWealth, 50),
         medianPvConsumption: computePercentile(rotPvConsumptionValues, 50),
+        pvConsumption: rotPvConsumptionValues,
       },
     };
   };
@@ -3865,6 +3872,8 @@ export default function LifecycleVisualizer() {
   // Deferred computation: only runs after "Run Simulation" button is clicked
   // Keeps old results when params change (don't auto-clear on param changes)
   // Uses useEffect to trigger computation only when simulationVersion changes
+  // IMPORTANT: Include lifecycleParams, econParams, and rateShockMagnitude in dependencies
+  // to avoid stale closures - when user clicks Run Simulation, we use current params
   useEffect(() => {
     if (simulationVersion === 0) return; // Don't run until button clicked
     if (currentPage !== 'scenarios') return;
@@ -3876,10 +3885,11 @@ export default function LifecycleVisualizer() {
       rotSavingsRate: 0.15,
       rotWithdrawalRate: 0.04,
       rotTargetDuration: 6.0,
+      rateShockMagnitude: rateShockMagnitude,
     });
     setCachedTeachingScenarios(results);
     setScenarioComputing(false);
-  }, [simulationVersion]); // Only re-run when button is clicked (version changes)
+  }, [simulationVersion, lifecycleParams, econParams, rateShockMagnitude, currentPage]);
 
   // teachingScenarios is just the cached value
   const teachingScenarios = cachedTeachingScenarios;
@@ -4987,11 +4997,10 @@ export default function LifecycleVisualizer() {
               });
 
               // Panel 8 data: PV consumption histogram
-              // Compute PV consumption for each simulation
-              const ldiConsumption = scenario.ldi.result.consumption as number[][];
-              const rotConsumption = scenario.rot.result.consumption as number[][];
-              const ldiPvConsumption = ldiConsumption.map(c => computePvConsumption(c, econParams.rBar));
-              const rotPvConsumption = rotConsumption.map(c => computePvConsumption(c, econParams.rBar));
+              // Use the pre-computed PV consumption from the scenario results
+              // This ensures consistency with the summary metrics (same rBar was used)
+              const ldiPvConsumption = scenario.ldi.pvConsumption;
+              const rotPvConsumption = scenario.rot.pvConsumption;
               const pvBins = [0, 1000, 2000, 3000, 4000, 5000];
               const pvHistData: { bin: string; LDI: number; RoT: number }[] = [];
               for (let i = 0; i < pvBins.length - 1; i++) {
