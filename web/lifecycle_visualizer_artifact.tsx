@@ -49,6 +49,95 @@ function computeMuBondFromEcon(econ: EconomicParams): number {
   return econ.bondSharpe * econ.bondDuration * econ.sigmaR;
 }
 
+/**
+ * Parameters for lifecycle model.
+ * Matches Python LifecycleParams from core/params.py exactly.
+ */
+interface LifecycleParams {
+  // Age parameters
+  startAge: number;             // Age at career start (Python: start_age = 25)
+  retirementAge: number;        // Age at retirement (Python: retirement_age = 65)
+  endAge: number;               // Planning horizon (Python: end_age = 95)
+
+  // Income parameters (in $000s for cleaner numbers)
+  initialEarnings: number;      // Starting annual earnings ($200k)
+  earningsGrowth: number;       // Real earnings growth rate (flat = 0.0)
+  earningsHumpAge: number;      // Age at peak earnings (at retirement = flat)
+  earningsDecline: number;      // Decline rate after peak
+
+  // Expense parameters (subsistence/baseline)
+  baseExpenses: number;         // Base annual subsistence expenses ($100k)
+  expenseGrowth: number;        // Real expense growth rate (flat = 0.0)
+  retirementExpenses: number;   // Retirement subsistence expenses ($100k)
+
+  // Consumption parameters
+  consumptionShare: number;     // Share of net worth consumed above subsistence
+  consumptionBoost: number;     // Boost above median return for consumption rate
+
+  // Asset allocation parameters
+  stockBetaHumanCapital: number; // Beta of human capital to stocks
+
+  // Mean-variance optimization parameters
+  // If gamma > 0, target allocations are derived from MV optimization
+  // If gamma = 0, use the fixed target allocations below
+  gamma: number;                    // Risk aversion coefficient for MV optimization
+  targetStockAllocation: number;    // Target stock allocation (used if gamma=0)
+  targetBondAllocation: number;     // Target bond allocation (used if gamma=0)
+
+  // Portfolio constraint parameters
+  allowLeverage: boolean;       // Allow shorting and leverage in portfolio
+
+  // Economic parameters (consistent with EconomicParams for DGP)
+  riskFreeRate: number;         // Long-run real risk-free rate
+  equityPremium: number;        // Equity risk premium
+
+  // Initial financial wealth (can be negative for student loans)
+  initialWealth: number;        // Starting financial wealth ($100k, negative allowed)
+}
+
+/**
+ * Default lifecycle parameters matching Python LifecycleParams defaults exactly.
+ */
+const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
+  // Age parameters
+  startAge: 25,
+  retirementAge: 65,
+  endAge: 95,
+
+  // Income parameters
+  initialEarnings: 200,         // $200k starting earnings
+  earningsGrowth: 0.0,          // Flat earnings
+  earningsHumpAge: 65,          // Peak at retirement = flat
+  earningsDecline: 0.0,         // No decline
+
+  // Expense parameters
+  baseExpenses: 100,            // $100k base expenses
+  expenseGrowth: 0.0,           // Flat expenses
+  retirementExpenses: 100,      // $100k retirement expenses
+
+  // Consumption parameters
+  consumptionShare: 0.05,       // 5% of net worth consumed above subsistence
+  consumptionBoost: 0.0,        // No boost
+
+  // Asset allocation parameters
+  stockBetaHumanCapital: 0.0,   // Bond-like human capital
+
+  // Mean-variance optimization parameters
+  gamma: 2.0,                   // Risk aversion coefficient
+  targetStockAllocation: 0.60,  // 60% stocks if gamma=0
+  targetBondAllocation: 0.30,   // 30% bonds if gamma=0
+
+  // Portfolio constraint parameters
+  allowLeverage: false,         // No leverage allowed
+
+  // Economic parameters
+  riskFreeRate: 0.02,           // 2% real risk-free rate
+  equityPremium: 0.04,          // 4% equity premium
+
+  // Initial wealth
+  initialWealth: 100,           // $100k starting wealth
+};
+
 interface Params {
   // Age parameters
   startAge: number;
