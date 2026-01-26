@@ -1006,12 +1006,9 @@ function simulateWithStrategy(
   for (let sim = 0; sim < nSims; sim++) {
     const returns: number[] = [];
     for (let t = 0; t < totalYears; t++) {
-      // Stock return = r_t + mu_excess - sigma^2/2 + sigma_s * epsilon_t
-      // The -sigma^2/2 is the median return adjustment (Jensen's inequality)
-      // which accounts for the difference between arithmetic and geometric means
-      // so that zero shocks give the median (geometric) return path
+      // Stock return = r_t + mu_excess + sigma_s * epsilon_t
+      // This uses arithmetic mean returns (matching Python simulate_stock_returns)
       const stockReturn = ratePaths[sim][t] + econParams.muExcess
-        - 0.5 * econParams.sigmaS * econParams.sigmaS
         + econParams.sigmaS * stockShocks[sim][t];
       returns.push(stockReturn);
     }
@@ -1860,10 +1857,11 @@ function runMonteCarloSimulation(
   const finalWealthValues = result.finalWealth as number[];
 
   // Compute cumulative stock returns for each simulation
+  // Matches Python: np.cumprod(1 + returns, axis=1)
   const cumulativeStockReturnPaths: number[][] = stockReturnPaths.map(returns => {
     const cumulative: number[] = [1.0];
-    for (let t = 1; t < returns.length; t++) {
-      cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+    for (let t = 0; t < returns.length; t++) {
+      cumulative.push(cumulative[t] * (1 + returns[t]));
     }
     return cumulative;
   });
@@ -2008,15 +2006,15 @@ function runMonteCarloStrategyComparison(
   const rotStockReturns = rotResult.stockReturns as number[][];
   const ldiCumulativeStockReturns = ldiStockReturns.map(returns => {
     const cumulative: number[] = [1.0];
-    for (let t = 1; t < returns.length; t++) {
-      cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+    for (let t = 0; t < returns.length; t++) {
+      cumulative.push(cumulative[t] * (1 + returns[t]));
     }
     return cumulative;
   });
   const rotCumulativeStockReturns = rotStockReturns.map(returns => {
     const cumulative: number[] = [1.0];
-    for (let t = 1; t < returns.length; t++) {
-      cumulative.push(cumulative[t - 1] * (1 + returns[t]));
+    for (let t = 0; t < returns.length; t++) {
+      cumulative.push(cumulative[t] * (1 + returns[t]));
     }
     return cumulative;
   });
@@ -2554,10 +2552,10 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     // Remaining expenses
     const remainingExpenses = expenses.slice(i);
 
-    pvEarnings[i] = computePresentValue(remainingEarnings, r, phi, r);
-    pvExpenses[i] = computePresentValue(remainingExpenses, r, phi, r);
-    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r);
-    durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r);
+    pvEarnings[i] = computePresentValue(remainingEarnings, r, null, null);
+    pvExpenses[i] = computePresentValue(remainingExpenses, r, null, null);
+    durationEarnings[i] = computeDuration(remainingEarnings, r, null, null);
+    durationExpenses[i] = computeDuration(remainingExpenses, r, null, null);
   }
 
   // Human capital = PV of future earnings
@@ -2872,10 +2870,8 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     if (i < totalYears - 1) {
       const savings = earnings[i] - totalConsumption[i];
 
-      // Realized returns with shocks
-      // Median return adjustment: -sigma^2/2 for geometric mean
+      // Realized returns with shocks (arithmetic mean, matching Python)
       const stockReturn = currentRate + params.muStock
-        - 0.5 * params.sigmaS * params.sigmaS
         + params.sigmaS * stockShock;
       const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
       const cashReturn = currentRate;
@@ -3151,10 +3147,8 @@ function computeScenarioPath(
     // Wealth accumulation
     const savings = earnings[i] - totalConsumption[i];
 
-    // Realized returns with shocks
-    // Median return adjustment: -sigma^2/2 for geometric mean
+    // Realized returns with shocks (arithmetic mean, matching Python)
     const stockReturn = currentRate + params.muStock
-      - 0.5 * params.sigmaS * params.sigmaS
       + params.sigmaS * stockShock;
     cumStockReturn *= (1 + stockReturn);
     cumulativeStockReturn[i] = cumStockReturn;
@@ -3531,7 +3525,7 @@ export default function LifecycleVisualizer() {
       earnings: result.earnings[i],
       expenses: result.expenses[i],
       pvEarnings: result.pvEarnings[i],
-      pvExpenses: -result.pvExpenses[i],
+      pvExpenses: result.pvExpenses[i],
       durationEarnings: result.durationEarnings[i],
       durationExpenses: result.durationExpenses[i],  // Positive for easier comparison with HC duration
       humanCapital: result.humanCapital[i],
@@ -3539,11 +3533,12 @@ export default function LifecycleVisualizer() {
       hcStock: result.hcStock[i],
       hcBond: result.hcBond[i],
       hcCash: result.hcCash[i],
-      expBond: -result.expBond[i],
-      expCash: -result.expCash[i],
+      expBond: result.expBond[i],
+      expCash: result.expCash[i],
       netStock: result.hcStock[i],
       netBond: result.hcBond[i] - result.expBond[i],
       netCash: result.hcCash[i] - result.expCash[i],
+      netTotal: result.humanCapital[i] - result.pvExpenses[i],
       stockWeight: result.stockWeight[i] * 100,
       bondWeight: result.bondWeight[i] * 100,
       cashWeight: result.cashWeight[i] * 100,
@@ -3800,8 +3795,8 @@ export default function LifecycleVisualizer() {
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={11} />
-                <YAxis fontSize={11} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
-                <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${(value * 100).toFixed(0)}%` : ''} />
+                <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
+                <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(2)}x` : ''} />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <ReferenceLine y={1} stroke="#999" strokeDasharray="3 3" />
                 <Line type="monotone" dataKey="cumulativeStockReturn" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Expected Cumulative Return" />
@@ -3872,45 +3867,48 @@ export default function LifecycleVisualizer() {
 
           <ChartCard title="Human Capital Decomposition ($k)">
             <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={chartData}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
-                <Area type="monotone" dataKey="hcCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="HC Cash" />
-                <Area type="monotone" dataKey="hcBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="HC Bond" />
-                <Area type="monotone" dataKey="hcStock" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="HC Stock" />
-              </AreaChart>
+                <Line type="monotone" dataKey="hcCash" stroke={COLORS.cash} strokeWidth={2} dot={false} name="HC Cash" />
+                <Line type="monotone" dataKey="hcBond" stroke={COLORS.bond} strokeWidth={2} dot={false} name="HC Bond" />
+                <Line type="monotone" dataKey="hcStock" stroke={COLORS.stock} strokeWidth={2} dot={false} name="HC Stock" />
+                <Line type="monotone" dataKey="humanCapital" stroke="#333" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Total HC" />
+              </LineChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard title="Expense Liability Decomposition ($k)">
             <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={chartData}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
-                <Area type="monotone" dataKey="expCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Expense Cash" />
-                <Area type="monotone" dataKey="expBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Expense Bond" />
-              </AreaChart>
+                <Line type="monotone" dataKey="expCash" stroke={COLORS.cash} strokeWidth={2} dot={false} name="Expense Cash" />
+                <Line type="monotone" dataKey="expBond" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Expense Bond" />
+                <Line type="monotone" dataKey="pvExpenses" stroke="#333" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Total Expenses" />
+              </LineChart>
             </ResponsiveContainer>
           </ChartCard>
 
           <ChartCard title="Net HC minus Expenses ($k)">
             <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={chartData}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={formatDollar} />
                 <Tooltip formatter={dollarTooltipFormatter} />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
-                <Area type="monotone" dataKey="netCash" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Net Cash" />
-                <Area type="monotone" dataKey="netBond" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Net Bond" />
-                <Area type="monotone" dataKey="netStock" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Net Stock" />
-              </AreaChart>
+                <Line type="monotone" dataKey="netCash" stroke={COLORS.cash} strokeWidth={2} dot={false} name="Net Cash" />
+                <Line type="monotone" dataKey="netBond" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Net Bond" />
+                <Line type="monotone" dataKey="netStock" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Net Stock" />
+                <Line type="monotone" dataKey="netTotal" stroke="#333" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Net Total" />
+              </LineChart>
             </ResponsiveContainer>
           </ChartCard>
         </ChartSection>
@@ -4618,43 +4616,63 @@ export default function LifecycleVisualizer() {
               }
 
               // Panel 7 data: Terminal wealth histogram
+              // Use log-scale bins matching Python: np.geomspace(floor_val, max_val, 20)
               const ldiTerminalWealth = scenario.ldi.result.finalWealth as number[];
               const rotTerminalWealth = scenario.rot.result.finalWealth as number[];
-              // Create log-scale bins
-              const wealthBins = [0, 10, 100, 1000, 10000];
+              const wealthFloor = 10;
+              const ldiWealthFloored = ldiTerminalWealth.map(w => Math.max(w, wealthFloor));
+              const rotWealthFloored = rotTerminalWealth.map(w => Math.max(w, wealthFloor));
+              const wealthMax = Math.max(
+                computePercentile(ldiWealthFloored, 99),
+                computePercentile(rotWealthFloored, 99)
+              );
+              // Create geometrically spaced bins
+              const numWealthBins = 15;
+              const wealthBins: number[] = [];
+              for (let i = 0; i <= numWealthBins; i++) {
+                wealthBins.push(wealthFloor * Math.pow(wealthMax / wealthFloor, i / numWealthBins));
+              }
               const wealthHistData: { bin: string; LDI: number; RoT: number }[] = [];
               for (let i = 0; i < wealthBins.length - 1; i++) {
+                const lo = wealthBins[i];
+                const hi = wealthBins[i + 1];
                 wealthHistData.push({
-                  bin: `$${wealthBins[i]}-${wealthBins[i+1]}k`,
-                  LDI: ldiTerminalWealth.filter(w => w >= wealthBins[i] && w < wealthBins[i+1]).length,
-                  RoT: rotTerminalWealth.filter(w => w >= wealthBins[i] && w < wealthBins[i+1]).length,
+                  bin: `$${Math.round(lo)}k`,
+                  LDI: ldiWealthFloored.filter(w => w >= lo && w < hi).length,
+                  RoT: rotWealthFloored.filter(w => w >= lo && w < hi).length,
                 });
               }
-              wealthHistData.push({
-                bin: `>$${wealthBins[wealthBins.length-1]}k`,
-                LDI: ldiTerminalWealth.filter(w => w >= wealthBins[wealthBins.length-1]).length,
-                RoT: rotTerminalWealth.filter(w => w >= wealthBins[wealthBins.length-1]).length,
-              });
 
               // Panel 8 data: PV consumption histogram
-              // Use the pre-computed PV consumption from the scenario results
-              // This ensures consistency with the summary metrics (same rBar was used)
+              // Use log-scale bins matching Python: np.geomspace(min_val, max_val, 20)
               const ldiPvConsumption = scenario.ldi.pvConsumption;
               const rotPvConsumption = scenario.rot.pvConsumption;
-              const pvBins = [0, 1000, 2000, 3000, 4000, 5000];
+              const pvFloor = 100;
+              const ldiPvFloored = ldiPvConsumption.map(pv => Math.max(pv, pvFloor));
+              const rotPvFloored = rotPvConsumption.map(pv => Math.max(pv, pvFloor));
+              const pvMin = Math.min(
+                Math.min(...ldiPvFloored),
+                Math.min(...rotPvFloored)
+              );
+              const pvMax = Math.max(
+                computePercentile(ldiPvFloored, 99),
+                computePercentile(rotPvFloored, 99)
+              );
+              const numPvBins = 15;
+              const pvBins: number[] = [];
+              for (let i = 0; i <= numPvBins; i++) {
+                pvBins.push(pvMin * Math.pow(pvMax / pvMin, i / numPvBins));
+              }
               const pvHistData: { bin: string; LDI: number; RoT: number }[] = [];
               for (let i = 0; i < pvBins.length - 1; i++) {
+                const lo = pvBins[i];
+                const hi = pvBins[i + 1];
                 pvHistData.push({
-                  bin: `$${pvBins[i]}-${pvBins[i+1]}k`,
-                  LDI: ldiPvConsumption.filter(pv => pv >= pvBins[i] && pv < pvBins[i+1]).length,
-                  RoT: rotPvConsumption.filter(pv => pv >= pvBins[i] && pv < pvBins[i+1]).length,
+                  bin: `$${Math.round(lo / 1000)}M`,
+                  LDI: ldiPvFloored.filter(pv => pv >= lo && pv < hi).length,
+                  RoT: rotPvFloored.filter(pv => pv >= lo && pv < hi).length,
                 });
               }
-              pvHistData.push({
-                bin: `>$${pvBins[pvBins.length-1]}k`,
-                LDI: ldiPvConsumption.filter(pv => pv >= pvBins[pvBins.length-1]).length,
-                RoT: rotPvConsumption.filter(pv => pv >= pvBins[pvBins.length-1]).length,
-              });
 
               return (
               <>
@@ -4667,8 +4685,8 @@ export default function LifecycleVisualizer() {
                       <AreaChart data={marketData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
-                        <YAxis fontSize={11} tickFormatter={(v) => `${(Math.exp(v) * 100).toFixed(0)}%`} domain={['auto', 'auto']} />
-                        <Tooltip formatter={(v) => v !== undefined ? [`${(Math.exp(v as number) * 100).toFixed(0)}%`, 'Return'] : ['', '']} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `${Math.exp(v).toFixed(0)}x`} domain={['auto', 'auto']} />
+                        <Tooltip formatter={(v) => v !== undefined ? [`${Math.exp(v as number).toFixed(1)}x`, 'Cumulative'] : ['', '']} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
                         <Area type="monotone" dataKey="sr_p5" stackId="sr" fill="transparent" stroke="transparent" />
@@ -4679,7 +4697,7 @@ export default function LifecycleVisualizer() {
                       </AreaChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
-                      Log scale. Retirement age marked with dashed line.
+                      Log scale (1x = starting value). Retirement age marked.
                     </div>
                   </ChartCard>
 
