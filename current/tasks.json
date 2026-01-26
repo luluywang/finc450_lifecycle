@@ -84,7 +84,8 @@
       "description": "Remove Fan Charts, keep bar charts only",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Removed 'Detailed Charts for Each Scenario' section (350+ lines) containing AreaChart fan charts. Summary tab now shows only: 3 bar charts (Default Rates, PV Consumption, Terminal Wealth), Detailed Metrics table, and Key Takeaways."
     },
     {
       "id": 10,
@@ -113,7 +114,8 @@
       "description": "Create overlaid fan chart comparing LDI and RoT financial wealth paths",
       "type": "code",
       "depends_on": [6],
-      "status": "pending"
+      "status": "complete",
+      "notes": "Panel already implemented at lines 5251-5296 in lifecycle_visualizer_artifact.tsx. Uses AreaChart with overlaid percentile bands (p5-p25, p25-p75, p75-p95) for both LDI (blue #2980b9) and RoT (gold #d4a84c). Separate stackIds allow independent stacking. Median lines overlay the fan charts."
     },
     {
       "id": 13,

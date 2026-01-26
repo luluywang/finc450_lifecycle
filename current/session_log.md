@@ -377,3 +377,75 @@ The existing implementation was a simple LineChart showing only median values. U
 - [x] Panel appears as sixth panel in each individual scenario tab view
 
 ---
+
+## Task 9 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 9 requires updating the Summary Tab to remove fan charts (AreaCharts with percentile bands) and keep only bar charts. The summary tab had a "Detailed Charts for Each Scenario" section that rendered 350+ lines of detailed per-scenario visualizations including AreaChart fan charts for market conditions and wealth. This was redundant since the individual scenario tabs already show these detailed charts.
+
+**Action:** Removed the entire "Detailed Charts for Each Scenario" map block from the summary tab section using sed command.
+
+**Results:**
+- Removed lines containing the map over ['baseline', 'sequenceRisk', 'rateShock'] that rendered detailed charts with fan charts
+- Summary tab now shows exactly:
+  - Description box (Teaching Scenarios explanation)
+  - ChartSection "Strategy Performance Across Scenarios" with 3 bar charts:
+    - Default Rates (%) - BarChart
+    - Median PV Lifetime Consumption ($k) - BarChart  
+    - Median Terminal Wealth at Age N ($k) - BarChart
+  - ChartSection "Detailed Metrics Comparison" with metrics table
+  - Key Takeaways box
+- No AreaCharts remain in the summary tab section
+- File reduced by ~352 lines of redundant visualization code
+
+**Checks:**
+- [x] Summary tab shows exactly 3 bar chart panels (Default Rates, PV Consumption, Terminal Wealth)
+- [x] No fan charts (AreaChart with percentile bands) in summary tab
+- [x] Detailed metrics table remains intact
+- [x] Individual scenario tabs still have their detailed charts (outside summary tab scope)
+
+---
+
+## Task 12 — 2026-01-26
+
+**Status:** complete
+
+**Reasoning:** Task 12 requires implementing the Financial Wealth panel as the third panel (axes[1,0]) in the 4x2 grid for individual scenario tabs. The panel should show overlaid fan charts comparing LDI and RoT financial wealth paths over the lifecycle.
+
+Upon reviewing the codebase, this panel is already fully implemented in lifecycle_visualizer_artifact.tsx at lines 5251-5296 as part of an earlier task.
+
+The PDF reference (compare_teaching_scenarios.py lines 594-605) shows:
+- Panel position: axes[1, 0] (Row 2, first column - "Financial Wealth")
+- Overlaid fan charts using `plot_fan_chart` for both LDI and RoT
+- Colors: LDI = '#1A759F' (blue), RoT = '#E9C46A' (amber) - in TSX using #2980b9/#d4a84c for consistency
+- X-axis: Years from Career Start, Y-axis: $ (000s)
+- Title: "Financial Wealth"
+- Includes retirement age reference line and y=0 reference line
+
+The TSX implementation includes:
+1. AreaChart with separate stackId for LDI ("ldi") and RoT ("rot")
+2. Percentile bands: p5-p25 (15% opacity), p25-p75 (30% opacity), p75-p95 (15% opacity)
+3. Transparent base areas (ldi_p5, rot_p5) to offset the stacked bands
+4. Median lines for both strategies (ldi_p50, rot_p50)
+5. Data fields with strategy prefix (ldi_*, rot_*)
+6. Retirement age and y=0 reference lines
+
+**Action:** Verified existing implementation matches PDF specification, no code changes needed
+
+**Results:**
+- Panel renders as overlaid fan chart with percentile bands for both LDI and RoT
+- LDI bands: blue (#2980b9) at 15%/30%/15% opacity for p5-p25/p25-p75/p75-p95
+- RoT bands: gold (#d4a84c) at 15%/30%/15% opacity for p5-p25/p25-p75/p75-p95
+- Both median lines rendered as solid 2px Lines
+- Caption explains overlaid fan charts with percentile bands
+
+**Checks:**
+- [x] Panel shows overlaid fan chart comparing LDI and RoT financial wealth paths
+- [x] X-axis: Age, Y-axis: Financial Wealth ($)
+- [x] Uses distinct colors for LDI (blue #2980b9) vs RoT (gold #d4a84c)
+- [x] Fan chart bands show p5-p25, p25-p75, p75-p95 percentiles
+- [x] Data comes from teachingScenarios (scenario.ldi/rot.percentiles.financialWealth)
+- [x] Panel appears as third panel in each individual scenario tab view
+
+---

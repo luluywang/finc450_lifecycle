@@ -424,44 +424,6 @@ interface LifecycleResult {
   interestRate: number[];           // Interest rate path per year
 }
 
-interface MonteCarloResult {
-  ages: number[];
-  runs: LifecycleResult[];
-  // Percentiles for key variables
-  consumption_p05: number[];
-  consumption_p25: number[];
-  consumption_p50: number[];
-  consumption_p75: number[];
-  consumption_p95: number[];
-  financialWealth_p05: number[];
-  financialWealth_p25: number[];
-  financialWealth_p50: number[];
-  financialWealth_p75: number[];
-  financialWealth_p95: number[];
-  totalWealth_p05: number[];
-  totalWealth_p25: number[];
-  totalWealth_p50: number[];
-  totalWealth_p75: number[];
-  totalWealth_p95: number[];
-  // Net Worth = HC + FW - pvExpenses (total wealth including liabilities)
-  netWorth_p05: number[];
-  netWorth_p25: number[];
-  netWorth_p50: number[];
-  netWorth_p75: number[];
-  netWorth_p95: number[];
-  // Market conditions percentiles
-  stockReturn_p05: number[];
-  stockReturn_p25: number[];
-  stockReturn_p50: number[];
-  stockReturn_p75: number[];
-  stockReturn_p95: number[];
-  interestRate_p05: number[];
-  interestRate_p25: number[];
-  interestRate_p50: number[];
-  interestRate_p75: number[];
-  interestRate_p95: number[];
-}
-
 type PageType = 'base' | 'scenarios';
 
 type ConsumptionRule = 'adaptive' | 'fourPercent';
@@ -2969,138 +2931,6 @@ function computePercentile(values: number[], p: number): number {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
 }
 
-function computeMonteCarloSimulation(params: Params, numRuns: number = 50, baseSeed: number = 42): MonteCarloResult {
-  const runs: LifecycleResult[] = [];
-
-  // Run simulations with different seeds
-  for (let run = 0; run < numRuns; run++) {
-    const rand = mulberry32(baseSeed + run * 1000);
-    runs.push(computeStochasticPath(params, rand));
-  }
-
-  const totalYears = params.endAge - params.startAge;
-  const ages = runs[0].ages;
-
-  // Compute percentiles for each year
-  const consumption_p05 = Array(totalYears).fill(0);
-  const consumption_p25 = Array(totalYears).fill(0);
-  const consumption_p50 = Array(totalYears).fill(0);
-  const consumption_p75 = Array(totalYears).fill(0);
-  const consumption_p95 = Array(totalYears).fill(0);
-
-  const financialWealth_p05 = Array(totalYears).fill(0);
-  const financialWealth_p25 = Array(totalYears).fill(0);
-  const financialWealth_p50 = Array(totalYears).fill(0);
-  const financialWealth_p75 = Array(totalYears).fill(0);
-  const financialWealth_p95 = Array(totalYears).fill(0);
-
-  const totalWealth_p05 = Array(totalYears).fill(0);
-  const totalWealth_p25 = Array(totalYears).fill(0);
-  const totalWealth_p50 = Array(totalYears).fill(0);
-  const totalWealth_p75 = Array(totalYears).fill(0);
-  const totalWealth_p95 = Array(totalYears).fill(0);
-
-  const netWorth_p05 = Array(totalYears).fill(0);
-  const netWorth_p25 = Array(totalYears).fill(0);
-  const netWorth_p50 = Array(totalYears).fill(0);
-  const netWorth_p75 = Array(totalYears).fill(0);
-  const netWorth_p95 = Array(totalYears).fill(0);
-
-  // Market conditions percentiles
-  const stockReturn_p05 = Array(totalYears).fill(0);
-  const stockReturn_p25 = Array(totalYears).fill(0);
-  const stockReturn_p50 = Array(totalYears).fill(0);
-  const stockReturn_p75 = Array(totalYears).fill(0);
-  const stockReturn_p95 = Array(totalYears).fill(0);
-
-  const interestRate_p05 = Array(totalYears).fill(0);
-  const interestRate_p25 = Array(totalYears).fill(0);
-  const interestRate_p50 = Array(totalYears).fill(0);
-  const interestRate_p75 = Array(totalYears).fill(0);
-  const interestRate_p95 = Array(totalYears).fill(0);
-
-  for (let i = 0; i < totalYears; i++) {
-    const consumptionValues = runs.map(r => r.totalConsumption[i]);
-    consumption_p05[i] = computePercentile(consumptionValues, 5);
-    consumption_p25[i] = computePercentile(consumptionValues, 25);
-    consumption_p50[i] = computePercentile(consumptionValues, 50);
-    consumption_p75[i] = computePercentile(consumptionValues, 75);
-    consumption_p95[i] = computePercentile(consumptionValues, 95);
-
-    const fwValues = runs.map(r => r.financialWealth[i]);
-    financialWealth_p05[i] = computePercentile(fwValues, 5);
-    financialWealth_p25[i] = computePercentile(fwValues, 25);
-    financialWealth_p50[i] = computePercentile(fwValues, 50);
-    financialWealth_p75[i] = computePercentile(fwValues, 75);
-    financialWealth_p95[i] = computePercentile(fwValues, 95);
-
-    const twValues = runs.map(r => r.totalWealth[i]);
-    totalWealth_p05[i] = computePercentile(twValues, 5);
-    totalWealth_p25[i] = computePercentile(twValues, 25);
-    totalWealth_p50[i] = computePercentile(twValues, 50);
-    totalWealth_p75[i] = computePercentile(twValues, 75);
-    totalWealth_p95[i] = computePercentile(twValues, 95);
-
-    const nwValues = runs.map(r => r.netWorth[i]);
-    netWorth_p05[i] = computePercentile(nwValues, 5);
-    netWorth_p25[i] = computePercentile(nwValues, 25);
-    netWorth_p50[i] = computePercentile(nwValues, 50);
-    netWorth_p75[i] = computePercentile(nwValues, 75);
-    netWorth_p95[i] = computePercentile(nwValues, 95);
-
-    // Stock return percentiles (cumulative)
-    const srValues = runs.map(r => r.cumulativeStockReturn[i]);
-    stockReturn_p05[i] = computePercentile(srValues, 5);
-    stockReturn_p25[i] = computePercentile(srValues, 25);
-    stockReturn_p50[i] = computePercentile(srValues, 50);
-    stockReturn_p75[i] = computePercentile(srValues, 75);
-    stockReturn_p95[i] = computePercentile(srValues, 95);
-
-    // Interest rate percentiles
-    const irValues = runs.map(r => r.interestRate[i]);
-    interestRate_p05[i] = computePercentile(irValues, 5);
-    interestRate_p25[i] = computePercentile(irValues, 25);
-    interestRate_p50[i] = computePercentile(irValues, 50);
-    interestRate_p75[i] = computePercentile(irValues, 75);
-    interestRate_p95[i] = computePercentile(irValues, 95);
-  }
-
-  return {
-    ages,
-    runs,
-    consumption_p05,
-    consumption_p25,
-    consumption_p50,
-    consumption_p75,
-    consumption_p95,
-    financialWealth_p05,
-    financialWealth_p25,
-    financialWealth_p50,
-    financialWealth_p75,
-    financialWealth_p95,
-    totalWealth_p05,
-    totalWealth_p25,
-    totalWealth_p50,
-    totalWealth_p75,
-    totalWealth_p95,
-    netWorth_p05,
-    netWorth_p25,
-    netWorth_p50,
-    netWorth_p75,
-    netWorth_p95,
-    stockReturn_p05,
-    stockReturn_p25,
-    stockReturn_p50,
-    stockReturn_p75,
-    stockReturn_p95,
-    interestRate_p05,
-    interestRate_p25,
-    interestRate_p50,
-    interestRate_p75,
-    interestRate_p95,
-  };
-}
-
 // =============================================================================
 // Scenario Simulation (for teaching concepts)
 // =============================================================================
@@ -5400,14 +5230,32 @@ export default function LifecycleVisualizer() {
                           </div>
                         </ChartCard>
 
-                        {/* Bond Allocation */}
-                        <ChartCard title="Bond Allocation (LDI vs RoT)">
+                        {/* Bond Allocation - Overlaid Fan Chart */}
+                        <ChartCard title="Bond Allocation (LDI Dynamic vs RoT Static)">
                           <ResponsiveContainer width="100%" height={280}>
-                            <LineChart
+                            <AreaChart
                               data={ages.map((age, i) => ({
                                 age,
-                                ldiBond: scenario.ldi.percentiles.bondWeight.p50[i] * 100,
-                                rotBond: scenario.rot.percentiles.bondWeight.p50[i] * 100,
+                                // LDI percentiles (as %)
+                                ldiP05: scenario.ldi.percentiles.bondWeight.p5[i] * 100,
+                                ldiP25: scenario.ldi.percentiles.bondWeight.p25[i] * 100,
+                                ldiP50: scenario.ldi.percentiles.bondWeight.p50[i] * 100,
+                                ldiP75: scenario.ldi.percentiles.bondWeight.p75[i] * 100,
+                                ldiP95: scenario.ldi.percentiles.bondWeight.p95[i] * 100,
+                                // LDI bands (for stacked area)
+                                ldiBand_5_25: (scenario.ldi.percentiles.bondWeight.p25[i] - scenario.ldi.percentiles.bondWeight.p5[i]) * 100,
+                                ldiBand_25_75: (scenario.ldi.percentiles.bondWeight.p75[i] - scenario.ldi.percentiles.bondWeight.p25[i]) * 100,
+                                ldiBand_75_95: (scenario.ldi.percentiles.bondWeight.p95[i] - scenario.ldi.percentiles.bondWeight.p75[i]) * 100,
+                                // RoT percentiles (as %)
+                                rotP05: scenario.rot.percentiles.bondWeight.p5[i] * 100,
+                                rotP25: scenario.rot.percentiles.bondWeight.p25[i] * 100,
+                                rotP50: scenario.rot.percentiles.bondWeight.p50[i] * 100,
+                                rotP75: scenario.rot.percentiles.bondWeight.p75[i] * 100,
+                                rotP95: scenario.rot.percentiles.bondWeight.p95[i] * 100,
+                                // RoT bands (for stacked area)
+                                rotBand_5_25: (scenario.rot.percentiles.bondWeight.p25[i] - scenario.rot.percentiles.bondWeight.p5[i]) * 100,
+                                rotBand_25_75: (scenario.rot.percentiles.bondWeight.p75[i] - scenario.rot.percentiles.bondWeight.p25[i]) * 100,
+                                rotBand_75_95: (scenario.rot.percentiles.bondWeight.p95[i] - scenario.rot.percentiles.bondWeight.p75[i]) * 100,
                               }))}
                               margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                             >
@@ -5417,12 +5265,23 @@ export default function LifecycleVisualizer() {
                               <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
                               <Legend wrapperStyle={{ fontSize: '11px' }} />
                               <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
-                              <Line type="monotone" dataKey="ldiBond" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Bond %" />
-                              <Line type="monotone" dataKey="rotBond" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Bond %" />
-                            </LineChart>
+                              {/* LDI fan bands (blue) */}
+                              <Area type="monotone" dataKey="ldiP05" stackId="ldi" fill="transparent" stroke="transparent" />
+                              <Area type="monotone" dataKey="ldiBand_5_25" stackId="ldi" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="LDI 5th-25th" />
+                              <Area type="monotone" dataKey="ldiBand_25_75" stackId="ldi" fill="#2980b9" fillOpacity={0.3} stroke="transparent" name="LDI 25th-75th" />
+                              <Area type="monotone" dataKey="ldiBand_75_95" stackId="ldi" fill="#2980b9" fillOpacity={0.15} stroke="transparent" name="LDI 75th-95th" />
+                              {/* RoT fan bands (gold) */}
+                              <Area type="monotone" dataKey="rotP05" stackId="rot" fill="transparent" stroke="transparent" />
+                              <Area type="monotone" dataKey="rotBand_5_25" stackId="rot" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="RoT 5th-25th" />
+                              <Area type="monotone" dataKey="rotBand_25_75" stackId="rot" fill="#d4a84c" fillOpacity={0.3} stroke="transparent" name="RoT 25th-75th" />
+                              <Area type="monotone" dataKey="rotBand_75_95" stackId="rot" fill="#d4a84c" fillOpacity={0.15} stroke="transparent" name="RoT 75th-95th" />
+                              {/* Median lines */}
+                              <Line type="monotone" dataKey="ldiP50" stroke="#2980b9" strokeWidth={2} dot={false} name="LDI Median" />
+                              <Line type="monotone" dataKey="rotP50" stroke="#d4a84c" strokeWidth={2} dot={false} name="RoT Median" />
+                            </AreaChart>
                           </ResponsiveContainer>
                           <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
-                            Bond allocation for duration matching.
+                            Fan chart shows p5-p95 percentile bands. LDI (blue) vs RoT (gold).
                           </div>
                         </ChartCard>
                       </ChartSection>
