@@ -39,7 +39,174 @@ from core import (
     LDIStrategy,
     RuleOfThumbStrategy,
 )
-from visualization import plot_fan_chart
+from visualization import plot_fan_chart, save_panel_as_png
+
+
+# =============================================================================
+# PNG Export Helpers
+# =============================================================================
+
+def save_axes_as_png(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    panel_name: str,
+    output_dir: str = "output/teaching_panels",
+) -> str:
+    """
+    Extract a single axes from a figure and save it as a standalone PNG.
+
+    Args:
+        fig: The source figure containing the axes
+        ax: The axes to extract and save
+        panel_name: Filename for the PNG (without extension)
+        output_dir: Directory to save the PNG file
+
+    Returns:
+        The absolute path to the saved PNG file
+    """
+    import os
+    from matplotlib.transforms import Bbox
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Get the extent of the axes in figure coordinates
+    renderer = fig.canvas.get_renderer()
+    ax_bbox = ax.get_tightbbox(renderer)
+
+    # Convert to display coordinates and back to figure coordinates
+    # This gives us the bounding box including labels and titles
+    bbox_inches = ax_bbox.transformed(fig.dpi_scale_trans.inverted())
+
+    # Add padding to ensure all elements are captured
+    bbox_padded = Bbox.from_bounds(
+        bbox_inches.x0 - 0.1,
+        bbox_inches.y0 - 0.1,
+        bbox_inches.width + 0.2,
+        bbox_inches.height + 0.2
+    )
+
+    # Construct full path with .png extension
+    if not panel_name.endswith('.png'):
+        filename = f"{panel_name}.png"
+    else:
+        filename = panel_name
+
+    filepath = os.path.join(output_dir, filename)
+
+    # Save just this axes region
+    fig.savefig(
+        filepath,
+        dpi=300,
+        bbox_inches=bbox_padded,
+        facecolor='white',
+        edgecolor='none'
+    )
+
+    return os.path.abspath(filepath)
+
+
+def save_scenario_panels(
+    fig: plt.Figure,
+    axes: np.ndarray,
+    scenario_name: str,
+    beta: float,
+    output_dir: str = "output/teaching_panels",
+) -> List[str]:
+    """
+    Save all 8 panels from a scenario figure as individual PNGs.
+
+    Panel naming convention: scenario_{scenario}_{beta_label}_{panel_desc}.png
+
+    Args:
+        fig: The scenario figure (4x2 grid)
+        axes: The 4x2 axes array
+        scenario_name: Name of the scenario (baseline, sequence_risk, rate_shock)
+        beta: Human capital stock beta value
+        output_dir: Directory to save PNGs
+
+    Returns:
+        List of absolute paths to saved PNG files
+    """
+    # Panel descriptions for naming
+    panel_names = [
+        ('stock_returns', 0, 0),       # Cumulative Stock Returns
+        ('interest_rates', 0, 1),      # Interest Rate Paths
+        ('financial_wealth', 1, 0),    # Financial Wealth
+        ('default_timing', 1, 1),      # Default Risk/Timing
+        ('stock_allocation', 2, 0),    # Stock Allocation
+        ('bond_allocation', 2, 1),     # Bond Allocation
+        ('terminal_wealth', 3, 0),     # Terminal Wealth Distribution
+        ('pv_consumption', 3, 1),      # PV Consumption Distribution
+    ]
+
+    beta_label = f"beta{beta}".replace('.', '')  # e.g., beta0 or beta04
+    saved_paths = []
+
+    for desc, row, col in panel_names:
+        panel_name = f"scenario_{scenario_name}_{beta_label}_{desc}"
+        ax = axes[row, col]
+        path = save_axes_as_png(fig, ax, panel_name, output_dir)
+        saved_paths.append(path)
+
+    return saved_paths
+
+
+def save_summary_panels(
+    fig: plt.Figure,
+    axes: np.ndarray,
+    beta_values: List[float],
+    output_dir: str = "output/teaching_panels",
+) -> List[str]:
+    """
+    Save all panels from the summary figure as individual PNGs.
+
+    For 2-beta case (3x2 grid = 6 panels):
+    - Row 0: Default Rates (left: beta0, right: beta_risky)
+    - Row 1: PV Consumption (left: beta0, right: beta_risky)
+    - Row 2: Terminal Wealth (left: beta0, right: beta_risky)
+
+    For 1-beta case (1x3 grid = 3 panels):
+    - Default Rates, PV Consumption, Terminal Wealth
+
+    Args:
+        fig: The summary figure
+        axes: The axes array (3x2 for 2-beta, 1x3 for 1-beta)
+        beta_values: List of beta values used
+        output_dir: Directory to save PNGs
+
+    Returns:
+        List of absolute paths to saved PNG files
+    """
+    saved_paths = []
+
+    if len(beta_values) == 1:
+        # Single beta case: 1x3 layout
+        panel_names = [
+            ('default_rates', 0),
+            ('pv_consumption', 1),
+            ('terminal_wealth', 2),
+        ]
+        beta_label = f"beta{beta_values[0]}".replace('.', '')
+
+        for desc, col in panel_names:
+            panel_name = f"scenario_summary_{beta_label}_{desc}"
+            ax = axes[col]
+            path = save_axes_as_png(fig, ax, panel_name, output_dir)
+            saved_paths.append(path)
+    else:
+        # Two beta case: 3x2 layout
+        row_names = ['default_rates', 'pv_consumption', 'terminal_wealth']
+
+        for row_idx, desc in enumerate(row_names):
+            for col_idx, beta in enumerate(beta_values[:2]):
+                beta_label = f"beta{beta}".replace('.', '')
+                panel_name = f"scenario_summary_{beta_label}_{desc}"
+                ax = axes[row_idx, col_idx]
+                path = save_axes_as_png(fig, ax, panel_name, output_dir)
+                saved_paths.append(path)
+
+    return saved_paths
 
 
 # =============================================================================
@@ -142,6 +309,8 @@ class ScenarioResult:
     ldi_default_flags: np.ndarray
     ldi_default_ages: np.ndarray
     ldi_pv_consumption: np.ndarray
+    ldi_stock_weight_paths: np.ndarray
+    ldi_bond_weight_paths: np.ndarray
 
     # RoT results
     rot_financial_wealth_paths: np.ndarray
@@ -149,6 +318,8 @@ class ScenarioResult:
     rot_default_flags: np.ndarray
     rot_default_ages: np.ndarray
     rot_pv_consumption: np.ndarray
+    rot_stock_weight_paths: np.ndarray
+    rot_bond_weight_paths: np.ndarray
 
     # Market conditions
     rate_paths: np.ndarray
@@ -238,12 +409,16 @@ def run_teaching_scenario(
         ldi_default_flags=ldi_result.defaulted,
         ldi_default_ages=ldi_result.default_age,
         ldi_pv_consumption=ldi_pv_consumption,
+        ldi_stock_weight_paths=ldi_result.stock_weight,
+        ldi_bond_weight_paths=ldi_result.bond_weight,
         # RoT
         rot_financial_wealth_paths=rot_result.financial_wealth,
         rot_consumption_paths=rot_result.consumption,
         rot_default_flags=rot_result.defaulted,
         rot_default_ages=rot_result.default_age,
         rot_pv_consumption=rot_pv_consumption,
+        rot_stock_weight_paths=rot_result.stock_weight,
+        rot_bond_weight_paths=rot_result.bond_weight,
         # Market
         rate_paths=ldi_result.interest_rates,
         stock_return_paths=ldi_result.stock_returns,
@@ -370,20 +545,22 @@ def create_scenario_figure(
     result: ScenarioResult,
     config: ScenarioConfig,
     params: LifecycleParams,
-    figsize: Tuple[int, int] = (14, 12),
-) -> plt.Figure:
+    figsize: Tuple[int, int] = (14, 16),
+) -> Tuple[plt.Figure, np.ndarray]:
     """
-    Create a 3x2 panel figure for a single scenario.
+    Create a 4x2 panel figure for a single scenario.
 
     Panels:
     - (0,0): Cumulative Stock Returns fan chart
     - (0,1): Interest Rate Paths fan chart
     - (1,0): Financial Wealth fan charts (LDI vs RoT overlaid)
     - (1,1): Default Risk (histogram + text annotation)
-    - (2,0): Terminal Wealth distribution
-    - (2,1): PV Consumption distribution (Realized Rates)
+    - (2,0): Stock Allocation fan charts (LDI vs RoT overlaid)
+    - (2,1): Bond Allocation fan charts (LDI vs RoT overlaid)
+    - (3,0): Terminal Wealth distribution
+    - (3,1): PV Consumption distribution (Realized Rates)
     """
-    fig, axes = plt.subplots(3, 2, figsize=figsize)
+    fig, axes = plt.subplots(4, 2, figsize=figsize)
     beta_label = f"(β={result.stock_beta})" if result.stock_beta > 0 else "(β=0, Bond-like HC)"
     fig.suptitle(f'{config.title} {beta_label}\n{config.description}', fontsize=14, fontweight='bold')
 
@@ -466,8 +643,36 @@ def create_scenario_figure(
     ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
             verticalalignment='top', bbox=props)
 
-    # ---- (2,0): Terminal Wealth Distribution (dodged) ----
+    # ---- (2,0): Stock Allocation Fan Charts ----
     ax = axes[2, 0]
+    plot_fan_chart(ax, result.ldi_stock_weight_paths * 100, x,
+                   color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_stock_weight_paths * 100, x,
+                   color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Stock Weight (%)')
+    ax.set_title('Stock Allocation (LDI Dynamic vs RoT Static)')
+    ax.set_ylim(0, 100)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # ---- (2,1): Bond Allocation Fan Charts ----
+    ax = axes[2, 1]
+    plot_fan_chart(ax, result.ldi_bond_weight_paths * 100, x,
+                   color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_bond_weight_paths * 100, x,
+                   color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Bond Weight (%)')
+    ax.set_title('Bond Allocation (LDI Dynamic vs RoT Static)')
+    ax.set_ylim(0, 100)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # ---- (3,0): Terminal Wealth Distribution (dodged) ----
+    ax = axes[3, 0]
     ldi_final = result.ldi_financial_wealth_paths[:, -1]
     rot_final = result.rot_financial_wealth_paths[:, -1]
 
@@ -500,8 +705,8 @@ def create_scenario_figure(
     ax.set_title('Terminal Wealth Distribution')
     ax.legend(loc='upper right', fontsize=9)
 
-    # ---- (2,1): PV Consumption Distribution (Realized Rates, dodged) ----
-    ax = axes[2, 1]
+    # ---- (3,1): PV Consumption Distribution (Realized Rates, dodged) ----
+    ax = axes[3, 1]
     ldi_pv = result.ldi_pv_consumption
     rot_pv = result.rot_pv_consumption
 
@@ -526,16 +731,19 @@ def create_scenario_figure(
     ax.legend(loc='upper right', fontsize=9)
 
     plt.tight_layout()
-    return fig
+    return fig, axes
 
 
 def _create_single_beta_summary(
     results: Dict[str, Dict[float, ScenarioResult]],
     beta: float,
     figsize: Tuple[int, int] = (14, 8),
-) -> plt.Figure:
+) -> Tuple[plt.Figure, np.ndarray]:
     """
     Create a simple summary figure for single-beta case (LDI vs RoT comparison).
+
+    Returns:
+        Tuple of (figure, axes) where axes is a 1D array of 3 axes
     """
     fig, axes = plt.subplots(1, 3, figsize=figsize)
     beta_label = f"(β={beta})" if beta > 0 else "(β=0, Bond-like HC)"
@@ -620,14 +828,14 @@ def _create_single_beta_summary(
                         ha='center', va='bottom', fontsize=8)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    return fig
+    return fig, axes
 
 
 def create_summary_figure(
     results: Dict[str, Dict[float, ScenarioResult]],
     beta_values: List[float] = None,
     figsize: Tuple[int, int] = (16, 12),
-) -> plt.Figure:
+) -> Tuple[plt.Figure, np.ndarray]:
     """
     Create summary with two side-by-side comparison charts.
 
@@ -637,6 +845,9 @@ def create_summary_figure(
     - Row 1: Default Rates comparison
     - Row 2: Median PV Consumption comparison
     - Row 3: Median Terminal Wealth comparison
+
+    Returns:
+        Tuple of (figure, axes) where axes is 3x2 for 2-beta or 1x3 for 1-beta
     """
     if beta_values is None:
         # Extract beta values from results
@@ -745,7 +956,7 @@ def create_summary_figure(
                             ha='center', va='bottom', fontsize=7)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    return fig
+    return fig, axes
 
 
 def generate_teaching_scenarios_pdf(
@@ -785,12 +996,19 @@ def generate_teaching_scenarios_pdf(
         beta_values=beta_values,
     )
 
-    print("Creating PDF report...")
+    print("Creating PDF report and PNG panels...")
+    png_output_dir = "output/teaching_panels"
+    all_png_paths = []
+
     with PdfPages(output_path) as pdf:
         # Page 1: Summary comparison
         print("  Creating summary figure...")
-        fig_summary = create_summary_figure(results, beta_values)
+        fig_summary, axes_summary = create_summary_figure(results, beta_values)
         pdf.savefig(fig_summary, bbox_inches='tight')
+        # Save summary panels as PNGs
+        print("    Saving summary panels as PNG...")
+        summary_paths = save_summary_panels(fig_summary, axes_summary, beta_values, png_output_dir)
+        all_png_paths.extend(summary_paths)
         plt.close(fig_summary)
 
         # Pages grouped by beta, then by scenario
@@ -800,13 +1018,20 @@ def generate_teaching_scenarios_pdf(
             for scenario_name in ['baseline', 'sequence_risk', 'rate_shock']:
                 print(f"    Creating {scenario_name} scenario figure...")
                 config = SCENARIOS[scenario_name]
-                fig_scenario = create_scenario_figure(
+                fig_scenario, axes_scenario = create_scenario_figure(
                     results[scenario_name][beta], config, params
                 )
                 pdf.savefig(fig_scenario, bbox_inches='tight')
+                # Save scenario panels as PNGs
+                print(f"      Saving {scenario_name} panels as PNG...")
+                scenario_paths = save_scenario_panels(
+                    fig_scenario, axes_scenario, scenario_name, beta, png_output_dir
+                )
+                all_png_paths.extend(scenario_paths)
                 plt.close(fig_scenario)
 
-    print(f"Saved to {output_path}")
+    print(f"Saved PDF to {output_path}")
+    print(f"Saved {len(all_png_paths)} PNG panels to {png_output_dir}/")
 
 
 # =============================================================================
