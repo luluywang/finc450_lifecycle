@@ -8,9 +8,9 @@ During verification testing, the following issues were identified in the web vis
 
 ## Issue 1: Summary Tab and Individual Scenario Tabs Show Different Numbers
 
-**Status:** Unresolved - Root cause identified but fix incomplete
+**Status:** Resolved
 
-**Symptom:**
+**Symptom (was):**
 - Summary tab shows: Baseline LDI Default Rate = 2.2%, RoT = 35.8%
 - Baseline individual tab shows: Optimal Strategy = 22% (11/50), RoT = 6% (3/50)
 - The numbers are completely different and show OPPOSITE performance
@@ -20,20 +20,20 @@ The Summary tab and individual scenario tabs were using different simulation sys
 1. Summary uses `runTeachingScenarios()` with 500 simulations
 2. Individual tabs were using `runStrategyComparison()` with 50 simulations
 
-**Partial Fix Applied:**
+**Fix Applied:**
 - Removed dead code (`computeOptimalStrategy`, `computeRuleOfThumbStrategy`, `runStrategyComparison`)
-- Individual tabs now reference `teachingScenarios[scenarioKey]`
+- Individual tabs now reference `teachingScenarios[scenarioKey]` - same data source as Summary
+- Both tabs use `cachedTeachingScenarios` computed in a single `useEffect`
 
-**Remaining Issue:**
-Browser caching may be showing old JavaScript. Hard refresh (Cmd+Shift+R) required to see latest code. If issues persist after hard refresh, clear browser cache completely.
+**Note:** If old numbers appear, hard refresh (Cmd+Shift+R) to clear browser cache.
 
 ---
 
 ## Issue 2: Beta Toggle Buttons Should Not Exist in Scenarios Tab
 
-**Status:** Partially resolved
+**Status:** Resolved
 
-**Symptom:**
+**Symptom (was):**
 Verification found "beta=0 (Bond-like)" and "beta=0.4 (Risky)" toggle buttons in the Teaching Scenarios area.
 
 **Expected Behavior:**
@@ -42,11 +42,9 @@ Verification found "beta=0 (Bond-like)" and "beta=0.4 (Risky)" toggle buttons in
 - No separate beta toggles in the Scenarios tab
 
 **Fix Applied:**
-- Task 8 removed `scenarioBeta` state and the toggle buttons
+- Removed `scenarioBeta` state and the toggle buttons
 - `lifecycleParams` now uses `params.stockBetaHC` directly
-
-**Verification Needed:**
-After hard refresh, confirm no beta toggle buttons appear in the Scenarios tab area.
+- Verified: no `scenarioBeta` references remain in codebase
 
 ---
 
@@ -75,13 +73,18 @@ After hard refresh, confirm no beta toggle buttons appear in the Scenarios tab a
 
 ## Issue 4: Median Return Adjustment
 
-**Status:** Implemented in TypeScript only
+**Status:** Resolved - TypeScript now matches Python
 
 **Description:**
-Added `-0.5 * sigma^2` adjustment to stock returns to ensure median paths represent geometric (not arithmetic) mean returns.
+The `-0.5 * sigma^2` Jensen adjustment has been **removed** from stochastic/Monte Carlo simulations in TypeScript to match Python's `simulate_stock_returns()` which uses arithmetic mean returns.
 
-**Note:**
-The Python code does NOT have this adjustment. For full consistency, consider updating `core/economics.py` as well.
+The adjustment is **kept** only in explicit median path calculations (variables named `medianStockReturn`) for deterministic paths.
+
+**Changes Made:**
+- Removed adjustment from `simulateWithStrategy()` (Monte Carlo engine)
+- Removed adjustment from `simulateLDIPath()` (stochastic simulations)
+- Removed adjustment from `simulateRoTPath()` (stochastic simulations)
+- Kept adjustment in `computeLifecycleMedianPath()` and similar median-specific functions
 
 ---
 

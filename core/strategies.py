@@ -103,13 +103,32 @@ class LDIStrategy:
         # Compute consumption rate if not specified
         if self.consumption_rate is None:
             r = state.econ_params.r_bar
-            expected_stock_return = r + state.econ_params.mu_excess
-            avg_return = (
-                state.target_stock * expected_stock_return +
-                state.target_bond * r +
+            sigma_s = state.econ_params.sigma_s
+            sigma_r = state.econ_params.sigma_r
+            rho = state.econ_params.rho
+            D = state.econ_params.bond_duration
+            mu_bond = state.econ_params.mu_bond
+
+            w_s = state.target_stock
+            w_b = state.target_bond
+
+            # Expected (arithmetic mean) portfolio return - includes bond excess return
+            expected_return = (
+                w_s * (r + state.econ_params.mu_excess) +
+                w_b * (r + mu_bond) +
                 state.target_cash * r
             )
-            consumption_rate = avg_return + state.params.consumption_boost
+
+            # Full portfolio variance with correlation
+            # Bond volatility = duration * rate volatility
+            sigma_b = D * sigma_r
+            # Stock-bond covariance (negative when rho > 0: rising rates hurt bonds)
+            cov_sb = -D * sigma_s * sigma_r * rho
+            portfolio_var = w_s**2 * sigma_s**2 + w_b**2 * sigma_b**2 + 2 * w_s * w_b * cov_sb
+
+            # Median portfolio return = expected - 0.5 * variance (Jensen's correction)
+            median_return = expected_return - 0.5 * portfolio_var
+            consumption_rate = median_return + state.params.consumption_boost
         else:
             consumption_rate = self.consumption_rate
 

@@ -2728,9 +2728,10 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   // and cumulative stock return grows at median (geometric) rate
   const interestRate = Array(totalYears).fill(r);
   // Jensen's correction: geometric mean = arithmetic mean - 0.5 * variance
-  const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
+  // TOTAL return = risk-free rate + excess return - Jensen's adjustment
+  const medianStockTotalReturn = r + params.muStock - 0.5 * params.sigmaS * params.sigmaS;
   const cumulativeStockReturn = Array.from({ length: totalYears }, (_, i) =>
-    Math.pow(1 + medianStockReturn, i)
+    Math.pow(1 + medianStockTotalReturn, i)
   );
 
   return {
@@ -3733,6 +3734,12 @@ export default function LifecycleVisualizer() {
   const [scenarioComputing, setScenarioComputing] = useState(false);
   // Cache teaching scenarios results - kept even when params change
   const [cachedTeachingScenarios, setCachedTeachingScenarios] = useState<ReturnType<typeof runTeachingScenarios> | null>(null);
+  // Track the params that were used for the last simulation (to detect staleness)
+  const [lastSimulationParams, setLastSimulationParams] = useState<{
+    lifecycleParams: LifecycleParams;
+    econParams: EconomicParams;
+    rateShockMagnitude: number;
+  } | null>(null);
 
   // Create LifecycleParams for runTeachingScenarios
   const lifecycleParams = useMemo((): LifecycleParams => ({
@@ -3786,27 +3793,70 @@ export default function LifecycleVisualizer() {
   // Deferred computation: only runs after "Run Simulation" button is clicked
   // Keeps old results when params change (don't auto-clear on param changes)
   // Uses useEffect to trigger computation only when simulationVersion changes
-  // IMPORTANT: Include lifecycleParams, econParams, and rateShockMagnitude in dependencies
-  // to avoid stale closures - when user clicks Run Simulation, we use current params
+  // Store params to use when simulation runs (captured at button click time)
+  const [pendingSimulationParams, setPendingSimulationParams] = useState<{
+    lifecycleParams: LifecycleParams;
+    econParams: EconomicParams;
+    rateShockMagnitude: number;
+  } | null>(null);
+
+  // ONLY trigger on simulationVersion changes - NOT on param changes
+  // This prevents param changes from automatically re-running simulation
   useEffect(() => {
     if (simulationVersion === 0) return; // Don't run until button clicked
     if (currentPage !== 'scenarios') return;
+    if (!pendingSimulationParams) return; // No params captured
 
-    // Compute and cache the results - this is the SINGLE computation for all tabs
-    const results = runTeachingScenarios(lifecycleParams, econParams, {
-      numSims: 500,  // 500 simulations for statistical significance
-      seed: 42,
-      rotSavingsRate: 0.15,
-      rotWithdrawalRate: 0.04,
-      rotTargetDuration: 6.0,
-      rateShockMagnitude: rateShockMagnitude,
-    });
+    // Compute and cache the results using the captured params
+    const results = runTeachingScenarios(
+      pendingSimulationParams.lifecycleParams,
+      pendingSimulationParams.econParams,
+      {
+        numSims: 500,  // 500 simulations for statistical significance
+        seed: 42,
+        rotSavingsRate: 0.15,
+        rotWithdrawalRate: 0.04,
+        rotTargetDuration: 6.0,
+        rateShockMagnitude: pendingSimulationParams.rateShockMagnitude,
+      }
+    );
     setCachedTeachingScenarios(results);
+    // Save the params used for this simulation (to detect staleness later)
+    setLastSimulationParams(pendingSimulationParams);
     setScenarioComputing(false);
-  }, [simulationVersion, lifecycleParams, econParams, rateShockMagnitude, currentPage]);
+  }, [simulationVersion, currentPage, pendingSimulationParams]);
 
   // teachingScenarios is the SINGLE SOURCE OF TRUTH for both Summary and individual tabs
   const teachingScenarios = cachedTeachingScenarios;
+
+  // Check if simulation results are stale (params have changed since last run)
+  const simulationResultsStale = useMemo(() => {
+    if (!lastSimulationParams || !teachingScenarios) return false;
+    // Compare current params to the params used for the last simulation
+    const lp = lastSimulationParams.lifecycleParams;
+    const ep = lastSimulationParams.econParams;
+    return (
+      lp.startAge !== lifecycleParams.startAge ||
+      lp.retirementAge !== lifecycleParams.retirementAge ||
+      lp.endAge !== lifecycleParams.endAge ||
+      lp.initialEarnings !== lifecycleParams.initialEarnings ||
+      lp.earningsGrowth !== lifecycleParams.earningsGrowth ||
+      lp.baseExpenses !== lifecycleParams.baseExpenses ||
+      lp.retirementExpenses !== lifecycleParams.retirementExpenses ||
+      lp.gamma !== lifecycleParams.gamma ||
+      lp.stockBetaHumanCapital !== lifecycleParams.stockBetaHumanCapital ||
+      lp.initialWealth !== lifecycleParams.initialWealth ||
+      ep.rBar !== econParams.rBar ||
+      ep.phi !== econParams.phi ||
+      ep.sigmaR !== econParams.sigmaR ||
+      ep.muExcess !== econParams.muExcess ||
+      ep.bondSharpe !== econParams.bondSharpe ||
+      ep.sigmaS !== econParams.sigmaS ||
+      ep.rho !== econParams.rho ||
+      ep.bondDuration !== econParams.bondDuration ||
+      lastSimulationParams.rateShockMagnitude !== rateShockMagnitude
+    );
+  }, [lastSimulationParams, teachingScenarios, lifecycleParams, econParams, rateShockMagnitude]);
 
   // Prepare chart data
   const chartData = useMemo(() => {
@@ -3875,13 +3925,13 @@ export default function LifecycleVisualizer() {
             label="End Age"
             value={params.endAge}
             onChange={(v) => updateParam('endAge', v)}
-            min={params.retirementAge + 5} max={100} step={1} suffix="" decimals={0}
+            min={params.retirementAge + 5} max={100} step={5} suffix="" decimals={0}
           />
           <StepperInput
             label="Current Wealth"
             value={params.initialWealth}
             onChange={(v) => updateParam('initialWealth', v)}
-            min={0} max={5000} step={10} suffix="$k" decimals={0}
+            min={0} max={5000} step={50} suffix="$k" decimals={0}
           />
           {/* Retirement Summary Box */}
           <div style={{
@@ -3902,7 +3952,7 @@ export default function LifecycleVisualizer() {
             label="Risk-free rate"
             value={params.rBar * 100}
             onChange={(v) => updateParam('rBar', v / 100)}
-            min={0} max={5} step={0.5} suffix="%" decimals={1}
+            min={0} max={5} step={0.25} suffix="%" decimals={2}
           />
           <StepperInput
             label="Stock excess return (μ)"
@@ -3914,19 +3964,19 @@ export default function LifecycleVisualizer() {
             label="Bond Sharpe ratio"
             value={params.bondSharpe}
             onChange={(v) => updateParam('bondSharpe', v)}
-            min={0} max={0.5} step={0.05} suffix="" decimals={2}
+            min={0} max={0.5} step={0.01} suffix="" decimals={2}
           />
           <StepperInput
             label="Stock volatility (σ)"
             value={params.sigmaS * 100}
             onChange={(v) => updateParam('sigmaS', v / 100)}
-            min={10} max={30} step={1} suffix="%" decimals={0}
+            min={10} max={30} step={2} suffix="%" decimals={0}
           />
           <StepperInput
             label="Rate shock vol (σᵣ)"
             value={params.sigmaR * 100}
             onChange={(v) => updateParam('sigmaR', v / 100)}
-            min={0.5} max={3} step={0.1} suffix="%" decimals={1}
+            min={0.5} max={3} step={0.05} suffix="%" decimals={2}
           />
           <StepperInput
             label="Rate/stock corr (ρ)"
@@ -3947,7 +3997,7 @@ export default function LifecycleVisualizer() {
             label="Initial earnings"
             value={params.initialEarnings}
             onChange={(v) => updateParam('initialEarnings', v)}
-            min={50} max={200} step={10} suffix="$k" decimals={0}
+            min={50} max={200} step={25} suffix="$k" decimals={0}
           />
           <StepperInput
             label="Earnings growth"
@@ -3959,7 +4009,7 @@ export default function LifecycleVisualizer() {
             label="Peak earnings age"
             value={params.earningsHumpAge}
             onChange={(v) => updateParam('earningsHumpAge', v)}
-            min={40} max={60} step={1} suffix="" decimals={0}
+            min={40} max={60} step={5} suffix="" decimals={0}
           />
         </ParamGroup>
 
@@ -3968,7 +4018,7 @@ export default function LifecycleVisualizer() {
             label="Working expenses"
             value={params.baseExpenses}
             onChange={(v) => updateParam('baseExpenses', v)}
-            min={30} max={100} step={5} suffix="$k" decimals={0}
+            min={30} max={100} step={10} suffix="$k" decimals={0}
           />
           <StepperInput
             label="Expense growth"
@@ -3980,7 +4030,7 @@ export default function LifecycleVisualizer() {
             label="Retirement expenses"
             value={params.retirementExpenses}
             onChange={(v) => updateParam('retirementExpenses', v)}
-            min={40} max={120} step={5} suffix="$k" decimals={0}
+            min={40} max={120} step={10} suffix="$k" decimals={0}
           />
         </ParamGroup>
 
@@ -3989,13 +4039,13 @@ export default function LifecycleVisualizer() {
             label="Risk aversion (γ)"
             value={params.gamma}
             onChange={(v) => updateParam('gamma', v)}
-            min={1} max={10} step={0.5} suffix="" decimals={1}
+            min={1} max={10} step={1} suffix="" decimals={0}
           />
           <StepperInput
             label="HC stock beta"
             value={params.stockBetaHC}
             onChange={(v) => updateParam('stockBetaHC', v)}
-            min={0} max={0.5} step={0.05} suffix="" decimals={2}
+            min={0} max={0.5} step={0.1} suffix="" decimals={1}
           />
         </ParamGroup>
 
@@ -4392,6 +4442,12 @@ export default function LifecycleVisualizer() {
                 <button
                   onClick={() => {
                     setScenarioComputing(true);
+                    // Capture current params at click time (before async computation)
+                    setPendingSimulationParams({
+                      lifecycleParams,
+                      econParams,
+                      rateShockMagnitude,
+                    });
                     // Use setTimeout to allow UI to update before computation
                     // Increment simulationVersion to trigger useEffect computation
                     setTimeout(() => {
@@ -4553,7 +4609,34 @@ export default function LifecycleVisualizer() {
                 which is the SAME object used by the individual scenario tabs.
                 Single source of truth: cachedTeachingScenarios computed in useEffect above. */}
             {scenarioType === 'summary' && teachingScenarios && (
-              <>
+              <div style={{
+                opacity: simulationResultsStale ? 0.5 : 1,
+                transition: 'opacity 0.3s ease',
+                position: 'relative',
+              }}>
+                {/* Stale results warning banner */}
+                {simulationResultsStale && (
+                  <div style={{
+                    background: '#fff3cd',
+                    border: '1px solid #ffc107',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                  }}>
+                    <span style={{ fontSize: '18px' }}>⚠️</span>
+                    <div>
+                      <div style={{ fontWeight: 'bold', color: '#856404', fontSize: '13px' }}>
+                        Results are stale
+                      </div>
+                      <div style={{ color: '#856404', fontSize: '12px' }}>
+                        Parameters have changed since the last simulation. Click "Run Simulation" to update.
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Description */}
                 <div style={{
                   background: '#e8f8f5',
@@ -4816,7 +4899,7 @@ export default function LifecycleVisualizer() {
                     <li><strong>Terminal wealth varies</strong> - RoT can leave more in good scenarios but nothing in bad ones</li>
                   </ul>
                 </div>
-              </>
+              </div>
             )}
 
             {/* 8-Panel Individual Scenario View - Matching teaching_scenarios.pdf */}
@@ -4983,7 +5066,34 @@ export default function LifecycleVisualizer() {
               }
 
               return (
-              <>
+              <div style={{
+                opacity: simulationResultsStale ? 0.5 : 1,
+                transition: 'opacity 0.3s ease',
+                position: 'relative',
+              }}>
+                {/* Stale results warning banner */}
+                {simulationResultsStale && (
+                  <div style={{
+                    background: '#fff3cd',
+                    border: '1px solid #ffc107',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                  }}>
+                    <span style={{ fontSize: '18px' }}>⚠️</span>
+                    <div>
+                      <div style={{ fontWeight: 'bold', color: '#856404', fontSize: '13px' }}>
+                        Results are stale
+                      </div>
+                      <div style={{ color: '#856404', fontSize: '12px' }}>
+                        Parameters have changed since the last simulation. Click "Run Simulation" to update.
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Responsive 2-column grid layout matching PDF 4x2 structure */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
 
@@ -5226,7 +5336,7 @@ export default function LifecycleVisualizer() {
                     </ul>
                   )}
                 </div>
-              </>
+              </div>
               );
             })()}
           </>
