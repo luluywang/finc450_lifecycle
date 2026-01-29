@@ -422,6 +422,9 @@ interface LifecycleResult {
   // Market conditions tracking
   cumulativeStockReturn: number[];  // Cumulative stock return (1 = starting value)
   interestRate: number[];           // Interest rate path per year
+  // Fixed Income Hedging Metrics
+  netFiPv: number[];      // Net FI PV = bond_holdings + hc_bond - exp_bond
+  dv01: number[];         // Dollar Value of 01bp rate change (per percentage point)
 }
 
 type PageType = 'base' | 'scenarios';
@@ -1741,6 +1744,8 @@ interface PercentileStats {
   interestRates: FieldPercentiles;
   stockReturns: FieldPercentiles;
   cumulativeStockReturns: FieldPercentiles;
+  netFiPv: FieldPercentiles;
+  dv01: FieldPercentiles;
 }
 
 /**
@@ -1802,6 +1807,133 @@ function computeFieldPercentiles(data: number[][]): FieldPercentiles {
     p75: computePercentileArray(data, 75),
     p95: computePercentileArray(data, 95),
   };
+}
+
+/**
+ * Compute netFiPv and dv01 paths from simulation result.
+ *
+ * Net FI PV = Bond Holdings + HC Bond Component - Expense Bond Component
+ * DV01 = (Asset Dollar Duration - Liability Dollar Duration) * 0.01
+ *
+ * @param result - Simulation result with 2D arrays
+ * @param params - Lifecycle parameters
+ * @param econParams - Economic parameters
+ * @returns Object with netFiPv and dv01 2D arrays
+ */
+function computeNetFiPvAndDv01Paths(
+  result: SimulationResult,
+  params: LifecycleParams,
+  econParams: EconomicParams
+): { netFiPv: number[][]; dv01: number[][] } {
+  const financialWealth = result.financialWealth as number[][];
+  const bondWeight = result.bondWeight as number[][];
+  const humanCapital = result.humanCapital as number[][];
+  const interestRates = result.interestRates as number[][];
+
+  const nSims = financialWealth.length;
+  const nPeriods = financialWealth[0].length;
+  const workingYears = params.retirementAge - params.startAge;
+  const rBar = econParams.rBar;
+  const phi = econParams.phi;
+  const bondDuration = econParams.bondDuration;
+  const stockBeta = params.stockBetaHumanCapital;
+
+  // Get base earnings and expenses (deterministic)
+  const legacyParams: Params = {
+    startAge: params.startAge,
+    retirementAge: params.retirementAge,
+    endAge: params.endAge,
+    initialEarnings: params.initialEarnings,
+    earningsGrowth: params.earningsGrowth,
+    earningsHumpAge: params.earningsHumpAge,
+    earningsDecline: params.earningsDecline,
+    baseExpenses: params.baseExpenses,
+    expenseGrowth: params.expenseGrowth,
+    retirementExpenses: params.retirementExpenses,
+    stockBetaHC: params.stockBetaHumanCapital,
+    gamma: params.gamma,
+    initialWealth: params.initialWealth,
+    rBar: econParams.rBar,
+    muStock: econParams.muExcess,
+    bondSharpe: econParams.bondSharpe,
+    sigmaS: econParams.sigmaS,
+    sigmaR: econParams.sigmaR,
+    rho: econParams.rho,
+    bondDuration: econParams.bondDuration,
+    phi: econParams.phi,
+  };
+
+  const earningsProfile = computeEarningsProfile(legacyParams);
+  const expenseProfile = computeExpenseProfile(legacyParams);
+
+  const baseEarnings: number[] = Array(nPeriods).fill(0);
+  const expenses: number[] = Array(nPeriods).fill(0);
+  for (let t = 0; t < workingYears; t++) {
+    baseEarnings[t] = earningsProfile[t];
+    expenses[t] = expenseProfile.working[t];
+  }
+  for (let t = workingYears; t < nPeriods; t++) {
+    expenses[t] = expenseProfile.retirement[t - workingYears];
+  }
+
+  const netFiPvPaths: number[][] = [];
+  const dv01Paths: number[][] = [];
+
+  for (let sim = 0; sim < nSims; sim++) {
+    const netFiPv: number[] = [];
+    const dv01: number[] = [];
+
+    for (let t = 0; t < nPeriods; t++) {
+      const fw = financialWealth[sim][t];
+      const wB = bondWeight[sim][t];
+      const hc = humanCapital[sim][t];
+      const currentRate = interestRates[sim][t];
+      const isWorking = t < workingYears;
+
+      // Compute PV and duration of remaining expenses at current rate
+      const remainingExpenses = expenses.slice(t);
+      const pvExp = computePresentValue(remainingExpenses, currentRate, phi, rBar);
+      const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar);
+
+      // Compute duration of HC at current rate
+      let durationHc = 0;
+      if (isWorking) {
+        const remainingEarnings = baseEarnings.slice(t, workingYears);
+        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar);
+      }
+
+      // Decompose HC into bond-like and other components
+      let hcBond = 0;
+      if (isWorking && hc > 0) {
+        const nonStockHc = hc * (1 - stockBeta);
+        if (bondDuration > 0) {
+          const bondFrac = durationHc / bondDuration;
+          hcBond = nonStockHc * bondFrac;
+        }
+      }
+
+      // Decompose expenses into bond-like component
+      let expBond = 0;
+      if (bondDuration > 0 && pvExp > 0) {
+        const bondFrac = durationExp / bondDuration;
+        expBond = pvExp * bondFrac;
+      }
+
+      // Net FI PV = Bond Holdings + HC Bond - Expense Bond
+      const bondHoldings = wB * fw;
+      netFiPv.push(bondHoldings + hcBond - expBond);
+
+      // DV01 = (Asset Duration - Liability Duration) * 0.01
+      const assetDur = durationHc * hcBond + bondDuration * bondHoldings;
+      const liabDur = durationExp * expBond;
+      dv01.push((assetDur - liabDur) * 0.01);
+    }
+
+    netFiPvPaths.push(netFiPv);
+    dv01Paths.push(dv01);
+  }
+
+  return { netFiPv: netFiPvPaths, dv01: dv01Paths };
 }
 
 /**
@@ -1903,6 +2035,9 @@ function runMonteCarloSimulation(
     return cumulative;
   });
 
+  // Compute Net FI PV and DV01 paths
+  const { netFiPv: netFiPvPaths, dv01: dv01Paths } = computeNetFiPvAndDv01Paths(result, params, econParams);
+
   // Compute percentile statistics
   const percentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(financialWealthPaths),
@@ -1913,6 +2048,8 @@ function runMonteCarloSimulation(
     interestRates: computeFieldPercentiles(interestRatePaths),
     stockReturns: computeFieldPercentiles(stockReturnPaths),
     cumulativeStockReturns: computeFieldPercentiles(cumulativeStockReturnPaths),
+    netFiPv: computeFieldPercentiles(netFiPvPaths),
+    dv01: computeFieldPercentiles(dv01Paths),
   };
 
   // Compute summary statistics
@@ -2056,6 +2193,10 @@ function runMonteCarloStrategyComparison(
     return cumulative;
   });
 
+  // Compute Net FI PV and DV01 paths for both strategies
+  const { netFiPv: ldiNetFiPvPaths, dv01: ldiDv01Paths } = computeNetFiPvAndDv01Paths(ldiResult, params, econParams);
+  const { netFiPv: rotNetFiPvPaths, dv01: rotDv01Paths } = computeNetFiPvAndDv01Paths(rotResult, params, econParams);
+
   // Compute percentile statistics for both
   const ldiPercentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
@@ -2066,6 +2207,8 @@ function runMonteCarloStrategyComparison(
     interestRates: computeFieldPercentiles(ldiResult.interestRates as number[][]),
     stockReturns: computeFieldPercentiles(ldiStockReturns),
     cumulativeStockReturns: computeFieldPercentiles(ldiCumulativeStockReturns),
+    netFiPv: computeFieldPercentiles(ldiNetFiPvPaths),
+    dv01: computeFieldPercentiles(ldiDv01Paths),
   };
 
   const rotPercentiles: PercentileStats = {
@@ -2077,6 +2220,8 @@ function runMonteCarloStrategyComparison(
     interestRates: computeFieldPercentiles(rotResult.interestRates as number[][]),
     stockReturns: computeFieldPercentiles(rotStockReturns),
     cumulativeStockReturns: computeFieldPercentiles(rotCumulativeStockReturns),
+    netFiPv: computeFieldPercentiles(rotNetFiPvPaths),
+    dv01: computeFieldPercentiles(rotDv01Paths),
   };
 
   // Compute summary statistics
@@ -2391,6 +2536,10 @@ function runTeachingScenarios(
       return cumulative;
     });
 
+    // Compute Net FI PV and DV01 paths for both strategies
+    const { netFiPv: ldiNetFiPvPaths, dv01: ldiDv01Paths } = computeNetFiPvAndDv01Paths(ldiResult, params, econParams);
+    const { netFiPv: rotNetFiPvPaths, dv01: rotDv01Paths } = computeNetFiPvAndDv01Paths(rotResult, params, econParams);
+
     // Compute percentiles and summary stats for LDI
     const ldiPercentiles: PercentileStats = {
       financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
@@ -2401,6 +2550,8 @@ function runTeachingScenarios(
       interestRates: computeFieldPercentiles(ldiResult.interestRates as number[][]),
       stockReturns: computeFieldPercentiles(ldiStockReturns),
       cumulativeStockReturns: computeFieldPercentiles(ldiCumulativeStockReturns),
+      netFiPv: computeFieldPercentiles(ldiNetFiPvPaths),
+      dv01: computeFieldPercentiles(ldiDv01Paths),
     };
     const ldiDefaulted = ldiResult.defaulted as boolean[];
     const ldiFinalWealth = ldiResult.finalWealth as number[];
@@ -2415,6 +2566,8 @@ function runTeachingScenarios(
       interestRates: computeFieldPercentiles(rotResult.interestRates as number[][]),
       stockReturns: computeFieldPercentiles(rotStockReturns),
       cumulativeStockReturns: computeFieldPercentiles(rotCumulativeStockReturns),
+      netFiPv: computeFieldPercentiles(rotNetFiPvPaths),
+      dv01: computeFieldPercentiles(rotDv01Paths),
     };
     const rotDefaulted = rotResult.defaulted as boolean[];
     const rotFinalWealth = rotResult.finalWealth as number[];
@@ -2734,6 +2887,23 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     Math.pow(1 + medianStockTotalReturn, i)
   );
 
+  // Fixed Income Hedging Metrics
+  // Net FI PV = Bond Holdings + HC Bond Component - Expense Bond Component
+  const netFiPv = financialWealth.map((fw, t) =>
+    bondWeight[t] * fw + hcBond[t] - expBond[t]
+  );
+
+  // DV01 = (Asset Dollar Duration - Liability Dollar Duration) * 0.01
+  // Asset = duration_hc * hc_bond + bond_duration * bond_holdings
+  // Liability = duration_exp * exp_bond
+  // Units: dollars per percentage point rate change
+  const dv01 = financialWealth.map((fw, t) => {
+    const bondHoldings = bondWeight[t] * fw;
+    const assetDur = durationEarnings[t] * hcBond[t] + params.bondDuration * bondHoldings;
+    const liabDur = durationExpenses[t] * expBond[t];
+    return (assetDur - liabDur) * 0.01;
+  });
+
   return {
     ages,
     earnings,
@@ -2762,6 +2932,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     targetCash,
     cumulativeStockReturn,
     interestRate,
+    netFiPv,
+    dv01,
   };
 }
 
@@ -5065,6 +5237,28 @@ export default function LifecycleVisualizer() {
                 });
               }
 
+              // Panel 9 data: Net FI PV (median path comparison)
+              const netFiPvData = ages.map((age, i) => ({
+                age,
+                ldi_p50: scenario.ldi.percentiles.netFiPv.p50[i],
+                rot_p50: scenario.rot.percentiles.netFiPv.p50[i],
+                ldi_p5: scenario.ldi.percentiles.netFiPv.p5[i],
+                ldi_p95: scenario.ldi.percentiles.netFiPv.p95[i],
+                rot_p5: scenario.rot.percentiles.netFiPv.p5[i],
+                rot_p95: scenario.rot.percentiles.netFiPv.p95[i],
+              }));
+
+              // Panel 10 data: DV01 (interest rate sensitivity)
+              const dv01Data = ages.map((age, i) => ({
+                age,
+                ldi_p50: scenario.ldi.percentiles.dv01.p50[i],
+                rot_p50: scenario.rot.percentiles.dv01.p50[i],
+                ldi_p5: scenario.ldi.percentiles.dv01.p5[i],
+                ldi_p95: scenario.ldi.percentiles.dv01.p95[i],
+                rot_p5: scenario.rot.percentiles.dv01.p5[i],
+                rot_p95: scenario.rot.percentiles.dv01.p95[i],
+              }));
+
               return (
               <div style={{
                 opacity: simulationResultsStale ? 0.5 : 1,
@@ -5295,6 +5489,58 @@ export default function LifecycleVisualizer() {
                           <Bar dataKey="RoT" fill={COLOR_ROT} name="RoT" />
                         </BarChart>
                       </ResponsiveContainer>
+                    </div>
+                  </ChartCard>
+
+                  {/* Panel 9: Net Fixed Income PV */}
+                  <ChartCard title="Panel 9: Net Fixed Income PV ($k)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={netFiPvData}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
+                        <Tooltip formatter={(v: number, name: string) => [`$${Math.round(v)}k`, name]} />
+                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
+                        {/* LDI lines */}
+                        <Line type="monotone" dataKey="ldi_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        <Line type="monotone" dataKey="ldi_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
+                        <Line type="monotone" dataKey="ldi_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
+                        {/* RoT lines */}
+                        <Line type="monotone" dataKey="rot_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
+                        <Line type="monotone" dataKey="rot_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
+                        <Line type="monotone" dataKey="rot_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
+                      Net FI PV = Bond Holdings + HC Bond - Expense Bond. Zero line = perfectly hedged.
+                    </div>
+                  </ChartCard>
+
+                  {/* Panel 10: DV01 (Interest Rate Sensitivity) */}
+                  <ChartCard title="Panel 10: Interest Rate Sensitivity (DV01)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={dv01Data}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}`} />
+                        <Tooltip formatter={(v: number, name: string) => [`$${Math.round(v)}`, name]} />
+                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
+                        {/* LDI lines */}
+                        <Line type="monotone" dataKey="ldi_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        <Line type="monotone" dataKey="ldi_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
+                        <Line type="monotone" dataKey="ldi_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
+                        {/* RoT lines */}
+                        <Line type="monotone" dataKey="rot_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
+                        <Line type="monotone" dataKey="rot_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
+                        <Line type="monotone" dataKey="rot_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
+                      DV01 = Dollar value change per 1pp rate move. Zero = duration matched.
                     </div>
                   </ChartCard>
 
