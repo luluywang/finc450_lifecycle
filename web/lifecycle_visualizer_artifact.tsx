@@ -1923,10 +1923,10 @@ function computeNetFiPvAndDv01Paths(
       const bondHoldings = wB * fw;
       netFiPv.push(bondHoldings + hcBond - expBond);
 
-      // DV01 = (Asset Duration - Liability Duration) * 0.01
-      const assetDur = durationHc * hcBond + bondDuration * bondHoldings;
-      const liabDur = durationExp * expBond;
-      dv01.push((assetDur - liabDur) * 0.01);
+      // DV01 = bondDuration * Net_FI_PV * 0.01
+      // All components (hcBond, bondHoldings, expBond) are already in bond-equivalent dollars
+      // so we use bondDuration uniformly (avoids double-counting duration)
+      dv01.push(bondDuration * (hcBond + bondHoldings - expBond) * 0.01);
     }
 
     netFiPvPaths.push(netFiPv);
