@@ -3,8 +3,15 @@ PDF Report Page Creation Functions.
 
 This module contains functions that create multi-panel figure pages for PDF reports.
 These are higher-level layouts that combine multiple charts into a single page.
+
+Single Code Path Architecture:
+- Each panel has a dedicated _plot_to_ax_* function that draws to any axes
+- create_base_case_page() uses these functions for both PDF grid and PNG export
+- PNG export creates a standalone figure, calls the plotting function, saves, closes
+- This ensures PDF and PNG outputs are always identical
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List, TYPE_CHECKING
@@ -12,7 +19,7 @@ from typing import Tuple, List, TYPE_CHECKING
 if TYPE_CHECKING:
     from core import LifecycleParams, EconomicParams, LifecycleResult, MonteCarloResult
 
-from .helpers import apply_wealth_log_scale
+from .helpers import apply_wealth_log_scale, save_panel_as_png
 
 
 # Standard color palette for charts (colorblind-friendly: blue-orange palette)
@@ -34,48 +41,14 @@ REPORT_COLORS = {
 }
 
 
-def create_base_case_page(
-    result: 'LifecycleResult',
-    params: 'LifecycleParams',
-    econ_params: 'EconomicParams' = None,
-    figsize: Tuple[int, int] = (20, 24),
-    use_years: bool = True
-) -> plt.Figure:
-    """
-    Create Page 1: BASE CASE (Deterministic Median Path).
+# =============================================================================
+# Panel Plotting Functions (Single Source of Truth)
+# =============================================================================
+# Each function draws a specific panel to any axes object.
+# These are used by both the PDF multi-panel grid and PNG individual export.
 
-    Layout with 4 sections, 10 charts total:
-    - Section 1: Assumptions (2 charts: Earnings, Expenses)
-    - Section 2: Forward-Looking Values (2 charts: Present Values, Durations)
-    - Section 3: Wealth (4 charts: HC vs FW, HC Decomposition, Expense Decomposition, Net HC minus Expenses)
-    - Section 4: Choices (2 charts: Consumption Path, Portfolio Allocation)
-
-    Args:
-        result: LifecycleResult from compute_lifecycle_median_path
-        params: LifecycleParams
-        econ_params: EconomicParams (optional)
-        figsize: Figure size tuple
-        use_years: If True, x-axis shows years from career start
-
-    Returns:
-        matplotlib Figure
-    """
-    fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(5, 2, hspace=0.35, wspace=0.25)
-
-    if use_years:
-        x = np.arange(len(result.ages))
-        xlabel = 'Years from Career Start'
-        retirement_x = params.retirement_age - params.start_age
-    else:
-        x = result.ages
-        xlabel = 'Age'
-        retirement_x = params.retirement_age
-
-    COLORS = REPORT_COLORS
-
-    # ===== Section 1: Assumptions =====
-    ax = fig.add_subplot(gs[0, 0])
+def _plot_to_ax_income_expenses(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot income and expenses panel."""
     ax.plot(x, result.earnings, color=COLORS['earnings'], linewidth=2, label='Earnings')
     ax.plot(x, result.expenses, color=COLORS['expenses'], linewidth=2, label='Expenses')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5, label='Retirement')
@@ -85,7 +58,9 @@ def create_base_case_page(
     ax.set_title('Income & Expenses ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    ax = fig.add_subplot(gs[0, 1])
+
+def _plot_to_ax_cash_flow(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot cash flow panel."""
     savings = result.earnings - result.expenses
     ax.fill_between(x, 0, savings, where=savings >= 0, alpha=0.7, color=COLORS['earnings'], label='Savings')
     ax.fill_between(x, 0, savings, where=savings < 0, alpha=0.7, color=COLORS['expenses'], label='Drawdown')
@@ -96,8 +71,9 @@ def create_base_case_page(
     ax.set_title('Cash Flow: Earnings - Expenses ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # ===== Section 2: Forward-Looking Values =====
-    ax = fig.add_subplot(gs[1, 0])
+
+def _plot_to_ax_present_values(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot present values panel."""
     ax.plot(x, result.pv_earnings, color=COLORS['earnings'], linewidth=2, label='PV Earnings')
     ax.plot(x, result.pv_expenses, color=COLORS['expenses'], linewidth=2, label='PV Expenses')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
@@ -106,7 +82,9 @@ def create_base_case_page(
     ax.set_title('Present Values ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    ax = fig.add_subplot(gs[1, 1])
+
+def _plot_to_ax_durations(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot durations panel."""
     ax.plot(x, result.duration_earnings, color=COLORS['earnings'], linewidth=2, label='Duration (Earnings)')
     ax.plot(x, result.duration_expenses, color=COLORS['expenses'], linewidth=2, label='Duration (Expenses)')
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
@@ -115,8 +93,9 @@ def create_base_case_page(
     ax.set_title('Durations (years)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # ===== Section 3: Wealth =====
-    ax = fig.add_subplot(gs[2, 0])
+
+def _plot_to_ax_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot human capital vs financial wealth panel."""
     ax.fill_between(x, 0, result.financial_wealth, alpha=0.7, color=COLORS['fw'], label='Financial Wealth')
     ax.fill_between(x, result.financial_wealth, result.financial_wealth + result.human_capital,
                    alpha=0.7, color=COLORS['hc'], label='Human Capital')
@@ -126,7 +105,9 @@ def create_base_case_page(
     ax.set_title('Human Capital vs Financial Wealth ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    ax = fig.add_subplot(gs[2, 1])
+
+def _plot_to_ax_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot human capital decomposition panel."""
     ax.plot(x, result.hc_cash_component, color=COLORS['cash'], linewidth=2, label='HC Cash')
     ax.plot(x, result.hc_bond_component, color=COLORS['bond'], linewidth=2, label='HC Bond')
     ax.plot(x, result.hc_stock_component, color=COLORS['stock'], linewidth=2, label='HC Stock')
@@ -138,7 +119,9 @@ def create_base_case_page(
     ax.set_title('Human Capital Decomposition ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    ax = fig.add_subplot(gs[3, 0])
+
+def _plot_to_ax_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot expense liability decomposition panel."""
     ax.plot(x, result.exp_cash_component, color=COLORS['cash'], linewidth=2, label='Expense Cash')
     ax.plot(x, result.exp_bond_component, color=COLORS['bond'], linewidth=2, label='Expense Bond')
     ax.plot(x, result.pv_expenses, color='black', linewidth=1.5, linestyle='--', label='Total Expenses')
@@ -149,7 +132,9 @@ def create_base_case_page(
     ax.set_title('Expense Liability Decomposition ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    ax = fig.add_subplot(gs[3, 1])
+
+def _plot_to_ax_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot net HC minus expenses panel."""
     net_stock = result.hc_stock_component
     net_bond = result.hc_bond_component - result.exp_bond_component
     net_cash = result.hc_cash_component - result.exp_cash_component
@@ -166,8 +151,9 @@ def create_base_case_page(
     ax.set_title('Net HC minus Expenses ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    # ===== Section 4: Choices =====
-    ax = fig.add_subplot(gs[4, 0])
+
+def _plot_to_ax_consumption_path(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot consumption path panel."""
     ax.fill_between(x, 0, result.subsistence_consumption, alpha=0.7, color=COLORS['subsistence'], label='Subsistence')
     ax.fill_between(x, result.subsistence_consumption, result.total_consumption,
                    alpha=0.7, color=COLORS['variable'], label='Variable')
@@ -177,7 +163,9 @@ def create_base_case_page(
     ax.set_title('Consumption Path ($k)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
 
-    ax = fig.add_subplot(gs[4, 1])
+
+def _plot_to_ax_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot portfolio allocation panel."""
     stock_pct = result.stock_weight_no_short * 100
     bond_pct = result.bond_weight_no_short * 100
     cash_pct = result.cash_weight_no_short * 100
@@ -192,6 +180,202 @@ def create_base_case_page(
     ax.set_ylim(0, 100)
     ax.set_title('Portfolio Allocation (%)', fontweight='bold')
     ax.legend(loc='upper right', fontsize=8)
+
+
+def _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement_x):
+    """Plot net PV of fixed income exposures.
+
+    Net FI PV = Bond_Holdings + HC_Bond_Component - Expense_Bond_Component
+    - Zero = perfectly hedged (bond assets match bond liabilities)
+    - Positive = net long bonds (overhedged)
+    - Negative = net short bonds (underhedged)
+    """
+    bond_holdings = result.bond_weight_no_short * result.financial_wealth
+    net_fi_pv = bond_holdings + result.hc_bond_component - result.exp_bond_component
+
+    ax.plot(x, net_fi_pv, color=COLORS['bond'], linewidth=2)
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Net Fixed Income PV (Bonds + HC - Expenses)', fontweight='bold')
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x):
+    """Plot DV01 - dollar gain in net worth per 1pp rate drop.
+
+    DV01 = (Asset_Dollar_Duration - Liability_Dollar_Duration) × 0.01
+
+    Since hc_bond_component and exp_bond_component are already "bond-equivalent"
+    amounts (i.e., they incorporate duration scaling as dur_X / bond_duration),
+    we use bond_duration uniformly for all components:
+
+    DV01 = bond_duration × (hc_bond_component + bond_holdings - exp_bond_component) × 0.01
+
+    - Zero = perfectly hedged (no rate sensitivity)
+    - Positive = net long duration (gains when rates drop)
+    - Negative = net short duration (loses when rates drop)
+    """
+    bond_holdings = result.bond_weight_no_short * result.financial_wealth
+    # All components are in bond-equivalent dollars, so use bond_duration uniformly
+    total_bond_equiv_assets = result.hc_bond_component + bond_holdings
+    total_bond_equiv_liabs = result.exp_bond_component
+    dv01 = econ_params.bond_duration * (total_bond_equiv_assets - total_bond_equiv_liabs) * 0.01
+
+    ax.plot(x, dv01, color=COLORS['bond'], linewidth=2)
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s) per pp')
+    ax.set_title('Interest Rate Sensitivity ($ gain per 1pp rate drop)', fontweight='bold')
+    ax.grid(True, alpha=0.3)
+
+
+def _export_panel_as_png(plot_fn, panel_name, output_dir, figsize=(10, 6)):
+    """Create a standalone figure, call plot function, save as PNG, close figure.
+
+    Args:
+        plot_fn: Callable that takes an axes and draws to it
+        panel_name: Filename (without extension)
+        output_dir: Output directory
+        figsize: Figure size
+
+    Returns:
+        Path to saved file
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    plot_fn(ax)
+    path = save_panel_as_png(fig, panel_name, output_dir)
+    plt.close(fig)
+    return path
+
+
+def create_base_case_page(
+    result: 'LifecycleResult',
+    params: 'LifecycleParams',
+    econ_params: 'EconomicParams' = None,
+    figsize: Tuple[int, int] = (20, 28),
+    use_years: bool = True,
+    export_png: bool = False,
+    png_output_dir: str = "output/teaching_panels",
+    beta_str: str = "",
+    is_first_beta: bool = False,
+) -> plt.Figure:
+    """
+    Create Page 1: BASE CASE (Deterministic Median Path).
+
+    Layout with 6 sections, 12 charts total (6x2 grid):
+    - Row 0: Assumptions (Income & Expenses, Cash Flow)
+    - Row 1: Forward-Looking Values (Present Values, Durations)
+    - Row 2: Wealth Part 1 (HC vs FW, HC Decomposition)
+    - Row 3: Wealth Part 2 (Expense Decomposition, Net HC minus Expenses)
+    - Row 4: Choices (Consumption Path, Portfolio Allocation)
+    - Row 5: Fixed Income Hedging (Net FI PV, DV01)
+
+    Single Code Path: This function handles both PDF grid and PNG export.
+    Each panel is drawn using a dedicated _plot_to_ax_* function.
+
+    Args:
+        result: LifecycleResult from compute_lifecycle_median_path
+        params: LifecycleParams
+        econ_params: EconomicParams (required for DV01 calculation)
+        figsize: Figure size tuple (default taller for 6 rows)
+        use_years: If True, x-axis shows years from career start
+        export_png: If True, also export individual panels as PNG files
+        png_output_dir: Directory for PNG files
+        beta_str: Beta identifier for PNG filenames (e.g., "beta0p4")
+        is_first_beta: If True, export beta-invariant panels (only for first beta)
+
+    Returns:
+        matplotlib Figure
+    """
+    # Create the multi-panel figure with 6x2 grid
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(6, 2, hspace=0.35, wspace=0.25)
+
+    # Compute x-axis values
+    if use_years:
+        x = np.arange(len(result.ages))
+        xlabel = 'Years from Career Start'
+        retirement_x = params.retirement_age - params.start_age
+    else:
+        x = result.ages
+        xlabel = 'Age'
+        retirement_x = params.retirement_age
+
+    COLORS = REPORT_COLORS
+
+    # Ensure PNG output directory exists
+    if export_png:
+        os.makedirs(png_output_dir, exist_ok=True)
+
+    # =========================================================================
+    # Define all panels with their grid position, plot function, and PNG config
+    # =========================================================================
+    # Format: (row, col, plot_fn, png_name_suffix, is_beta_invariant, needs_econ_params)
+    panels = [
+        # Row 0: Assumptions
+        (0, 0, lambda ax: _plot_to_ax_income_expenses(ax, x, result, COLORS, xlabel, retirement_x),
+         "income_expenses", True, False),
+        (0, 1, lambda ax: _plot_to_ax_cash_flow(ax, x, result, COLORS, xlabel, retirement_x),
+         "cash_flow", True, False),
+
+        # Row 1: Forward-Looking Values
+        (1, 0, lambda ax: _plot_to_ax_present_values(ax, x, result, COLORS, xlabel, retirement_x),
+         "present_values", True, False),
+        (1, 1, lambda ax: _plot_to_ax_durations(ax, x, result, COLORS, xlabel, retirement_x),
+         "durations", True, False),
+
+        # Row 2: Wealth Part 1
+        (2, 0, lambda ax: _plot_to_ax_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x),
+         "hc_vs_fw", False, False),
+        (2, 1, lambda ax: _plot_to_ax_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x),
+         "hc_decomposition", False, False),
+
+        # Row 3: Wealth Part 2
+        (3, 0, lambda ax: _plot_to_ax_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x),
+         "expense_decomposition", True, False),
+        (3, 1, lambda ax: _plot_to_ax_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x),
+         "net_hc_minus_expenses", False, False),
+
+        # Row 4: Choices
+        (4, 0, lambda ax: _plot_to_ax_consumption_path(ax, x, result, COLORS, xlabel, retirement_x),
+         "consumption_path", False, False),
+        (4, 1, lambda ax: _plot_to_ax_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x),
+         "portfolio_allocation", False, False),
+
+        # Row 5: Fixed Income Hedging (NEW)
+        (5, 0, lambda ax: _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
+         "net_fi_pv", False, True),
+        (5, 1, lambda ax: _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
+         "dv01", False, True),
+    ]
+
+    # =========================================================================
+    # Draw each panel to the grid AND optionally export as PNG
+    # =========================================================================
+    for row, col, plot_fn, png_suffix, is_beta_invariant, needs_econ in panels:
+        # Draw to the multi-panel grid
+        ax = fig.add_subplot(gs[row, col])
+        plot_fn(ax)
+
+        # Export as PNG if requested
+        if export_png:
+            # Determine whether to export this panel
+            should_export = False
+            if is_beta_invariant:
+                # Beta-invariant panels: only export on first beta (no beta suffix)
+                if is_first_beta:
+                    should_export = True
+                    panel_name = f"lifecycle_{png_suffix}"
+            else:
+                # Beta-dependent panels: always export with beta suffix
+                should_export = True
+                panel_name = f"lifecycle_{beta_str}_{png_suffix}"
+
+            if should_export:
+                _export_panel_as_png(plot_fn, panel_name, png_output_dir)
 
     fig.suptitle('PAGE 1: BASE CASE (Deterministic Median Path)', fontsize=16, fontweight='bold', y=0.995)
     return fig

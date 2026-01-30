@@ -36,6 +36,7 @@ from core import (
     generate_correlated_shocks,
     compute_pv_consumption,
     compute_pv_consumption_realized,
+    compute_lifecycle_median_path,
     LDIStrategy,
     RuleOfThumbStrategy,
 )
@@ -259,6 +260,57 @@ def _plot_pv_consumption(
     ax.legend(loc='upper right', fontsize=9)
 
 
+def _plot_net_fi_pv(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot net PV of fixed income exposures (LDI vs RoT).
+
+    Net FI PV = Bond holdings + HC_bond_component - Exp_bond_component
+
+    This shows how well each strategy hedges fixed income exposures:
+    - LDI should stay close to zero (well hedged)
+    - RoT may deviate significantly (unhedged)
+    """
+    x = np.arange(len(result.ages))
+    plot_fan_chart(ax, result.ldi_net_fi_pv_paths, x, color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_net_fi_pv_paths, x, color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('Net FI PV ($ 000s)')
+    ax.set_title('Net Fixed Income PV (Bonds + HC - Expense Liability)')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_dv01(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot DV01 - dollar gain in net worth per 1pp rate drop.
+
+    DV01 = Dollar_Duration × 0.01
+
+    Interpretation:
+    - Zero = perfectly hedged (no rate sensitivity)
+    - Positive = net long duration (gains when rates drop)
+    - Negative = net short duration (loses when rates drop)
+    """
+    x = np.arange(len(result.ages))
+    plot_fan_chart(ax, result.ldi_dv01_paths, x, color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_dv01_paths, x, color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('$ (000s) per pp')
+    ax.set_title('Interest Rate Sensitivity ($ gain per 1pp rate drop)')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
 # =============================================================================
 # PNG Export Functions
 # =============================================================================
@@ -270,7 +322,7 @@ def _save_scenario_panels(
     output_dir: str = "output/teaching_panels",
 ) -> List[str]:
     """
-    Save all 8 panels from a scenario as individual PNGs.
+    Save all 10 panels from a scenario as individual PNGs.
 
     Creates standalone figures for each panel, avoiding the suptitle bleed
     issue that occurs when extracting axes from composite figures.
@@ -297,6 +349,8 @@ def _save_scenario_panels(
         ('bond_allocation', lambda ax: _plot_bond_allocation(ax, result, retirement_x)),
         ('terminal_wealth', lambda ax: _plot_terminal_wealth(ax, result)),
         ('pv_consumption', lambda ax: _plot_pv_consumption(ax, result)),
+        ('net_fi_pv', lambda ax: _plot_net_fi_pv(ax, result, retirement_x)),
+        ('dv01', lambda ax: _plot_dv01(ax, result, retirement_x)),
     ]
 
     for name_suffix, plot_fn in panels:
@@ -517,6 +571,16 @@ class ScenarioResult:
     stock_return_paths: np.ndarray
     cumulative_stock_returns: np.ndarray
 
+    # Fixed income hedging analysis
+    ldi_net_fi_pv_paths: np.ndarray       # Net FI PV: bonds + HC_bond - exp_bond
+    rot_net_fi_pv_paths: np.ndarray
+    ldi_dv01_paths: np.ndarray            # DV01: $ change per 1bp rate increase
+    rot_dv01_paths: np.ndarray
+
+    # Median path decomposition (for reference)
+    hc_bond_component: np.ndarray         # (n_periods,) bond-like portion of HC
+    exp_bond_component: np.ndarray        # (n_periods,) bond-like portion of expenses
+
 
 def run_teaching_scenario(
     scenario: str,
@@ -590,6 +654,42 @@ def run_teaching_scenario(
     # Compute cumulative stock returns
     cumulative_stock_returns = np.cumprod(1 + ldi_result.stock_returns, axis=1)
 
+    # =========================================================================
+    # Compute fixed income hedging metrics
+    # =========================================================================
+    # Get median path for HC/expense decomposition (deterministic at r_bar)
+    # This is valid because with use_dynamic_revaluation=False (default),
+    # decomposition uses r_bar (constant), so it's the same across all MC paths
+    median_result = compute_lifecycle_median_path(params_with_beta, econ_params)
+
+    # Extract decomposition from median path - shape: (n_periods,)
+    hc_bond = median_result.hc_bond_component
+    exp_bond = median_result.exp_bond_component
+    dur_hc = median_result.duration_earnings
+    dur_exp = median_result.duration_expenses
+    bond_duration = econ_params.bond_duration  # Scalar (default 20.0)
+
+    # Compute bond holdings for each strategy - shape: (n_sims, n_periods)
+    ldi_bond_holdings = ldi_result.bond_weight * ldi_result.financial_wealth
+    rot_bond_holdings = rot_result.bond_weight * rot_result.financial_wealth
+
+    # Net Fixed Income PV = Bond holdings + HC_bond - Exp_bond
+    # (using broadcasting: hc_bond[np.newaxis, :] broadcasts (n_periods,) to (1, n_periods))
+    ldi_net_fi_pv = ldi_bond_holdings + hc_bond[np.newaxis, :] - exp_bond[np.newaxis, :]
+    rot_net_fi_pv = rot_bond_holdings + hc_bond[np.newaxis, :] - exp_bond[np.newaxis, :]
+
+    # DV01 = Dollar_Duration × 0.01 ($ gain per 1pp rate DROP)
+    # Dollar Duration = Asset $ Duration - Liability $ Duration
+    # Asset $ Dur = dur_hc * hc_bond + bond_duration * bond_holdings
+    # Liab $ Dur = dur_exp * exp_bond
+    ldi_asset_dur = dur_hc[np.newaxis, :] * hc_bond[np.newaxis, :] + bond_duration * ldi_bond_holdings
+    ldi_liab_dur = dur_exp[np.newaxis, :] * exp_bond[np.newaxis, :]
+    ldi_dv01 = (ldi_asset_dur - ldi_liab_dur) * 0.01
+
+    rot_asset_dur = dur_hc[np.newaxis, :] * hc_bond[np.newaxis, :] + bond_duration * rot_bond_holdings
+    rot_liab_dur = dur_exp[np.newaxis, :] * exp_bond[np.newaxis, :]
+    rot_dv01 = (rot_asset_dur - rot_liab_dur) * 0.01
+
     return ScenarioResult(
         scenario=scenario,
         stock_beta=stock_beta,
@@ -614,6 +714,13 @@ def run_teaching_scenario(
         rate_paths=ldi_result.interest_rates,
         stock_return_paths=ldi_result.stock_returns,
         cumulative_stock_returns=cumulative_stock_returns,
+        # Fixed income hedging analysis
+        ldi_net_fi_pv_paths=ldi_net_fi_pv,
+        rot_net_fi_pv_paths=rot_net_fi_pv,
+        ldi_dv01_paths=ldi_dv01,
+        rot_dv01_paths=rot_dv01,
+        hc_bond_component=hc_bond,
+        exp_bond_component=exp_bond,
     )
 
 
@@ -729,10 +836,10 @@ def create_scenario_figure(
     result: ScenarioResult,
     config: ScenarioConfig,
     params: LifecycleParams,
-    figsize: Tuple[int, int] = (14, 16),
+    figsize: Tuple[int, int] = (14, 18),
 ) -> Tuple[plt.Figure, np.ndarray]:
     """
-    Create a 4x2 panel figure for a single scenario.
+    Create a 5x2 panel figure for a single scenario.
 
     Panels:
     - (0,0): Cumulative Stock Returns fan chart
@@ -743,8 +850,10 @@ def create_scenario_figure(
     - (2,1): Bond Allocation fan charts (LDI vs RoT overlaid)
     - (3,0): Terminal Wealth distribution
     - (3,1): PV Consumption distribution (Realized Rates)
+    - (4,0): Net Fixed Income PV (hedging analysis)
+    - (4,1): Dollar Duration Gap (hedging analysis)
     """
-    fig, axes = plt.subplots(4, 2, figsize=figsize)
+    fig, axes = plt.subplots(5, 2, figsize=figsize)
     beta_label = f"(β={result.stock_beta})" if result.stock_beta > 0 else "(β=0, Bond-like HC)"
     fig.suptitle(f'{config.title} {beta_label}\n{config.description}', fontsize=14, fontweight='bold')
 
@@ -759,6 +868,8 @@ def create_scenario_figure(
     _plot_bond_allocation(axes[2, 1], result, retirement_x)
     _plot_terminal_wealth(axes[3, 0], result)
     _plot_pv_consumption(axes[3, 1], result)
+    _plot_net_fi_pv(axes[4, 0], result, retirement_x)
+    _plot_dv01(axes[4, 1], result, retirement_x)
 
     plt.tight_layout()
     return fig, axes

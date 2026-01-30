@@ -46,226 +46,7 @@ from visualization import (
     create_volatility_comparison_figure,
     # PNG export utility
     save_panel_as_png,
-    REPORT_COLORS,
 )
-
-
-def _save_base_case_panels(
-    result,
-    params: LifecycleParams,
-    beta: float,
-    use_years: bool = True,
-    output_dir: str = "output/teaching_panels",
-    is_first_beta: bool = False,
-) -> list:
-    """
-    Create and save individual PNG panels for a base case page.
-
-    This extracts each of the 10 panels from the base case layout and saves them
-    individually at 300 DPI for PowerPoint integration.
-
-    Beta-invariant panels (income_expenses, cash_flow, present_values, durations,
-    expense_decomposition) are only saved once when is_first_beta=True.
-
-    Args:
-        result: LifecycleResult from compute_lifecycle_median_path
-        params: LifecycleParams
-        beta: Stock beta value for naming
-        use_years: If True, x-axis shows years from career start
-        output_dir: Directory to save PNG files
-        is_first_beta: If True, save beta-invariant panels (call with True for first beta only)
-
-    Returns:
-        List of saved file paths
-    """
-    saved_paths = []
-    COLORS = REPORT_COLORS
-
-    # Compute x-axis values
-    if use_years:
-        x = np.arange(len(result.ages))
-        xlabel = 'Years from Career Start'
-        retirement_x = params.retirement_age - params.start_age
-    else:
-        x = result.ages
-        xlabel = 'Age'
-        retirement_x = params.retirement_age
-
-    beta_str = f"beta{beta}".replace(".", "p")
-
-    # Beta-invariant panels: only save once (no beta suffix)
-    beta_invariant_panels = [
-        ("income_expenses", lambda ax: _plot_income_expenses(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("cash_flow", lambda ax: _plot_cash_flow(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("present_values", lambda ax: _plot_present_values(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("durations", lambda ax: _plot_durations(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("expense_decomposition", lambda ax: _plot_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x)),
-    ]
-
-    # Beta-dependent panels: save for each beta value
-    beta_dependent_panels = [
-        ("hc_vs_fw", lambda ax: _plot_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("hc_decomposition", lambda ax: _plot_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("net_hc_minus_expenses", lambda ax: _plot_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("consumption_path", lambda ax: _plot_consumption_path(ax, x, result, COLORS, xlabel, retirement_x)),
-        ("portfolio_allocation", lambda ax: _plot_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x)),
-    ]
-
-    # Save beta-invariant panels only on first call
-    if is_first_beta:
-        for name_suffix, plot_fn in beta_invariant_panels:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            plot_fn(ax)
-            panel_name = f"lifecycle_{name_suffix}"
-            path = save_panel_as_png(fig, panel_name, output_dir)
-            saved_paths.append(path)
-            plt.close(fig)
-
-    # Always save beta-dependent panels with beta suffix
-    for name_suffix, plot_fn in beta_dependent_panels:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        plot_fn(ax)
-        panel_name = f"lifecycle_{beta_str}_{name_suffix}"
-        path = save_panel_as_png(fig, panel_name, output_dir)
-        saved_paths.append(path)
-        plt.close(fig)
-
-    return saved_paths
-
-
-def _plot_income_expenses(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot income and expenses panel."""
-    ax.plot(x, result.earnings, color=COLORS['earnings'], linewidth=2, label='Earnings')
-    ax.plot(x, result.expenses, color=COLORS['expenses'], linewidth=2, label='Expenses')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5, label='Retirement')
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Income & Expenses ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_cash_flow(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot cash flow panel."""
-    savings = result.earnings - result.expenses
-    ax.fill_between(x, 0, savings, where=savings >= 0, alpha=0.7, color=COLORS['earnings'], label='Savings')
-    ax.fill_between(x, 0, savings, where=savings < 0, alpha=0.7, color=COLORS['expenses'], label='Drawdown')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Cash Flow: Earnings - Expenses ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_present_values(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot present values panel."""
-    ax.plot(x, result.pv_earnings, color=COLORS['earnings'], linewidth=2, label='PV Earnings')
-    ax.plot(x, result.pv_expenses, color=COLORS['expenses'], linewidth=2, label='PV Expenses')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Present Values ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_durations(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot durations panel."""
-    ax.plot(x, result.duration_earnings, color=COLORS['earnings'], linewidth=2, label='Duration (Earnings)')
-    ax.plot(x, result.duration_expenses, color=COLORS['expenses'], linewidth=2, label='Duration (Expenses)')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('Years')
-    ax.set_title('Durations (years)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot human capital vs financial wealth panel."""
-    ax.fill_between(x, 0, result.financial_wealth, alpha=0.7, color=COLORS['fw'], label='Financial Wealth')
-    ax.fill_between(x, result.financial_wealth, result.financial_wealth + result.human_capital,
-                   alpha=0.7, color=COLORS['hc'], label='Human Capital')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Human Capital vs Financial Wealth ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot human capital decomposition panel."""
-    ax.plot(x, result.hc_cash_component, color=COLORS['cash'], linewidth=2, label='HC Cash')
-    ax.plot(x, result.hc_bond_component, color=COLORS['bond'], linewidth=2, label='HC Bond')
-    ax.plot(x, result.hc_stock_component, color=COLORS['stock'], linewidth=2, label='HC Stock')
-    ax.plot(x, result.human_capital, color='black', linewidth=1.5, linestyle='--', label='Total HC')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Human Capital Decomposition ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot expense liability decomposition panel."""
-    ax.plot(x, result.exp_cash_component, color=COLORS['cash'], linewidth=2, label='Expense Cash')
-    ax.plot(x, result.exp_bond_component, color=COLORS['bond'], linewidth=2, label='Expense Bond')
-    ax.plot(x, result.pv_expenses, color='black', linewidth=1.5, linestyle='--', label='Total Expenses')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Expense Liability Decomposition ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot net HC minus expenses panel."""
-    net_stock = result.hc_stock_component
-    net_bond = result.hc_bond_component - result.exp_bond_component
-    net_cash = result.hc_cash_component - result.exp_cash_component
-    net_total = net_stock + net_bond + net_cash
-
-    ax.plot(x, net_cash, color=COLORS['cash'], linewidth=2, label='Net Cash')
-    ax.plot(x, net_bond, color=COLORS['bond'], linewidth=2, label='Net Bond')
-    ax.plot(x, net_stock, color=COLORS['stock'], linewidth=2, label='Net Stock')
-    ax.plot(x, net_total, color='black', linewidth=1.5, linestyle='--', label='Net Total')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Net HC minus Expenses ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_consumption_path(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot consumption path panel."""
-    ax.fill_between(x, 0, result.subsistence_consumption, alpha=0.7, color=COLORS['subsistence'], label='Subsistence')
-    ax.fill_between(x, result.subsistence_consumption, result.total_consumption,
-                   alpha=0.7, color=COLORS['variable'], label='Variable')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('$ (000s)')
-    ax.set_title('Consumption Path ($k)')
-    ax.legend(loc='upper right', fontsize=8)
-
-
-def _plot_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x):
-    """Plot portfolio allocation panel."""
-    stock_pct = result.stock_weight_no_short * 100
-    bond_pct = result.bond_weight_no_short * 100
-    cash_pct = result.cash_weight_no_short * 100
-
-    ax.fill_between(x, 0, cash_pct, alpha=0.7, color=COLORS['cash'], label='Cash')
-    ax.fill_between(x, cash_pct, cash_pct + bond_pct, alpha=0.7, color=COLORS['bond'], label='Bonds')
-    ax.fill_between(x, cash_pct + bond_pct, cash_pct + bond_pct + stock_pct,
-                   alpha=0.7, color=COLORS['stock'], label='Stocks')
-    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('Allocation (%)')
-    ax.set_ylim(0, 100)
-    ax.set_title('Portfolio Allocation (%)')
-    ax.legend(loc='upper right', fontsize=8)
 
 
 def _save_beta_comparison_panels(
@@ -557,28 +338,25 @@ def generate_lifecycle_pdf(
             )
             result = compute_lifecycle_median_path(beta_params, econ_params)
 
+            # Convert beta to filename string (e.g., 0.4 -> "beta0p4")
+            beta_str = f"beta{beta}".replace(".", "p")
+
+            # Single code path: create_base_case_page handles both PDF and PNG export
             fig = create_base_case_page(
                 result=result,
                 params=beta_params,
                 econ_params=econ_params,
-                figsize=(20, 24),
-                use_years=use_years
+                figsize=(20, 28),  # Taller for 6x2 grid
+                use_years=use_years,
+                export_png=export_png,
+                png_output_dir=png_output_dir,
+                beta_str=beta_str,
+                is_first_beta=(page_num == 1),
             )
             fig.suptitle(f'PAGE {page_num}: DETERMINISTIC MEDIAN PATH (Beta = {beta})',
                         fontsize=16, fontweight='bold', y=0.995)
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
-
-            # Export individual panels as PNG
-            if export_png:
-                _save_base_case_panels(
-                    result=result,
-                    params=beta_params,
-                    beta=beta,
-                    use_years=use_years,
-                    output_dir=png_output_dir,
-                    is_first_beta=(page_num == 1),
-                )
 
         # ====================================================================
         # PAGE 4: BETA COMPARISON
