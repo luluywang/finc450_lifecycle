@@ -67,15 +67,15 @@ def compute_rebalancing_data(result, econ_params):
     stock_purchase = fw[1:] * w_s[1:] - stock_after
     bond_purchase = fw[1:] * w_b[1:] - bond_after
 
-    # Pure rebalancing component (all periods)
-    rebal_stock = fw * w_s * (port_ret - stock_ret)
-    rebal_bond = fw * w_b * (port_ret - bond_ret)
+    # Normalize by portfolio value at time of trade (% of portfolio)
+    stock_purchase_pct = stock_purchase / fw[1:]
+    bond_purchase_pct = bond_purchase / fw[1:]
 
     return {
         'stock_purchase': stock_purchase,
         'bond_purchase': bond_purchase,
-        'rebal_stock': rebal_stock,
-        'rebal_bond': rebal_bond,
+        'stock_purchase_pct': stock_purchase_pct,
+        'bond_purchase_pct': bond_purchase_pct,
         'stock_ret': stock_ret,
         'bond_ret': bond_ret,
         'port_ret': port_ret,
@@ -158,28 +158,28 @@ def generate_rebalancing_demo(seed=15, output_path=None):
     ax2.set_xlabel("Age")
     _shade_drawdowns(ax2, ages, growth_bond, bond_color)
 
-    # Panel 3: Dollar stock purchases
+    # Panel 3: Stock purchases as % of portfolio
     ax3 = axes[1, 0]
-    sp = data['stock_purchase']
+    sp = data['stock_purchase_pct'] * 100  # convert to percentage
     colors_s = [buy_color if v >= 0 else sell_color for v in sp]
     ax3.bar(purchase_ages, sp, color=colors_s, alpha=0.85, width=0.8)
     ax3.axhline(y=0, color='gray', linewidth=0.8, alpha=0.5)
-    ax3.set_title("Dollar Stock Purchases by Period", fontsize=13,
+    ax3.set_title("Stock Purchases (% of portfolio)", fontsize=13,
                    fontweight='bold')
-    ax3.set_ylabel("$ Purchased ($K)")
+    ax3.set_ylabel("Purchase (% of portfolio)")
     ax3.set_xlabel("Age")
     # Shade drawdown periods to visually connect to cumulative return above
     _shade_drawdowns(ax3, ages, growth_stock, stock_color)
 
-    # Panel 4: Dollar bond purchases
+    # Panel 4: Bond purchases as % of portfolio
     ax4 = axes[1, 1]
-    bp = data['bond_purchase']
+    bp = data['bond_purchase_pct'] * 100
     colors_b = [buy_color if v >= 0 else sell_color for v in bp]
     ax4.bar(purchase_ages, bp, color=colors_b, alpha=0.85, width=0.8)
     ax4.axhline(y=0, color='gray', linewidth=0.8, alpha=0.5)
-    ax4.set_title("Dollar Bond Purchases by Period", fontsize=13,
+    ax4.set_title("Bond Purchases (% of portfolio)", fontsize=13,
                    fontweight='bold')
-    ax4.set_ylabel("$ Purchased ($K)")
+    ax4.set_ylabel("Purchase (% of portfolio)")
     ax4.set_xlabel("Age")
     _shade_drawdowns(ax4, ages, growth_bond, bond_color)
 
