@@ -201,7 +201,7 @@ def generate_rebalancing_demo(seed=15, output_path=None):
 
     # Save
     if output_path is None:
-        output_path = "output/figures/rebalancing_demo.png"
+        output_path = "output/teaching_panels/rebalancing_demo.png"
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Saved rebalancing demo to {output_path}")
