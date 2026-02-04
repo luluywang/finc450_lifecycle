@@ -16,6 +16,7 @@ FIGURE_DPI = 150
 LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_report.pdf
 DASHBOARD_PDF = $(OUTPUT_DIR)/strategy_comparison.pdf
 TEACHING_PDF = $(OUTPUT_DIR)/teaching_scenarios.pdf
+SINGLE_DRAW_PDF = $(OUTPUT_DIR)/single_draw.pdf
 
 # Source files that trigger rebuilds
 CORE_SOURCES = core/params.py core/economics.py core/simulation.py core/strategies.py
@@ -23,7 +24,7 @@ VIZ_SOURCES = visualization/styles.py visualization/helpers.py \
               visualization/lifecycle_plots.py visualization/monte_carlo_plots.py \
               visualization/comparison_plots.py visualization/sensitivity_plots.py
 
-.PHONY: all figures pdfs teaching clean help
+.PHONY: all figures pdfs teaching single-draw clean help
 
 # Default target: build everything
 all: figures pdfs
@@ -58,6 +59,13 @@ $(TEACHING_PDF): compare_teaching_scenarios.py $(CORE_SOURCES) $(VIZ_SOURCES) | 
 	@echo "Generating $(TEACHING_PDF)..."
 	$(PYTHON) compare_teaching_scenarios.py -o $@
 
+# Single random draw analysis
+single-draw: $(SINGLE_DRAW_PDF)
+
+$(SINGLE_DRAW_PDF): generate_single_draw.py generate_rebalancing_demo.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
+	@echo "Generating $(SINGLE_DRAW_PDF)..."
+	$(PYTHON) generate_single_draw.py -o $@
+
 # Create output directories
 $(OUTPUT_DIR):
 	mkdir -p $(OUTPUT_DIR)
@@ -82,12 +90,14 @@ help:
 	@echo "  all      - Generate all figures and PDFs (default)"
 	@echo "  figures  - Generate lecture figures ($(FIGURES_DIR)/)"
 	@echo "  pdfs     - Generate PDF reports"
-	@echo "  teaching - Generate teaching scenarios PDF only"
-	@echo "  clean    - Remove all generated files"
-	@echo "  help     - Show this help message"
+	@echo "  teaching    - Generate teaching scenarios PDF only"
+	@echo "  single-draw - Generate single random draw analysis"
+	@echo "  clean       - Remove all generated files"
+	@echo "  help        - Show this help message"
 	@echo ""
 	@echo "Output files:"
 	@echo "  $(LIFECYCLE_PDF)"
 	@echo "  $(DASHBOARD_PDF)"
 	@echo "  $(TEACHING_PDF)"
+	@echo "  $(SINGLE_DRAW_PDF)"
 	@echo "  $(FIGURES_DIR)/*.png"
