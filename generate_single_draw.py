@@ -262,11 +262,12 @@ def create_balance_sheet_page(result, params, econ, export_png=True):
     w_c = result['cash_weight_paths'][0]
     sub_cons = result['subsistence_consumption_paths'][0]
     var_cons = result['variable_consumption_paths'][0]
-    hc_stock = result['hc_stock_component']
-    hc_bond = result['hc_bond_component']
-    hc_cash = result['hc_cash_component']
-    exp_bond = result['exp_bond_component']
-    exp_cash = result['exp_cash_component']
+    # Use dynamic decomposition paths (vary with interest rates)
+    hc_stock = result['hc_stock_paths'][0]
+    hc_bond = result['hc_bond_paths'][0]
+    hc_cash = result['hc_cash_paths'][0]
+    exp_bond = result['exp_bond_paths'][0]
+    exp_cash = result['exp_cash_paths'][0]
 
     fig = plt.figure(figsize=(14, 18))
     gs = gridspec.GridSpec(4, 2, hspace=0.35, wspace=0.3,
@@ -420,11 +421,12 @@ def _redraw_bs_panel(ax, name, ages, ret_age, result, params, econ):
     w_c = result['cash_weight_paths'][0]
     sub_cons = result['subsistence_consumption_paths'][0]
     var_cons = result['variable_consumption_paths'][0]
-    hc_stock = result['hc_stock_component']
-    hc_bond = result['hc_bond_component']
-    hc_cash = result['hc_cash_component']
-    exp_bond = result['exp_bond_component']
-    exp_cash = result['exp_cash_component']
+    # Use dynamic decomposition paths (vary with interest rates)
+    hc_stock = result['hc_stock_paths'][0]
+    hc_bond = result['hc_bond_paths'][0]
+    hc_cash = result['hc_cash_paths'][0]
+    exp_bond = result['exp_bond_paths'][0]
+    exp_cash = result['exp_cash_paths'][0]
     total_cons = result['total_consumption_paths'][0]
 
     if name == 'bs_earnings_expenses':
@@ -564,8 +566,9 @@ def create_rebalancing_page(result, sim_result, rebal_data, params, econ,
     w_b_path = result['bond_weight_paths'][0]
     w_c_path = result['cash_weight_paths'][0]
     fi_holdings = (w_b_path + w_c_path) * fw
-    net_fi_pv = fi_holdings + result['hc_bond_component'] + result['hc_cash_component'] \
-                - result['exp_bond_component'] - result['exp_cash_component']
+    # Use dynamic decomposition paths (vary with interest rates)
+    net_fi_pv = fi_holdings + result['hc_bond_paths'][0] + result['hc_cash_paths'][0] \
+                - result['exp_bond_paths'][0] - result['exp_cash_paths'][0]
     ax.plot(ages, net_fi_pv, color=COLORS['bond'], linewidth=2.5)
     ax.axhline(y=0, color='gray', linewidth=0.8, alpha=0.5)
     ax.set_title("Net Fixed Income Position", fontsize=13, fontweight='bold')
@@ -691,8 +694,9 @@ def _export_rebal_panels(result, sim_result, rebal_data, params, econ, seed, pan
             w_b_path = result['bond_weight_paths'][0]
             w_c_path = result['cash_weight_paths'][0]
             fi_holdings = (w_b_path + w_c_path) * fw
-            net_fi_pv = fi_holdings + result['hc_bond_component'] + result['hc_cash_component'] \
-                        - result['exp_bond_component'] - result['exp_cash_component']
+            # Use dynamic decomposition paths (vary with interest rates)
+            net_fi_pv = fi_holdings + result['hc_bond_paths'][0] + result['hc_cash_paths'][0] \
+                        - result['exp_bond_paths'][0] - result['exp_cash_paths'][0]
             pax.plot(ages, net_fi_pv, color=COLORS['bond'], linewidth=2.5)
             pax.axhline(y=0, color='gray', linewidth=0.8, alpha=0.5)
             pax.set_title("Net Fixed Income Position", fontsize=13, fontweight='bold')

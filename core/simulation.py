@@ -746,6 +746,13 @@ def simulate_paths(
     target_fin_bonds_paths = np.zeros((n_sims, total_years))
     target_fin_cash_paths = np.zeros((n_sims, total_years))
 
+    # Dynamic decomposition paths (filled when use_dynamic_revaluation=True)
+    hc_stock_paths = np.zeros((n_sims, total_years))
+    hc_bond_paths = np.zeros((n_sims, total_years))
+    hc_cash_paths = np.zeros((n_sims, total_years))
+    exp_bond_paths = np.zeros((n_sims, total_years))
+    exp_cash_paths = np.zeros((n_sims, total_years))
+
     default_flags = np.zeros(n_sims, dtype=bool)
     default_ages = np.full(n_sims, np.nan)
 
@@ -860,6 +867,13 @@ def simulate_paths(
                 hc_bond_t = hc_bond_component[t]
                 hc_cash_t = hc_cash_component[t]
 
+            # Store decomposition values in paths
+            hc_stock_paths[sim, t] = hc_stock_t
+            hc_bond_paths[sim, t] = hc_bond_t
+            hc_cash_paths[sim, t] = hc_cash_t
+            exp_bond_paths[sim, t] = exp_bond_t
+            exp_cash_paths[sim, t] = exp_cash_t
+
             target_fin_stock = target_stock * total_wealth - hc_stock_t
             target_fin_bond = target_bond * total_wealth - hc_bond_t + exp_bond_t
             target_fin_cash = target_cash * total_wealth - hc_cash_t + exp_cash_t
@@ -889,10 +903,10 @@ def simulate_paths(
                 savings = current_earnings - total_cons
                 financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
 
-    # Compute total holdings
-    total_stocks_paths = stock_weight_paths * financial_wealth_paths + hc_stock_component
-    total_bonds_paths = bond_weight_paths * financial_wealth_paths + hc_bond_component
-    total_cash_paths = cash_weight_paths * financial_wealth_paths + hc_cash_component
+    # Compute total holdings (use dynamic decomposition paths)
+    total_stocks_paths = stock_weight_paths * financial_wealth_paths + hc_stock_paths
+    total_bonds_paths = bond_weight_paths * financial_wealth_paths + hc_bond_paths
+    total_cash_paths = cash_weight_paths * financial_wealth_paths + hc_cash_paths
 
     return {
         # Core paths
@@ -938,6 +952,12 @@ def simulate_paths(
         'hc_cash_component': hc_cash_component,
         'exp_bond_component': exp_bond_component,
         'exp_cash_component': exp_cash_component,
+        # Dynamic decomposition paths (per-sim, per-time)
+        'hc_stock_paths': hc_stock_paths,
+        'hc_bond_paths': hc_bond_paths,
+        'hc_cash_paths': hc_cash_paths,
+        'exp_bond_paths': exp_bond_paths,
+        'exp_cash_paths': exp_cash_paths,
         # Targets
         'target_stock': target_stock,
         'target_bond': target_bond,
