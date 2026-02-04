@@ -1,9 +1,10 @@
 """
 Generate portfolio rebalancing demo figure for FINC450.
 
-Shows a single stochastic draw to illustrate how rebalancing works:
-- Top row: Cumulative returns on stocks and bonds (log scale, growth of $1)
-- Bottom row: Dollar purchases of stocks and bonds each period
+Shows a single stochastic draw zoomed into the biggest drawdown episodes
+for stocks and bonds. Each column shows:
+- Top: Cumulative return (growth of $1) with the drawdown shaded
+- Bottom: Purchases as % of portfolio during the same window
 
 Key teaching point: you buy assets when they go down and sell when they go up.
 The "buy low, sell high" discipline is automatic with target-weight rebalancing.
@@ -15,6 +16,7 @@ Usage:
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from pathlib import Path
 
 from core import (
@@ -33,14 +35,8 @@ def compute_rebalancing_data(result, econ_params):
     """
     Compute dollar purchases/sales and rebalancing components.
 
-    Returns both raw dollar purchases (including savings/spending flows)
-    and the pure rebalancing component.
-
     Raw dollar purchase at period t+1:
         purchase = fw[t+1] * w[t+1] - fw[t] * w[t] * (1 + asset_ret[t])
-
-    Pure rebalancing component (holding total wealth and weights fixed):
-        rebal = fw[t] * w[t] * (portfolio_return[t] - asset_return[t])
     """
     fw = result.financial_wealth
     w_s = result.stock_weight
@@ -82,25 +78,31 @@ def compute_rebalancing_data(result, econ_params):
     }
 
 
-def _shade_drawdowns(ax, ages, cum_values, color, alpha=0.12):
-    """Shade periods where cumulative return is declining (drawdowns)."""
-    in_dd = False
-    start = None
-    for i in range(1, len(ages)):
-        if cum_values[i] < cum_values[i - 1]:
-            if not in_dd:
-                start = ages[i - 1]
-                in_dd = True
-        else:
-            if in_dd:
-                ax.axvspan(start, ages[i - 1], color=color, alpha=alpha)
-                in_dd = False
-    if in_dd:
-        ax.axvspan(start, ages[-1], color=color, alpha=alpha)
+def _find_biggest_drawdown(cum_values):
+    """
+    Find the biggest peak-to-trough drawdown.
+
+    Returns (peak_idx, trough_idx, drawdown_pct).
+    """
+    running_max = np.maximum.accumulate(cum_values)
+    drawdowns = (cum_values - running_max) / running_max
+
+    trough_idx = np.argmin(drawdowns)
+    peak_idx = np.argmax(cum_values[:trough_idx + 1])
+
+    dd_pct = drawdowns[trough_idx]
+    return peak_idx, trough_idx, dd_pct
+
+
+def _drawdown_window(ages, peak_idx, trough_idx, pad_before=3, pad_after=3):
+    """Return a slice of ages around the drawdown with padding."""
+    start = max(0, peak_idx - pad_before)
+    end = min(len(ages) - 1, trough_idx + pad_after)
+    return start, end
 
 
 def generate_rebalancing_demo(seed=15, output_path=None):
-    """Generate the 4-panel rebalancing demo figure."""
+    """Generate the 4-panel rebalancing demo with biggest drawdowns highlighted."""
     params = LifecycleParams()
     econ = EconomicParams()
 
@@ -124,6 +126,10 @@ def generate_rebalancing_demo(seed=15, output_path=None):
     ages = result.ages
     purchase_ages = ages[1:]
 
+    # Find biggest drawdowns
+    s_peak, s_trough, s_dd = _find_biggest_drawdown(growth_stock)
+    b_peak, b_trough, b_dd = _find_biggest_drawdown(growth_bond)
+
     # --- Create 4-panel figure (share x-axis within columns) ---
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
     axes[1, 0].sharex(axes[0, 0])
@@ -146,7 +152,11 @@ def generate_rebalancing_demo(seed=15, output_path=None):
                    fontweight='bold')
     ax1.set_ylabel("Growth of $1 (log scale)")
     ax1.set_xlabel("Age")
-    _shade_drawdowns(ax1, ages, growth_stock, stock_color)
+    # Shade only the biggest drawdown
+    ax1.axvspan(ages[s_peak], ages[s_trough], color=stock_color, alpha=0.12)
+    ax1.annotate(f'{s_dd:.0%}', xy=(ages[(s_peak + s_trough) // 2], growth_stock[s_trough]),
+                 fontsize=12, fontweight='bold', color=stock_color, ha='center',
+                 va='top', xytext=(0, -8), textcoords='offset points')
 
     # Panel 2: Cumulative bond return (log scale)
     ax2 = axes[0, 1]
@@ -156,20 +166,22 @@ def generate_rebalancing_demo(seed=15, output_path=None):
                    fontweight='bold')
     ax2.set_ylabel("Growth of $1 (log scale)")
     ax2.set_xlabel("Age")
-    _shade_drawdowns(ax2, ages, growth_bond, bond_color)
+    ax2.axvspan(ages[b_peak], ages[b_trough], color=bond_color, alpha=0.12)
+    ax2.annotate(f'{b_dd:.0%}', xy=(ages[(b_peak + b_trough) // 2], growth_bond[b_trough]),
+                 fontsize=12, fontweight='bold', color=bond_color, ha='center',
+                 va='top', xytext=(0, -8), textcoords='offset points')
 
     # Panel 3: Stock purchases as % of portfolio
     ax3 = axes[1, 0]
-    sp = data['stock_purchase_pct'] * 100  # convert to percentage
+    sp = data['stock_purchase_pct'] * 100
     colors_s = [buy_color if v >= 0 else sell_color for v in sp]
     ax3.bar(purchase_ages, sp, color=colors_s, alpha=0.85, width=0.8)
     ax3.axhline(y=0, color='gray', linewidth=0.8, alpha=0.5)
+    ax3.axvspan(ages[s_peak], ages[s_trough], color=stock_color, alpha=0.08)
     ax3.set_title("Stock Purchases (% of portfolio)", fontsize=13,
                    fontweight='bold')
     ax3.set_ylabel("Purchase (% of portfolio)")
     ax3.set_xlabel("Age")
-    # Shade drawdown periods to visually connect to cumulative return above
-    _shade_drawdowns(ax3, ages, growth_stock, stock_color)
 
     # Panel 4: Bond purchases as % of portfolio
     ax4 = axes[1, 1]
@@ -177,11 +189,11 @@ def generate_rebalancing_demo(seed=15, output_path=None):
     colors_b = [buy_color if v >= 0 else sell_color for v in bp]
     ax4.bar(purchase_ages, bp, color=colors_b, alpha=0.85, width=0.8)
     ax4.axhline(y=0, color='gray', linewidth=0.8, alpha=0.5)
+    ax4.axvspan(ages[b_peak], ages[b_trough], color=bond_color, alpha=0.08)
     ax4.set_title("Bond Purchases (% of portfolio)", fontsize=13,
                    fontweight='bold')
     ax4.set_ylabel("Purchase (% of portfolio)")
     ax4.set_xlabel("Age")
-    _shade_drawdowns(ax4, ages, growth_bond, bond_color)
 
     # Add retirement lines to all panels
     ret_age = params.retirement_age
@@ -192,7 +204,7 @@ def generate_rebalancing_demo(seed=15, output_path=None):
     fig.text(
         0.5, 0.005,
         "Teal = buying  |  Orange = selling  |  "
-        "Shaded bands = drawdown periods  |  "
+        "Shaded band = biggest drawdown  |  "
         "Dashed line = retirement (age 65)",
         ha='center', fontsize=10, style='italic', color='gray',
     )
