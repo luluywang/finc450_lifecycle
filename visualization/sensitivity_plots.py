@@ -53,8 +53,6 @@ def create_beta_comparison_figure(
             gamma=base_params.gamma,
             target_stock_allocation=base_params.target_stock_allocation,
             target_bond_allocation=base_params.target_bond_allocation,
-            risk_free_rate=base_params.risk_free_rate,
-            equity_premium=base_params.equity_premium,
             initial_wealth=base_params.initial_wealth,
         )
         results[beta] = compute_lifecycle_median_path(params, econ_params)

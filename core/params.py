@@ -8,7 +8,6 @@ investment system, consolidated from various modules into a single source of tru
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, TYPE_CHECKING, Protocol, runtime_checkable
-from enum import Enum
 
 if TYPE_CHECKING:
     from .simulation import LifecycleResult
@@ -43,20 +42,6 @@ class EconomicParams:
     def mu_bond(self) -> float:
         """Bond excess return = Sharpe * volatility, where vol = duration * sigma_r."""
         return self.bond_sharpe * self.bond_duration * self.sigma_r
-
-
-@dataclass
-class BondParams:
-    """Parameters for bond instruments (maturity in years)."""
-    D_mm: float = 0.25         # Money market maturity (approximately 3 months)
-    D_lb: float = 15.0         # Long bond maturity (15-year zero)
-
-
-@dataclass
-class RandomWalkParams:
-    """Parameters for random walk interest rate model."""
-    sigma_r: float = 0.012     # Rate shock volatility
-    drift: float = 0.0         # Expected rate change per period (0 = pure random walk)
 
 
 # =============================================================================
@@ -99,10 +84,6 @@ class LifecycleParams:
     # Portfolio constraint parameters
     allow_leverage: bool = False     # Allow shorting and leverage in portfolio
 
-    # Economic parameters (consistent with EconomicParams for DGP)
-    risk_free_rate: float = 0.02     # Long-run real risk-free rate
-    equity_premium: float = 0.04     # Equity risk premium
-
     # Initial financial wealth (can be negative for student loans)
     initial_wealth: float = 100      # Starting financial wealth ($100k, negative allowed)
 
@@ -112,55 +93,6 @@ class MonteCarloParams:
     """Parameters for Monte Carlo simulation."""
     n_simulations: int = 1000    # Number of simulation paths
     random_seed: int = 42        # Random seed for reproducibility
-
-
-# =============================================================================
-# Simulation Enums and Parameters (from retirement_simulation)
-# =============================================================================
-
-class BondStrategy(Enum):
-    """Bond allocation strategy."""
-    MONEY_MARKET = "mm"        # All bonds in money market
-    DURATION_MATCH = "dm"      # Duration-matched to liabilities
-
-
-class ConsumptionRule(Enum):
-    """Consumption rule."""
-    FIXED = "fixed"            # Fixed annual consumption
-    VARIABLE = "variable"      # Percentage of wealth
-
-
-@dataclass
-class Strategy:
-    """Definition of a retirement strategy."""
-    name: str
-    bond_strategy: BondStrategy
-    consumption_rule: ConsumptionRule
-
-    def __str__(self):
-        bond_str = "MM" if self.bond_strategy == BondStrategy.MONEY_MARKET else "DurMatch"
-        cons_str = "Fixed" if self.consumption_rule == ConsumptionRule.FIXED else "Variable"
-        return f"{bond_str} + {cons_str}"
-
-
-# Four strategies to compare
-STRATEGIES = [
-    Strategy("MM + Fixed", BondStrategy.MONEY_MARKET, ConsumptionRule.FIXED),
-    Strategy("DurMatch + Fixed", BondStrategy.DURATION_MATCH, ConsumptionRule.FIXED),
-    Strategy("MM + Variable", BondStrategy.MONEY_MARKET, ConsumptionRule.VARIABLE),
-    Strategy("DurMatch + Variable", BondStrategy.DURATION_MATCH, ConsumptionRule.VARIABLE),
-]
-
-
-@dataclass
-class SimulationParams:
-    """Parameters for the retirement simulation."""
-    initial_wealth: float = 2_500_000
-    annual_consumption: float = 100_000
-    horizon: int = 30          # Years in retirement
-    stock_weight: float = 0.40 # Fixed stock allocation
-    n_simulations: int = 10_000
-    random_seed: int = 42
 
 
 # =============================================================================
@@ -259,30 +191,6 @@ class MonteCarloResult:
     target_stock: float
     target_bond: float
     target_cash: float
-
-
-@dataclass
-class RuleOfThumbResult:
-    """
-    DEPRECATED: Use SimulationResult with strategy_name='RuleOfThumb' instead.
-
-    Results from rule-of-thumb strategy simulation.
-    """
-    ages: np.ndarray
-    financial_wealth: np.ndarray
-    earnings: np.ndarray
-    total_consumption: np.ndarray
-    retirement_consumption_fixed: float  # 4% of retirement wealth
-    stock_weight: np.ndarray
-    bond_weight: np.ndarray
-    cash_weight: np.ndarray
-    defaulted: bool
-    default_age: Optional[int]
-    savings_rate: float  # 0.15
-    withdrawal_rate: float  # 0.04
-    target_duration: float = 6.0  # Target FI duration
-    subsistence_consumption: np.ndarray = None
-    variable_consumption: np.ndarray = None
 
 
 @dataclass
@@ -426,9 +334,9 @@ class StrategyComparison:
 @dataclass
 class ScenarioResult:
     """
-    DEPRECATED: Use SimulationResult with description field instead.
-
     Results from a teaching scenario simulation.
+
+    Used by core/scenarios.py for backward compatibility with teaching demos.
     """
     name: str
     description: str
