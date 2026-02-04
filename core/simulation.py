@@ -701,20 +701,9 @@ def simulate_paths(
     r = econ_params.r_bar
     phi = econ_params.phi
 
-    # Use DRY helper functions for PV and decomposition calculations
+    # Use DRY helper functions for PV calculations (needed for return values)
     pv_earnings_static, pv_expenses_static, duration_earnings, duration_expenses = compute_static_pvs(
         base_earnings, expenses, working_years, total_years, r, phi
-    )
-
-    # Compute HC decomposition (static, based on r_bar)
-    hc_stock_component, hc_bond_component, hc_cash_component = decompose_hc_to_components(
-        pv_earnings_static, duration_earnings, params.stock_beta_human_capital,
-        econ_params.bond_duration, total_years
-    )
-
-    # Expense decomposition
-    exp_bond_component, exp_cash_component = decompose_expenses_to_components(
-        pv_expenses_static, duration_expenses, econ_params.bond_duration, total_years
     )
 
     # Consumption rate based on expected returns
@@ -828,44 +817,35 @@ def simulate_paths(
 
             # Compute portfolio weights
             # Target financial holdings = target total - HC component + expense component
-            # When using dynamic revaluation, recalculate hedge components at current rate
-            if use_dynamic_revaluation:
-                # Recalculate expense hedge components at current rate
-                remaining_expenses = expenses[t:]
-                duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
-                if econ_params.bond_duration > 0 and pv_exp > 0:
-                    exp_bond_frac = duration_exp_t / econ_params.bond_duration
-                    exp_bond_t = pv_exp * exp_bond_frac
-                    exp_cash_t = pv_exp * (1.0 - exp_bond_frac)
-                else:
-                    exp_bond_t = 0.0
-                    exp_cash_t = pv_exp
-
-                # Recalculate HC hedge components at current rate (if working)
-                if is_working and hc > 0:
-                    remaining_base = base_earnings[t:working_years]
-                    remaining_earnings = remaining_base * wage_multiplier
-                    duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
-                    hc_stock_t = hc * params.stock_beta_human_capital
-                    non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
-                    if econ_params.bond_duration > 0:
-                        hc_bond_frac = duration_hc_t / econ_params.bond_duration
-                        hc_bond_t = non_stock_hc_t * hc_bond_frac
-                        hc_cash_t = non_stock_hc_t * (1.0 - hc_bond_frac)
-                    else:
-                        hc_bond_t = 0.0
-                        hc_cash_t = non_stock_hc_t
-                else:
-                    hc_stock_t = 0.0
-                    hc_bond_t = 0.0
-                    hc_cash_t = 0.0
+            # Always compute decomposition at current_rate (dynamic or r_bar depending on flag)
+            remaining_expenses = expenses[t:]
+            duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
+            if econ_params.bond_duration > 0 and pv_exp > 0:
+                exp_bond_frac = duration_exp_t / econ_params.bond_duration
+                exp_bond_t = pv_exp * exp_bond_frac
+                exp_cash_t = pv_exp * (1.0 - exp_bond_frac)
             else:
-                # Use static (pre-computed at r_bar) hedge components
-                exp_bond_t = exp_bond_component[t]
-                exp_cash_t = exp_cash_component[t]
-                hc_stock_t = hc_stock_component[t]
-                hc_bond_t = hc_bond_component[t]
-                hc_cash_t = hc_cash_component[t]
+                exp_bond_t = 0.0
+                exp_cash_t = pv_exp
+
+            # HC decomposition at current rate (if working)
+            if is_working and hc > 0:
+                remaining_base = base_earnings[t:working_years]
+                remaining_earnings = remaining_base * wage_multiplier
+                duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
+                hc_stock_t = hc * params.stock_beta_human_capital
+                non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
+                if econ_params.bond_duration > 0:
+                    hc_bond_frac = duration_hc_t / econ_params.bond_duration
+                    hc_bond_t = non_stock_hc_t * hc_bond_frac
+                    hc_cash_t = non_stock_hc_t * (1.0 - hc_bond_frac)
+                else:
+                    hc_bond_t = 0.0
+                    hc_cash_t = non_stock_hc_t
+            else:
+                hc_stock_t = 0.0
+                hc_bond_t = 0.0
+                hc_cash_t = 0.0
 
             # Store decomposition values in paths
             hc_stock_paths[sim, t] = hc_stock_t
@@ -939,7 +919,7 @@ def simulate_paths(
         # Default tracking
         'default_flags': default_flags,
         'default_ages': default_ages,
-        # Reference arrays (static)
+        # Reference arrays
         'base_earnings': base_earnings,
         'actual_earnings_paths': actual_earnings_paths,
         'expenses': expenses,
@@ -947,17 +927,18 @@ def simulate_paths(
         'pv_expenses_static': pv_expenses_static,
         'duration_earnings': duration_earnings,
         'duration_expenses': duration_expenses,
-        'hc_stock_component': hc_stock_component,
-        'hc_bond_component': hc_bond_component,
-        'hc_cash_component': hc_cash_component,
-        'exp_bond_component': exp_bond_component,
-        'exp_cash_component': exp_cash_component,
-        # Dynamic decomposition paths (per-sim, per-time)
+        # Decomposition paths (per-sim, per-time) - always computed dynamically at current_rate
         'hc_stock_paths': hc_stock_paths,
         'hc_bond_paths': hc_bond_paths,
         'hc_cash_paths': hc_cash_paths,
         'exp_bond_paths': exp_bond_paths,
         'exp_cash_paths': exp_cash_paths,
+        # Backward-compatible 1D arrays (first simulation's decomposition)
+        'hc_stock_component': hc_stock_paths[0],
+        'hc_bond_component': hc_bond_paths[0],
+        'hc_cash_component': hc_cash_paths[0],
+        'exp_bond_component': exp_bond_paths[0],
+        'exp_cash_component': exp_cash_paths[0],
         # Targets
         'target_stock': target_stock,
         'target_bond': target_bond,
