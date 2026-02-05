@@ -86,8 +86,6 @@ def _save_beta_comparison_panels(
             gamma=base_params.gamma,
             target_stock_allocation=base_params.target_stock_allocation,
             target_bond_allocation=base_params.target_bond_allocation,
-            risk_free_rate=base_params.risk_free_rate,
-            equity_premium=base_params.equity_premium,
             initial_wealth=base_params.initial_wealth,
         )
         results[beta] = compute_lifecycle_median_path(params, econ_params)
@@ -331,8 +329,6 @@ def generate_lifecycle_pdf(
                 gamma=params.gamma,
                 target_stock_allocation=params.target_stock_allocation,
                 target_bond_allocation=params.target_bond_allocation,
-                risk_free_rate=params.risk_free_rate,
-                equity_premium=params.equity_premium,
                 initial_wealth=params.initial_wealth,
                 consumption_boost=params.consumption_boost,
             )
@@ -414,8 +410,6 @@ def generate_lifecycle_pdf(
             gamma=params.gamma,
             target_stock_allocation=params.target_stock_allocation,
             target_bond_allocation=params.target_bond_allocation,
-            risk_free_rate=params.risk_free_rate,
-            equity_premium=params.equity_premium,
             initial_wealth=params.initial_wealth,
             consumption_boost=params.consumption_boost,
         )
@@ -727,8 +721,6 @@ def main(
         consumption_share=consumption_share,
         consumption_boost=consumption_boost,
         initial_wealth=initial_wealth,
-        risk_free_rate=r_bar,
-        equity_premium=mu_excess,
     )
 
     output = generate_lifecycle_pdf(

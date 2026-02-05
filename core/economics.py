@@ -12,7 +12,7 @@ This module contains core economic functions including:
 import numpy as np
 from typing import Tuple
 
-from .params import EconomicParams, BondParams, BondStrategy
+from .params import EconomicParams
 
 
 # =============================================================================
@@ -602,58 +602,6 @@ def compute_mv_optimal_allocation(
         duration=duration,
         gamma=gamma
     )
-
-
-# =============================================================================
-# Portfolio Allocation Helpers
-# =============================================================================
-
-def compute_bond_weights(
-    stock_weight: float,
-    liability_eff_duration: float,
-    bond_params: BondParams,
-    strategy: BondStrategy,
-    phi: float = 0.85
-) -> Tuple[float, float]:
-    """
-    Compute money market and long bond weights.
-
-    For duration matching under mean reversion:
-        - liability_eff_duration: effective duration of liabilities
-        - Long bond effective duration: B(tau_lb) = (1 - phi^tau)/(1 - phi)
-
-    We match: w_lb * B(tau_lb) = liability_eff_duration
-
-    Returns:
-        Tuple of (w_mm, w_lb)
-    """
-    bond_allocation = 1 - stock_weight
-
-    if strategy == BondStrategy.MONEY_MARKET:
-        return bond_allocation, 0.0
-
-    # Duration matching using EFFECTIVE durations
-    # The long bond's effective duration (sensitivity to short rate) under mean reversion
-    lb_eff_duration = effective_duration(bond_params.D_lb, phi)
-
-    # We need: w_lb * lb_eff_duration = liability_eff_duration (for the bond portion)
-    target_lb_weight = min(liability_eff_duration / lb_eff_duration, 1.0)
-    w_lb = target_lb_weight * bond_allocation
-    w_mm = bond_allocation - w_lb
-
-    return w_mm, w_lb
-
-
-def compute_portfolio_return(
-    stock_returns: np.ndarray,
-    mm_returns: np.ndarray,
-    lb_returns: np.ndarray,
-    w_s: float,
-    w_mm: float,
-    w_lb: float
-) -> np.ndarray:
-    """Compute weighted portfolio return."""
-    return w_s * stock_returns + w_mm * mm_returns + w_lb * lb_returns
 
 
 # =============================================================================

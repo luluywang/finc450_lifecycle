@@ -13,23 +13,14 @@ from .params import DEFAULT_RISKY_BETA
 # Parameter dataclasses
 from .params import (
     EconomicParams,
-    BondParams,
-    RandomWalkParams,
     LifecycleParams,
     MonteCarloParams,
-    BondStrategy,
-    ConsumptionRule,
-    Strategy,
-    SimulationParams,
-    STRATEGIES,
     # Result dataclasses
     LifecycleResult,
     MonteCarloResult,
-    SimulationResult,       # New unified result type
-    StrategyComparison,     # New unified comparison type
-    # Deprecated (kept for backward compatibility)
-    RuleOfThumbResult,
-    ScenarioResult,
+    SimulationResult,
+    StrategyComparison,
+    ScenarioResult,  # Used by scenarios.py
     # Generic strategy framework
     SimulationState,
     StrategyActions,
@@ -66,9 +57,6 @@ from .economics import (
     compute_full_merton_allocation,
     compute_full_merton_allocation_constrained,
     compute_mv_optimal_allocation,
-    # Portfolio allocation
-    compute_bond_weights,
-    compute_portfolio_return,
     # Shock generation and simulation
     generate_correlated_shocks,
     simulate_interest_rates,
@@ -111,22 +99,13 @@ __all__ = [
     'DEFAULT_RISKY_BETA',
     # Params
     'EconomicParams',
-    'BondParams',
-    'RandomWalkParams',
     'LifecycleParams',
     'MonteCarloParams',
-    'BondStrategy',
-    'ConsumptionRule',
-    'Strategy',
-    'SimulationParams',
-    'STRATEGIES',
     # Results
     'LifecycleResult',
     'MonteCarloResult',
-    'SimulationResult',       # New unified result type
-    'StrategyComparison',     # New unified comparison type
-    # Deprecated results (kept for backward compatibility)
-    'RuleOfThumbResult',
+    'SimulationResult',
+    'StrategyComparison',
     'ScenarioResult',
     # Generic strategy framework
     'SimulationState',
@@ -154,8 +133,6 @@ __all__ = [
     'compute_full_merton_allocation',
     'compute_full_merton_allocation_constrained',
     'compute_mv_optimal_allocation',
-    'compute_bond_weights',
-    'compute_portfolio_return',
     'generate_correlated_shocks',
     'simulate_interest_rates',
     'simulate_interest_rates_random_walk',
