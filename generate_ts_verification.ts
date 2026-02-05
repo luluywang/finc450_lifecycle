@@ -424,24 +424,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const variableConsumption = Array(totalYears).fill(0);
   const totalConsumption = Array(totalYears).fill(0);
 
-  // Consumption rate calculation - matches Python simulate_paths exactly
-  // Uses median portfolio return (expected return - Jensen's correction)
-  const expectedReturnForConsumption = (
-    targetStock * (r + params.muStock) +
-    targetBond * (r + muBond) +
-    targetCash * r
-  );
-  // Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
-  const sigmaB = params.bondDuration * params.sigmaR;
-  const covSB = -params.bondDuration * params.sigmaS * params.sigmaR * params.rho;
-  const portfolioVar = (
-    targetStock * targetStock * params.sigmaS * params.sigmaS +
-    targetBond * targetBond * sigmaB * sigmaB +
-    2 * targetStock * targetBond * covSB
-  );
-  const medianReturn = expectedReturnForConsumption - 0.5 * portfolioVar;
-  // consumption_boost defaults to 0.0 in Python
-  const consumptionRate = medianReturn + 0.0;
+  // NOTE: consumptionRate is now computed INSIDE the loop using realized weights
+  // (dynamic programming principle — optimal actions depend on current state)
 
   // For wealth evolution: use full portfolio return including mu_bond
   // Stock: r + mu_excess, Bond: r + mu_bond, Cash: r
@@ -463,9 +447,39 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const hc = humanCapital[i];
     const tw = fw + hc;
     totalWealth[i] = tw;
-
-    // Compute net worth and consumption
     netWorth[i] = hc + fw - pvExpenses[i];
+
+    // Compute portfolio weights FIRST (needed for dynamic consumption rate)
+    const targetFinStock = targetStock * tw - hcStock[i];
+    const targetFinBond = targetBond * tw - hcBond[i] + expBond[i];
+    const targetFinCash = targetCash * tw - hcCash[i] + expCash[i];
+
+    const [wS, wB, wC] = normalizePortfolioWeights(
+      targetFinStock, targetFinBond, targetFinCash,
+      fw, targetStock, targetBond, targetCash,
+      false  // no leverage for median path
+    );
+
+    stockWeight[i] = wS;
+    bondWeight[i] = wB;
+    cashWeight[i] = wC;
+
+    // Dynamic consumption rate using realized weights and current rate (r for median path)
+    const expectedReturnI = (
+      wS * (r + params.muStock) +
+      wB * (r + muBond) +
+      wC * r
+    );
+    const sigmaBi = params.bondDuration * params.sigmaR;
+    const covSBi = -params.bondDuration * params.sigmaS * params.sigmaR * params.rho;
+    const portfolioVarI = (
+      wS * wS * params.sigmaS * params.sigmaS +
+      wB * wB * sigmaBi * sigmaBi +
+      2 * wS * wB * covSBi
+    );
+    const consumptionRate = expectedReturnI - 0.5 * portfolioVarI;
+
+    // Compute consumption using dynamic rate
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
@@ -483,24 +497,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
       }
     }
 
-    // Compute portfolio weights at THIS time step (before wealth evolution)
-    // Target financial holdings = target total - HC component + expense component
-    const targetFinStock = targetStock * tw - hcStock[i];
-    const targetFinBond = targetBond * tw - hcBond[i] + expBond[i];
-    const targetFinCash = targetCash * tw - hcCash[i] + expCash[i];
-
-    const [wS, wB, wC] = normalizePortfolioWeights(
-      targetFinStock, targetFinBond, targetFinCash,
-      fw, targetStock, targetBond, targetCash,
-      false  // no leverage for median path
-    );
-
-    stockWeight[i] = wS;
-    bondWeight[i] = wB;
-    cashWeight[i] = wC;
-
     // Compute portfolio return using CURRENT weights
-    // This is the key fix: Python uses time-varying portfolio returns
     const portfolioReturn = wS * stockReturn + wB * bondReturn + wC * cashReturn;
 
     const savings = earnings[i] - totalConsumption[i];

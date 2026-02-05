@@ -102,7 +102,7 @@ class LDIStrategy:
         """Compute LDI strategy actions given current state."""
         # Compute consumption rate if not specified
         if self.consumption_rate is None:
-            r = state.econ_params.r_bar
+            r = state.current_rate
             sigma_s = state.econ_params.sigma_s
             sigma_r = state.econ_params.sigma_r
             rho = state.econ_params.rho

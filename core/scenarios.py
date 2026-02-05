@@ -83,10 +83,24 @@ def create_teaching_scenario(
     pv_expenses = median_result.pv_expenses
     hc_stock = median_result.hc_stock_component
 
-    # Consumption rate
+    # Consumption rate (deterministic scenario uses r_bar since rates don't evolve)
+    # Uses realized weights from median path, but for simplicity uses target weights
+    # since this is a simplified teaching scenario function
     r = econ_params.r_bar
-    avg_return = target_stock * (r + econ_params.mu_excess) + target_bond * r + target_cash * r
-    consumption_rate = avg_return + params.consumption_boost
+    expected_return = (
+        target_stock * (r + econ_params.mu_excess) +
+        target_bond * (r + econ_params.mu_bond) +
+        target_cash * r
+    )
+    # Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
+    sigma_b = econ_params.bond_duration * econ_params.sigma_r
+    cov_sb = -econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho
+    portfolio_var = (
+        target_stock**2 * econ_params.sigma_s**2 +
+        target_bond**2 * sigma_b**2 +
+        2 * target_stock * target_bond * cov_sb
+    )
+    consumption_rate = expected_return - 0.5 * portfolio_var + params.consumption_boost
 
     defaulted = False
 

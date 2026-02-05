@@ -1377,7 +1377,7 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
     // Compute consumption rate if not specified
     let effectiveConsumptionRate: number;
     if (consumptionRate === null) {
-      const r = state.econParams.rBar;
+      const r = state.currentRate;
       const sigmaS = state.econParams.sigmaS;
       const sigmaR = state.econParams.sigmaR;
       const rho = state.econParams.rho;
@@ -2852,20 +2852,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const variableConsumption = Array(totalYears).fill(0);
   const totalConsumption = Array(totalYears).fill(0);
 
-  // Consumption rate calculation - matches Python simulate_paths exactly
-  // Uses median portfolio return (expected return - Jensen's correction)
-  const expectedReturn = (
-    targetStock * (r + params.muStock) +
-    targetBond * (r + muBond) +
-    targetCash * r
-  );
-  // Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
-  const portfolioVar = computePortfolioVariance(
-    targetStock, targetBond, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
-  );
-  const medianReturn = expectedReturn - 0.5 * portfolioVar;
-  // consumption_boost defaults to 0.0 in Python, matching the default behavior
-  const consumptionRate = medianReturn + 0.0;  // No boost for default params
+  // NOTE: consumptionRate is now computed INSIDE the loop using realized weights
+  // (dynamic programming principle — optimal actions depend on current state)
 
   // For wealth evolution: use full portfolio return including mu_bond
   // Stock: r + mu_excess, Bond: r + mu_bond, Cash: r
@@ -2887,32 +2875,9 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const hc = humanCapital[i];
     const tw = fw + hc;
     totalWealth[i] = tw;
-
-    // Compute net worth and consumption
     netWorth[i] = hc + fw - pvExpenses[i];
-    variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
-    totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
-      // Working years: cap consumption at earnings (can't borrow against HC)
-      totalConsumption[i] = earnings[i];
-      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
-    } else if (earnings[i] === 0) {
-      // Retirement: cap consumption at financial wealth
-      if (subsistenceConsumption[i] > fw) {
-        // Bankruptcy: can't even meet subsistence, consume whatever remains
-        totalConsumption[i] = fw;
-        subsistenceConsumption[i] = fw;
-        variableConsumption[i] = 0;
-      } else if (totalConsumption[i] > fw) {
-        // Can meet subsistence but not variable consumption
-        totalConsumption[i] = fw;
-        variableConsumption[i] = fw - subsistenceConsumption[i];
-      }
-    }
-
-    // Compute portfolio weights at THIS time step (before wealth evolution)
-    // Target financial holdings = target total - HC component + expense component
+    // Compute portfolio weights FIRST (needed for dynamic consumption rate)
     const targetFinStock = targetStock * tw - hcStock[i];
     const targetFinBond = targetBond * tw - hcBond[i] + expBond[i];
     const targetFinCash = targetCash * tw - hcCash[i] + expCash[i];
@@ -2927,8 +2892,38 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     bondWeight[i] = wB;
     cashWeight[i] = wC;
 
+    // Dynamic consumption rate using realized weights and current rate (r_bar for median path)
+    const expectedReturnI = (
+      wS * (r + params.muStock) +
+      wB * (r + muBond) +
+      wC * r
+    );
+    const portfolioVarI = computePortfolioVariance(
+      wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+    );
+    const consumptionRate = expectedReturnI - 0.5 * portfolioVarI;
+
+    // Compute consumption using dynamic rate
+    variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
+    totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
+
+    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
+      // Working years: cap consumption at earnings (can't borrow against HC)
+      totalConsumption[i] = earnings[i];
+      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+    } else if (earnings[i] === 0) {
+      // Retirement: cap consumption at financial wealth
+      if (subsistenceConsumption[i] > fw) {
+        totalConsumption[i] = fw;
+        subsistenceConsumption[i] = fw;
+        variableConsumption[i] = 0;
+      } else if (totalConsumption[i] > fw) {
+        totalConsumption[i] = fw;
+        variableConsumption[i] = fw - subsistenceConsumption[i];
+      }
+    }
+
     // Compute portfolio return using CURRENT weights
-    // This is the key fix: Python uses time-varying portfolio returns
     const portfolioReturn = wS * stockReturn + wB * bondReturn + wC * cashReturn;
 
     const savings = earnings[i] - totalConsumption[i];
@@ -3256,17 +3251,8 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     params.rho, params.bondDuration, params.gamma
   );
 
-  // Consumption rate: computed ONCE before the loop using target allocations and r_bar
-  // This matches Python simulate_paths() which uses a constant consumption rate
-  const expectedReturn = (
-    targetStock * (r + params.muStock) +
-    targetBond * (r + muBondVal) +
-    targetCash * r
-  );
-  const portfolioVar = computePortfolioVariance(
-    targetStock, targetBond, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
-  );
-  const consumptionRate = expectedReturn - 0.5 * portfolioVar;
+  // NOTE: consumptionRate is now computed INSIDE the loop using current_rate
+  // and realized weights (dynamic programming principle)
 
   // Track arrays for each year
   const {
@@ -3350,26 +3336,33 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     bondWeight[i] = wB;
     cashWeight[i] = wC;
 
-    // Consumption decision
+    // Consumption decision using dynamic rate (current_rate + realized weights)
     netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
 
-    variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
+    // Dynamic consumption rate: use preShockRate (current rate) and realized weights
+    const expectedReturnI = (
+      wS * (preShockRate + params.muStock) +
+      wB * (preShockRate + muBondVal) +
+      wC * preShockRate
+    );
+    const portfolioVarI = computePortfolioVariance(
+      wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+    );
+    const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI;
+
+    variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
     if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
-      // Working years: cap consumption at earnings (can't borrow against HC)
       totalConsumption[i] = earnings[i];
       variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
     } else if (earnings[i] === 0) {
-      // Retirement: cap consumption at financial wealth
       const fw = financialWealth[i];
       if (subsistenceConsumption[i] > fw) {
-        // Bankruptcy: can't even meet subsistence, consume whatever remains
         totalConsumption[i] = fw;
         subsistenceConsumption[i] = fw;
         variableConsumption[i] = 0;
       } else if (totalConsumption[i] > fw) {
-        // Can meet subsistence but not variable consumption
         totalConsumption[i] = fw;
         variableConsumption[i] = fw - subsistenceConsumption[i];
       }
@@ -3545,17 +3538,8 @@ function computeScenarioPath(
     params.rho, params.bondDuration, params.gamma
   );
 
-  // Consumption rate: computed ONCE before the loop using target allocations and r_bar
-  // This matches Python simulate_paths() which uses a constant consumption rate
-  const expectedReturnConst = (
-    targetStockAlloc * (r + params.muStock) +
-    targetBondAlloc * (r + muBondVal) +
-    targetCashAlloc * r
-  );
-  const portfolioVarConst = computePortfolioVariance(
-    targetStockAlloc, targetBondAlloc, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
-  );
-  const consumptionRateConst = expectedReturnConst - 0.5 * portfolioVarConst;
+  // NOTE: consumptionRate is now computed INSIDE the loop using current_rate
+  // and realized weights (dynamic programming principle)
 
   const financialWealth = Array(totalYears).fill(0);
   const totalWealthArr = Array(totalYears).fill(0);
@@ -3657,8 +3641,17 @@ function computeScenarioPath(
     const netWorth = humanCapital + financialWealth[i] - pvExpenses;
 
     if (scenario.consumptionRule === 'adaptive') {
-      // Adaptive: consume based on net worth using constant consumption rate (matches Python)
-      variableConsumption[i] = Math.max(0, consumptionRateConst * netWorth);
+      // Adaptive: dynamic consumption rate using preShockRate and realized weights
+      const expectedReturnI = (
+        stockWeight * (preShockRate + params.muStock) +
+        bondWeight * (preShockRate + muBondVal) +
+        cashWeight * preShockRate
+      );
+      const portfolioVarI = computePortfolioVariance(
+        stockWeight, bondWeight, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+      );
+      const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI;
+      variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
       if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {

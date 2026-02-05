@@ -706,22 +706,8 @@ def simulate_paths(
         base_earnings, expenses, working_years, total_years, r, phi
     )
 
-    # Consumption rate based on median portfolio return (matches LDIStrategy)
-    expected_return = (
-        target_stock * (r + econ_params.mu_excess) +
-        target_bond * (r + econ_params.mu_bond) +
-        target_cash * r
-    )
-    # Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
-    sigma_b = econ_params.bond_duration * econ_params.sigma_r
-    cov_sb = -econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho
-    portfolio_var = (
-        target_stock**2 * econ_params.sigma_s**2 +
-        target_bond**2 * sigma_b**2 +
-        2 * target_stock * target_bond * cov_sb
-    )
-    median_return = expected_return - 0.5 * portfolio_var
-    consumption_rate = median_return + params.consumption_boost
+    # NOTE: consumption_rate is now computed INSIDE the loop using current_rate
+    # and realized portfolio weights (dynamic programming principle).
 
     # Initialize output arrays
     financial_wealth_paths = np.zeros((n_sims, total_years))
@@ -806,24 +792,7 @@ def simulate_paths(
             net_worth = hc + fw - pv_exp
             net_worth_paths[sim, t] = net_worth
 
-            # Compute consumption
-            subsistence = expenses[t]
-            variable = max(0, consumption_rate * net_worth)
-
-            total_cons, subsistence, variable, defaulted = apply_consumption_constraints(
-                subsistence, variable, current_earnings, fw, is_working, defaulted
-            )
-
-            if defaulted and not default_flags[sim]:
-                default_flags[sim] = True
-                default_ages[sim] = params.start_age + t
-
-            total_consumption_paths[sim, t] = total_cons
-            subsistence_consumption_paths[sim, t] = subsistence
-            variable_consumption_paths[sim, t] = variable
-            savings_paths[sim, t] = current_earnings - total_cons
-
-            # Compute portfolio weights
+            # Compute portfolio weights FIRST (needed for dynamic consumption rate)
             # Target financial holdings = target total - HC component + expense component
             # Always compute decomposition at current_rate (dynamic or r_bar depending on flag)
             remaining_expenses = expenses[t:]
@@ -879,6 +848,37 @@ def simulate_paths(
             stock_weight_paths[sim, t] = w_s
             bond_weight_paths[sim, t] = w_b
             cash_weight_paths[sim, t] = w_c
+
+            # Compute dynamic consumption rate using current_rate and realized weights
+            # Dynamic programming: optimal actions depend on current state variables
+            expected_return = (
+                w_s * (current_rate + econ_params.mu_excess) +
+                w_b * (current_rate + econ_params.mu_bond) +
+                w_c * current_rate
+            )
+            portfolio_var = (
+                w_s**2 * econ_params.sigma_s**2 +
+                w_b**2 * (econ_params.bond_duration * econ_params.sigma_r)**2 +
+                2 * w_s * w_b * (-econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho)
+            )
+            consumption_rate = expected_return - 0.5 * portfolio_var + params.consumption_boost
+
+            # Compute consumption using dynamic rate
+            subsistence = expenses[t]
+            variable = max(0, consumption_rate * net_worth)
+
+            total_cons, subsistence, variable, defaulted = apply_consumption_constraints(
+                subsistence, variable, current_earnings, fw, is_working, defaulted
+            )
+
+            if defaulted and not default_flags[sim]:
+                default_flags[sim] = True
+                default_ages[sim] = params.start_age + t
+
+            total_consumption_paths[sim, t] = total_cons
+            subsistence_consumption_paths[sim, t] = subsistence
+            variable_consumption_paths[sim, t] = variable
+            savings_paths[sim, t] = current_earnings - total_cons
 
             # Evolve wealth to next period
             if t < total_years - 1 and not defaulted:
