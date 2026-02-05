@@ -706,14 +706,22 @@ def simulate_paths(
         base_earnings, expenses, working_years, total_years, r, phi
     )
 
-    # Consumption rate based on expected returns
-    expected_stock_return = r + econ_params.mu_excess
-    avg_return = (
-        target_stock * expected_stock_return +
-        target_bond * r +
+    # Consumption rate based on median portfolio return (matches LDIStrategy)
+    expected_return = (
+        target_stock * (r + econ_params.mu_excess) +
+        target_bond * (r + econ_params.mu_bond) +
         target_cash * r
     )
-    consumption_rate = avg_return + params.consumption_boost
+    # Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
+    sigma_b = econ_params.bond_duration * econ_params.sigma_r
+    cov_sb = -econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho
+    portfolio_var = (
+        target_stock**2 * econ_params.sigma_s**2 +
+        target_bond**2 * sigma_b**2 +
+        2 * target_stock * target_bond * cov_sb
+    )
+    median_return = expected_return - 0.5 * portfolio_var
+    consumption_rate = median_return + params.consumption_boost
 
     # Initialize output arrays
     financial_wealth_paths = np.zeros((n_sims, total_years))
@@ -1222,6 +1230,7 @@ def run_lifecycle_monte_carlo(
         total_consumption_paths=result['total_consumption_paths'],
         subsistence_consumption_paths=result['subsistence_consumption_paths'],
         variable_consumption_paths=result['variable_consumption_paths'],
+        actual_earnings_paths=result['actual_earnings_paths'],
         stock_weight_paths=result['stock_weight_paths'],
         bond_weight_paths=result['bond_weight_paths'],
         cash_weight_paths=result['cash_weight_paths'],

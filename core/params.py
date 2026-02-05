@@ -178,6 +178,9 @@ class MonteCarloResult:
     stock_return_paths: np.ndarray
     interest_rate_paths: np.ndarray
 
+    # Earnings paths: (n_sims, total_years)
+    actual_earnings_paths: np.ndarray
+
     # Outcome statistics
     default_flags: np.ndarray             # Shape: (n_sims,) - True if defaulted
     default_ages: np.ndarray              # Shape: (n_sims,) - Age at default (NaN if no default)

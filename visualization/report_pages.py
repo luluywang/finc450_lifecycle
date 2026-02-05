@@ -72,6 +72,21 @@ def _plot_to_ax_cash_flow(ax, x, result, COLORS, xlabel, retirement_x):
     ax.legend(loc='upper right', fontsize=8)
 
 
+def _plot_to_ax_earnings_vs_consumption(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot earnings vs total consumption with savings/drawdown fill."""
+    ax.plot(x, result.earnings, color=COLORS['earnings'], linewidth=2, label='Earnings')
+    ax.plot(x, result.total_consumption, color=COLORS['consumption'], linewidth=2, label='Consumption')
+    diff = result.earnings - result.total_consumption
+    ax.fill_between(x, 0, diff, where=diff >= 0, alpha=0.3, color=COLORS['earnings'], label='Savings')
+    ax.fill_between(x, 0, diff, where=diff < 0, alpha=0.3, color=COLORS['expenses'], label='Drawdown')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Earnings vs Consumption ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
 def _plot_to_ax_present_values(ax, x, result, COLORS, xlabel, retirement_x):
     """Plot present values panel."""
     ax.plot(x, result.pv_earnings, color=COLORS['earnings'], linewidth=2, label='PV Earnings')
@@ -266,7 +281,7 @@ def create_base_case_page(
     Create Page 1: BASE CASE (Deterministic Median Path).
 
     Layout with 6 sections, 12 charts total (6x2 grid):
-    - Row 0: Assumptions (Income & Expenses, Cash Flow)
+    - Row 0: Assumptions (Income & Expenses, Earnings vs Consumption)
     - Row 1: Forward-Looking Values (Present Values, Durations)
     - Row 2: Wealth Part 1 (HC vs FW, HC Decomposition)
     - Row 3: Wealth Part 2 (Expense Decomposition, Net HC minus Expenses)
@@ -318,8 +333,8 @@ def create_base_case_page(
         # Row 0: Assumptions
         (0, 0, lambda ax: _plot_to_ax_income_expenses(ax, x, result, COLORS, xlabel, retirement_x),
          "income_expenses", True, False),
-        (0, 1, lambda ax: _plot_to_ax_cash_flow(ax, x, result, COLORS, xlabel, retirement_x),
-         "cash_flow", True, False),
+        (0, 1, lambda ax: _plot_to_ax_earnings_vs_consumption(ax, x, result, COLORS, xlabel, retirement_x),
+         "earnings_vs_consumption", False, False),
 
         # Row 1: Forward-Looking Values
         (1, 0, lambda ax: _plot_to_ax_present_values(ax, x, result, COLORS, xlabel, retirement_x),
@@ -392,11 +407,13 @@ def create_monte_carlo_page(
     """
     Create Page 2: MONTE CARLO simulation results.
 
-    Layout with 6 chart panels:
+    Layout with 8 chart panels (4x2 grid):
     - Consumption Distribution (percentile lines)
     - Financial Wealth Distribution (percentile lines)
     - Net Worth Distribution (percentile lines)
     - Terminal Values Grid (text summary)
+    - Savings Distribution (Earnings - Consumption)
+    - Savings Rate (% of Earnings)
     - Cumulative Stock Returns (percentile bands)
     - Interest Rate Paths (percentile bands)
 
@@ -414,8 +431,8 @@ def create_monte_carlo_page(
     if percentiles is None:
         percentiles = [5, 25, 50, 75, 95]
 
-    fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.25)
+    fig = plt.figure(figsize=(figsize[0], int(figsize[1] * 4 / 3)))
+    gs = fig.add_gridspec(4, 2, hspace=0.3, wspace=0.25)
 
     n_sims = mc_result.financial_wealth_paths.shape[0]
     total_years = len(mc_result.ages)
@@ -524,8 +541,44 @@ Default Rate: {np.mean(mc_result.default_flags)*100:.1f}%
            bbox=dict(boxstyle='round', facecolor='#f8f9fa', edgecolor='#dee2e6'))
     ax.set_title('Terminal Values Grid', fontweight='bold')
 
-    # ===== Cumulative Stock Returns =====
+    # ===== Savings Distribution (Earnings - Consumption) =====
     ax = fig.add_subplot(gs[2, 0])
+    savings_paths = mc_result.actual_earnings_paths - mc_result.total_consumption_paths
+    savings_pctls = np.percentile(savings_paths, percentiles, axis=0)
+    for i, p in enumerate(percentiles):
+        ax.plot(x, savings_pctls[i], color=COLORS['earnings'],
+               linestyle=line_styles[i], linewidth=line_widths[i],
+               label=f'{p}th %ile' if p != 50 else 'Median')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Savings Distribution (Earnings - Consumption) ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+    # ===== Savings as % of Earnings =====
+    ax = fig.add_subplot(gs[2, 1])
+    # Avoid division by zero: only compute ratio where earnings > 0
+    with np.errstate(divide='ignore', invalid='ignore'):
+        savings_pct_paths = np.where(
+            mc_result.actual_earnings_paths > 0,
+            savings_paths / mc_result.actual_earnings_paths * 100,
+            0.0
+        )
+    savings_pct_pctls = np.percentile(savings_pct_paths, percentiles, axis=0)
+    for i, p in enumerate(percentiles):
+        ax.plot(x, savings_pct_pctls[i], color=COLORS['earnings'],
+               linestyle=line_styles[i], linewidth=line_widths[i],
+               label=f'{p}th %ile' if p != 50 else 'Median')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Savings Rate (%)')
+    ax.set_title('Savings Rate (% of Earnings)', fontweight='bold')
+    ax.legend(loc='lower right', fontsize=8)
+
+    # ===== Cumulative Stock Returns =====
+    ax = fig.add_subplot(gs[3, 0])
     log_stock_pctls = np.log(stock_pctls)
 
     ax.fill_between(x, log_stock_pctls[0], log_stock_pctls[1], alpha=0.15, color=COLORS['stock'])
@@ -548,7 +601,7 @@ Default Rate: {np.mean(mc_result.default_flags)*100:.1f}%
     ax.yaxis.set_major_formatter(plt.FuncFormatter(log_to_pct))
 
     # ===== Interest Rate Paths =====
-    ax = fig.add_subplot(gs[2, 1])
+    ax = fig.add_subplot(gs[3, 1])
     ax.fill_between(x, rate_pctls[0], rate_pctls[1], alpha=0.15, color=COLORS['rate'])
     ax.fill_between(x, rate_pctls[1], rate_pctls[3], alpha=0.3, color=COLORS['rate'])
     ax.fill_between(x, rate_pctls[3], rate_pctls[4], alpha=0.15, color=COLORS['rate'])

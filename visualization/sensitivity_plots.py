@@ -606,7 +606,7 @@ def create_equity_premium_comparison_figure(
         custom_econ = EconomicParams(
             r_bar=econ_params.r_bar,
             mu_excess=premium,
-            mu_bond=econ_params.mu_bond,
+            bond_sharpe=econ_params.bond_sharpe,
             sigma_s=econ_params.sigma_s,
             sigma_r=econ_params.sigma_r,
             rho=econ_params.rho,
@@ -867,7 +867,7 @@ def create_volatility_comparison_figure(
         custom_econ = EconomicParams(
             r_bar=econ_params.r_bar,
             mu_excess=econ_params.mu_excess,
-            mu_bond=econ_params.mu_bond,
+            bond_sharpe=econ_params.bond_sharpe,
             sigma_s=vol,
             sigma_r=econ_params.sigma_r,
             rho=econ_params.rho,

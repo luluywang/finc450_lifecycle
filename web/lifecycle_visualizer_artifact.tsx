@@ -2792,16 +2792,23 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const totalConsumption = Array(totalYears).fill(0);
 
   // Consumption rate calculation - matches Python simulate_paths exactly
-  // CRITICAL: Python uses different returns for consumption vs wealth evolution
-  // For consumption rate: bond component is just r, NOT r + mu_bond
-  // This matches Python's avg_return in simulate_paths (lines 720-727)
-  const avgReturnForConsumption = (
-    targetStock * (r + params.muStock) +  // r + mu_excess
-    targetBond * r +                       // Just r, NO mu_bond!
+  // Uses median portfolio return (expected return - Jensen's correction)
+  const expectedReturn = (
+    targetStock * (r + params.muStock) +
+    targetBond * (r + muBond) +
     targetCash * r
   );
+  // Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
+  const sigmaB = params.bondDuration * params.sigmaR;
+  const covSB = -params.bondDuration * params.sigmaS * params.sigmaR * params.rho;
+  const portfolioVar = (
+    targetStock * targetStock * params.sigmaS * params.sigmaS +
+    targetBond * targetBond * sigmaB * sigmaB +
+    2 * targetStock * targetBond * covSB
+  );
+  const medianReturn = expectedReturn - 0.5 * portfolioVar;
   // consumption_boost defaults to 0.0 in Python, matching the default behavior
-  const consumptionRate = avgReturnForConsumption + 0.0;  // No boost for default params
+  const consumptionRate = medianReturn + 0.0;  // No boost for default params
 
   // For wealth evolution: use full portfolio return including mu_bond
   // Stock: r + mu_excess, Bond: r + mu_bond, Cash: r
