@@ -31,7 +31,7 @@ class EconomicParams:
     """Parameters for the economic environment (VAR structure)."""
     r_bar: float = 0.02        # Long-run mean real rate
     phi: float = 1.0           # Interest rate persistence (1.0 = random walk)
-    sigma_r: float = 0.003     # Rate shock volatility (0.3 pp)
+    sigma_r: float = 0.01      # Rate shock volatility (1 pp)
     mu_excess: float = 0.04    # Equity risk premium (stock excess return)
     bond_sharpe: float = 0.037  # Bond Sharpe ratio (replaces fixed mu_bond)
     sigma_s: float = 0.18      # Stock return volatility

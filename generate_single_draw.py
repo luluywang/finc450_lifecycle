@@ -753,7 +753,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate single random draw lifecycle analysis"
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument("--seed", type=int, default=61, help="Random seed (default: 61)")
     parser.add_argument("--beta", type=float, default=0.0,
                         help="HC stock beta (default: 0.0)")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output PDF path")
