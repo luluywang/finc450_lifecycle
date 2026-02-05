@@ -121,6 +121,22 @@ def _plot_to_ax_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x):
     ax.legend(loc='upper right', fontsize=8)
 
 
+def _plot_to_ax_net_wealth(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot net wealth = HC + FW - PV(expenses)."""
+    ax.plot(x, result.total_wealth, color='black', linewidth=1.5,
+            linestyle='--', label='Total Wealth (HC+FW)')
+    ax.plot(x, result.pv_expenses, color=COLORS['expenses'], linewidth=1.5,
+            linestyle='--', label='PV Expenses')
+    ax.fill_between(x, 0, result.net_worth, alpha=0.4, color=COLORS['nw'])
+    ax.plot(x, result.net_worth, color=COLORS['nw'], linewidth=2, label='Net Worth')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Net Wealth: HC + FW − Expenses ($k)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8)
+
+
 def _plot_to_ax_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x):
     """Plot human capital decomposition panel."""
     ax.plot(x, result.hc_cash_component, color=COLORS['cash'], linewidth=2, label='HC Cash')
@@ -270,7 +286,7 @@ def create_base_case_page(
     result: 'LifecycleResult',
     params: 'LifecycleParams',
     econ_params: 'EconomicParams' = None,
-    figsize: Tuple[int, int] = (20, 28),
+    figsize: Tuple[int, int] = (20, 32),
     use_years: bool = True,
     export_png: bool = False,
     png_output_dir: str = "output/teaching_panels",
@@ -280,13 +296,14 @@ def create_base_case_page(
     """
     Create Page 1: BASE CASE (Deterministic Median Path).
 
-    Layout with 6 sections, 12 charts total (6x2 grid):
+    Layout with 7 sections, 13 charts total (7x2 grid):
     - Row 0: Assumptions (Income & Expenses, Earnings vs Consumption)
     - Row 1: Forward-Looking Values (Present Values, Durations)
-    - Row 2: Wealth Part 1 (HC vs FW, HC Decomposition)
-    - Row 3: Wealth Part 2 (Expense Decomposition, Net HC minus Expenses)
-    - Row 4: Choices (Consumption Path, Portfolio Allocation)
-    - Row 5: Fixed Income Hedging (Net FI PV, DV01)
+    - Row 2: Wealth Overview (HC vs FW, Net Wealth)
+    - Row 3: Decompositions (HC Decomposition, Expense Decomposition)
+    - Row 4: Net Position & Consumption (Net HC minus Expenses, Consumption Path)
+    - Row 5: Portfolio & Hedging (Portfolio Allocation, Net FI PV)
+    - Row 6: Interest Rate Sensitivity (DV01)
 
     Single Code Path: This function handles both PDF grid and PNG export.
     Each panel is drawn using a dedicated _plot_to_ax_* function.
@@ -295,7 +312,7 @@ def create_base_case_page(
         result: LifecycleResult from compute_lifecycle_median_path
         params: LifecycleParams
         econ_params: EconomicParams (required for DV01 calculation)
-        figsize: Figure size tuple (default taller for 6 rows)
+        figsize: Figure size tuple (default taller for 7 rows)
         use_years: If True, x-axis shows years from career start
         export_png: If True, also export individual panels as PNG files
         png_output_dir: Directory for PNG files
@@ -305,9 +322,9 @@ def create_base_case_page(
     Returns:
         matplotlib Figure
     """
-    # Create the multi-panel figure with 6x2 grid
+    # Create the multi-panel figure with 7x2 grid
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(6, 2, hspace=0.35, wspace=0.25)
+    gs = fig.add_gridspec(7, 2, hspace=0.35, wspace=0.25)
 
     # Compute x-axis values
     if use_years:
@@ -342,28 +359,32 @@ def create_base_case_page(
         (1, 1, lambda ax: _plot_to_ax_durations(ax, x, result, COLORS, xlabel, retirement_x),
          "durations", True, False),
 
-        # Row 2: Wealth Part 1
+        # Row 2: Wealth Overview
         (2, 0, lambda ax: _plot_to_ax_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x),
          "hc_vs_fw", False, False),
-        (2, 1, lambda ax: _plot_to_ax_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x),
+        (2, 1, lambda ax: _plot_to_ax_net_wealth(ax, x, result, COLORS, xlabel, retirement_x),
+         "net_wealth", False, False),
+
+        # Row 3: Decompositions
+        (3, 0, lambda ax: _plot_to_ax_hc_decomposition(ax, x, result, COLORS, xlabel, retirement_x),
          "hc_decomposition", False, False),
-
-        # Row 3: Wealth Part 2
-        (3, 0, lambda ax: _plot_to_ax_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x),
+        (3, 1, lambda ax: _plot_to_ax_expense_decomposition(ax, x, result, COLORS, xlabel, retirement_x),
          "expense_decomposition", True, False),
-        (3, 1, lambda ax: _plot_to_ax_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x),
+
+        # Row 4: Net Position & Consumption
+        (4, 0, lambda ax: _plot_to_ax_net_hc_minus_expenses(ax, x, result, COLORS, xlabel, retirement_x),
          "net_hc_minus_expenses", False, False),
-
-        # Row 4: Choices
-        (4, 0, lambda ax: _plot_to_ax_consumption_path(ax, x, result, COLORS, xlabel, retirement_x),
+        (4, 1, lambda ax: _plot_to_ax_consumption_path(ax, x, result, COLORS, xlabel, retirement_x),
          "consumption_path", False, False),
-        (4, 1, lambda ax: _plot_to_ax_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x),
-         "portfolio_allocation", False, False),
 
-        # Row 5: Fixed Income Hedging (NEW)
-        (5, 0, lambda ax: _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
+        # Row 5: Portfolio & Hedging
+        (5, 0, lambda ax: _plot_to_ax_portfolio_allocation(ax, x, result, COLORS, xlabel, retirement_x),
+         "portfolio_allocation", False, False),
+        (5, 1, lambda ax: _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
          "net_fi_pv", False, True),
-        (5, 1, lambda ax: _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
+
+        # Row 6: Interest Rate Sensitivity
+        (6, 0, lambda ax: _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
          "dv01", False, True),
     ]
 
