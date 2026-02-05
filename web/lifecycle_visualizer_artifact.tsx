@@ -1745,6 +1745,9 @@ interface PercentileStats {
   cumulativeStockReturns: FieldPercentiles;
   netFiPv: FieldPercentiles;
   dv01: FieldPercentiles;
+  pvExpenses: FieldPercentiles;
+  totalWealth: FieldPercentiles;
+  netWorth: FieldPercentiles;
 }
 
 /**
@@ -1899,6 +1902,65 @@ function computeNetFiPvAndDv01Paths(
   }
 
   return { netFiPv: netFiPvPaths, dv01: dv01Paths };
+}
+
+/**
+ * Compute pvExpenses, totalWealth, and netWorth paths for all simulations.
+ * These are derived from simulation results to support Net Wealth charts.
+ *
+ * @param result - SimulationResult from simulateWithStrategy (2D arrays for MC)
+ * @param params - Lifecycle parameters
+ * @param econParams - Economic parameters
+ * @returns Object with pvExpenses, totalWealth, and netWorth 2D arrays
+ */
+function computeWealthDecompositionPaths(
+  result: SimulationResult,
+  params: LifecycleParams,
+  econParams: EconomicParams
+): { pvExpenses: number[][]; totalWealth: number[][]; netWorth: number[][] } {
+  const financialWealth = result.financialWealth as number[][];
+  const humanCapital = result.humanCapital as number[][];
+  const interestRates = result.interestRates as number[][];
+
+  const nSims = financialWealth.length;
+  const nPeriods = financialWealth[0].length;
+  const workingYears = params.retirementAge - params.startAge;
+  const rBar = econParams.rBar;
+  const phi = econParams.phi;
+
+  // Get base expenses (deterministic)
+  const legacyParams = toLegacyParams(params, econParams);
+  const { expenses } = initializeEarningsExpenses(legacyParams, nPeriods, workingYears);
+
+  const pvExpensesPaths: number[][] = [];
+  const totalWealthPaths: number[][] = [];
+  const netWorthPaths: number[][] = [];
+
+  for (let sim = 0; sim < nSims; sim++) {
+    const pvExp: number[] = [];
+    const tw: number[] = [];
+    const nw: number[] = [];
+
+    for (let t = 0; t < nPeriods; t++) {
+      const fw = financialWealth[sim][t];
+      const hc = humanCapital[sim][t];
+      const currentRate = interestRates[sim][t];
+
+      // Compute PV of remaining expenses at current rate
+      const remainingExpenses = expenses.slice(t);
+      const pvExpVal = computePresentValue(remainingExpenses, currentRate, phi, rBar);
+
+      pvExp.push(pvExpVal);
+      tw.push(hc + fw);
+      nw.push(hc + fw - pvExpVal);
+    }
+
+    pvExpensesPaths.push(pvExp);
+    totalWealthPaths.push(tw);
+    netWorthPaths.push(nw);
+  }
+
+  return { pvExpenses: pvExpensesPaths, totalWealth: totalWealthPaths, netWorth: netWorthPaths };
 }
 
 /**
@@ -2162,6 +2224,10 @@ function runMonteCarloStrategyComparison(
   const { netFiPv: ldiNetFiPvPaths, dv01: ldiDv01Paths } = computeNetFiPvAndDv01Paths(ldiResult, params, econParams);
   const { netFiPv: rotNetFiPvPaths, dv01: rotDv01Paths } = computeNetFiPvAndDv01Paths(rotResult, params, econParams);
 
+  // Compute wealth decomposition paths for Net Wealth charts
+  const { pvExpenses: ldiPvExpensesPaths, totalWealth: ldiTotalWealthPaths, netWorth: ldiNetWorthPaths } = computeWealthDecompositionPaths(ldiResult, params, econParams);
+  const { pvExpenses: rotPvExpensesPaths, totalWealth: rotTotalWealthPaths, netWorth: rotNetWorthPaths } = computeWealthDecompositionPaths(rotResult, params, econParams);
+
   // Compute percentile statistics for both
   const ldiPercentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
@@ -2174,6 +2240,9 @@ function runMonteCarloStrategyComparison(
     cumulativeStockReturns: computeFieldPercentiles(ldiCumulativeStockReturns),
     netFiPv: computeFieldPercentiles(ldiNetFiPvPaths),
     dv01: computeFieldPercentiles(ldiDv01Paths),
+    pvExpenses: computeFieldPercentiles(ldiPvExpensesPaths),
+    totalWealth: computeFieldPercentiles(ldiTotalWealthPaths),
+    netWorth: computeFieldPercentiles(ldiNetWorthPaths),
   };
 
   const rotPercentiles: PercentileStats = {
@@ -2187,6 +2256,9 @@ function runMonteCarloStrategyComparison(
     cumulativeStockReturns: computeFieldPercentiles(rotCumulativeStockReturns),
     netFiPv: computeFieldPercentiles(rotNetFiPvPaths),
     dv01: computeFieldPercentiles(rotDv01Paths),
+    pvExpenses: computeFieldPercentiles(rotPvExpensesPaths),
+    totalWealth: computeFieldPercentiles(rotTotalWealthPaths),
+    netWorth: computeFieldPercentiles(rotNetWorthPaths),
   };
 
   // Compute summary statistics
@@ -3245,11 +3317,17 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     // Consumption decision
     netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
 
-    // Consumption rate based on median return + 1pp
-    // Using geometric mean return for consistency with median path
-    const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
-    const expectedReturn = currentRate + stockWeight[i] * medianStockReturn;
-    const consumptionRate = expectedReturn + 0.01;
+    // Consumption rate: expected return minus Jensen's correction for portfolio variance
+    const muBondVal = computeMuBond(params);
+    const expectedReturn = (
+      stockWeight[i] * (currentRate + params.muStock) +
+      bondWeight[i] * (currentRate + muBondVal) +
+      cashWeight[i] * currentRate
+    );
+    const portfolioVar = computePortfolioVariance(
+      stockWeight[i], bondWeight[i], params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+    );
+    const consumptionRate = expectedReturn - 0.5 * portfolioVar;
 
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
@@ -3522,10 +3600,17 @@ function computeScenarioPath(
 
     if (scenario.consumptionRule === 'adaptive') {
       // Adaptive: consume based on net worth, always protect subsistence
-      // Using geometric mean return for consistency with median path
-      const medianStockReturn = params.muStock - 0.5 * params.sigmaS * params.sigmaS;
-      const expectedReturn = currentRate + stockWeight * medianStockReturn;
-      const consumptionRate = expectedReturn + 0.01;
+      // Consumption rate: expected return minus Jensen's correction for portfolio variance
+      const muBondVal = computeMuBond(params);
+      const expectedReturn = (
+        stockWeight * (currentRate + params.muStock) +
+        bondWeight * (currentRate + muBondVal) +
+        cashWeight * currentRate
+      );
+      const portfolioVar = computePortfolioVariance(
+        stockWeight, bondWeight, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+      );
+      const consumptionRate = expectedReturn - 0.5 * portfolioVar;
       variableConsumption[i] = Math.max(0, consumptionRate * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
