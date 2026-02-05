@@ -4757,7 +4757,7 @@ export default function LifecycleVisualizer() {
 
               {/* Section 2: LDI Advice */}
               <ChartSection title="Section 2: LDI Advice for This Draw">
-                <ChartCard title="Total Wealth = Human Capital + Financial ($k)">
+                <ChartCard title="Human Capital + Financial Wealth ($k)">
                   <ResponsiveContainer width="100%" height={280}>
                     <AreaChart data={oneDrawChartData}>
                       <CartesianGrid strokeDasharray="3 3" />
