@@ -19,7 +19,7 @@ import {
 interface EconomicParams {
   rBar: number;           // Long-run mean real rate (Python: r_bar = 0.02)
   phi: number;            // Interest rate persistence (1.0 = random walk)
-  sigmaR: number;         // Rate shock volatility (0.3 pp = 0.003)
+  sigmaR: number;         // Rate shock volatility (0.7 pp = 0.007)
   muExcess: number;       // Equity risk premium (stock excess return)
   bondSharpe: number;     // Bond Sharpe ratio (replaces fixed mu_bond)
   sigmaS: number;         // Stock return volatility
@@ -36,9 +36,9 @@ interface EconomicParams {
 const DEFAULT_ECON_PARAMS: EconomicParams = {
   rBar: 0.02,             // Long-run mean real rate
   phi: 1.0,               // Interest rate persistence (random walk)
-  sigmaR: 0.003,          // Rate shock volatility (0.3 pp)
-  muExcess: 0.04,         // Equity risk premium
-  bondSharpe: 0.037,      // Bond Sharpe ratio
+  sigmaR: 0.007,          // Rate shock volatility (0.7 pp)
+  muExcess: 0.045,        // Equity risk premium (4.5 pp)
+  bondSharpe: 0.0,        // Bond Sharpe ratio (no term premium)
   sigmaS: 0.18,           // Stock return volatility
   rho: 0.0,               // Correlation between rate and stock shocks
   bondDuration: 20.0,     // Duration for HC decomposition
@@ -155,9 +155,9 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
 const AGGRESSIVE_ECON_PARAMS: EconomicParams = {
   rBar: 0.02,             // Same mean rate
   phi: 1.0,               // Random walk persistence
-  sigmaR: 0.006,          // 2x rate volatility (0.6 pp vs 0.3 pp)
+  sigmaR: 0.014,          // 2x rate volatility (1.4 pp vs 0.7 pp)
   muExcess: 0.06,         // Higher equity premium (6% vs 4%)
-  bondSharpe: 0.037,      // Same bond Sharpe
+  bondSharpe: 0.0,        // Same bond Sharpe (no term premium)
   sigmaS: 0.25,           // Higher stock volatility (25% vs 18%)
   rho: -0.2,              // Negative stock-rate correlation (flight to quality)
   bondDuration: 20.0,     // Same duration
@@ -3829,7 +3829,7 @@ function ChartSection({ title, children }: { title: string; children: React.Reac
       <h3 style={{ fontSize: '15px', fontWeight: 'bold', marginBottom: '12px', color: '#2c3e50' }}>
         {title}
       </h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
         {children}
       </div>
     </div>
@@ -3877,10 +3877,10 @@ export default function LifecycleVisualizer() {
     gamma: 2,
     initialWealth: 100,
     rBar: 0.02,
-    muStock: 0.04,
-    bondSharpe: 0.037,
+    muStock: 0.045,
+    bondSharpe: 0.0,
     sigmaS: 0.18,
-    sigmaR: 0.003,
+    sigmaR: 0.007,
     rho: 0.0,
     bondDuration: 20,
     phi: 1.0,
@@ -4148,7 +4148,7 @@ export default function LifecycleVisualizer() {
             label="Rate shock vol (σᵣ)"
             value={params.sigmaR * 100}
             onChange={(v) => updateParam('sigmaR', v / 100)}
-            min={0.5} max={3} step={0.05} suffix="%" decimals={2}
+            min={0.1} max={3} step={0.1} suffix="%" decimals={1}
           />
           <StepperInput
             label="Rate/stock corr (ρ)"
@@ -5288,8 +5288,8 @@ export default function LifecycleVisualizer() {
                     </div>
                   </div>
                 )}
-                {/* Responsive 2-column grid layout matching PDF 4x2 structure */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '16px' }}>
+                {/* 2-column grid layout matching PDF 4x2 structure */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
 
                   {/* Panel 1: Cumulative Stock Market Returns (fan chart) */}
                   <ChartCard title="Panel 1: Cumulative Stock Market Returns">

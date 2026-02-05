@@ -288,11 +288,11 @@ Run `python3 generate_report.py --help` for all available options.
 |-----------|---------|-------------|
 | `r_bar` | 0.02 | Long-run mean interest rate |
 | `phi` | 1.0 | Mean reversion parameter (1.0 = no mean reversion) |
-| `sigma_r` | 0.003 | Interest rate volatility |
-| `mu_excess` | 0.04 | Stock excess return (equity risk premium) |
+| `sigma_r` | 0.007 | Interest rate volatility (0.7 pp) |
+| `mu_excess` | 0.045 | Stock excess return (equity risk premium, 4.5 pp) |
 | `sigma_s` | 0.18 | Stock return volatility |
 | `rho` | 0.0 | Correlation between rate and stock shocks |
-| `bond_sharpe` | 0.037 | Bond Sharpe ratio |
+| `bond_sharpe` | 0.0 | Bond Sharpe ratio (no term premium) |
 | `bond_duration` | 20.0 | Duration of bond portfolio |
 
 ### Lifecycle Parameters (`LifecycleParams`)

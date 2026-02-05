@@ -1,0 +1,159 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+
+\title{Data Generating Process: Default Assumptions\\
+\large FINC450 Lifecycle Investment Model}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+%----------------------------------------------------------------------
+\section{Asset Returns}
+%----------------------------------------------------------------------
+
+Three assets are available: stocks, long-duration bonds, and cash (the short rate).
+
+\subsection{Interest Rates (Random Walk)}
+
+The real short rate follows a random walk:
+\begin{equation}
+r_{t+1} = r_t + \sigma_r\,\varepsilon^r_t, \qquad \varepsilon^r_t \sim N(0,1)
+\end{equation}
+\begin{itemize}
+    \item Initial rate $r_0 = \bar{r} = 2\%$
+    \item No drift, no mean reversion ($\phi = 1$)
+    \item Rate-change volatility $\sigma_r = 0.7$ pp per year
+\end{itemize}
+
+\subsection{Stock Returns}
+
+\begin{equation}
+R^s_t = r_t + \mu_s + \sigma_s\,\varepsilon^s_t, \qquad \varepsilon^s_t \sim N(0,1)
+\end{equation}
+\begin{itemize}
+    \item Equity risk premium $\mu_s = 4.5\%$
+    \item Stock volatility $\sigma_s = 18\%$
+    \item Sharpe ratio $= \mu_s / \sigma_s = 0.25$
+\end{itemize}
+
+\subsection{Bond Returns (Duration Approximation)}
+
+For a bond portfolio with modified duration $D$:
+\begin{equation}
+R^b_t = r_t + \mu_b - D\,\sigma_r\,\varepsilon^r_t
+\end{equation}
+\begin{itemize}
+    \item Bond duration $D = 20$ years
+    \item Bond Sharpe ratio $= 0$ (no term premium, $\mu_b = 0$)
+    \item Bond return volatility $= D \times \sigma_r = 20 \times 0.7\% = 14\%$
+\end{itemize}
+
+\textit{Intuition.} With zero Sharpe ratio, holding long bonds earns no expected excess return over cash. The only reason to hold bonds is for duration hedging (matching the interest-rate sensitivity of liabilities).
+
+\subsection{Correlations}
+
+\begin{equation}
+\text{Corr}(\varepsilon^r_t,\, \varepsilon^s_t) = \rho = 0
+\end{equation}
+
+Rate shocks and stock shocks are independent.
+
+%----------------------------------------------------------------------
+\section{Covariance Matrix and Optimal Portfolio}
+%----------------------------------------------------------------------
+
+The variance--covariance matrix of excess returns is:
+\begin{equation}
+\Sigma =
+\begin{pmatrix}
+\sigma_s^2 & -D\,\sigma_s\,\sigma_r\,\rho \\[4pt]
+-D\,\sigma_s\,\sigma_r\,\rho & (D\,\sigma_r)^2
+\end{pmatrix}
+=
+\begin{pmatrix}
+0.0324 & 0 \\
+0 & 0.0196
+\end{pmatrix}
+\end{equation}
+
+The Merton optimal portfolio weights are:
+\begin{equation}
+\mathbf{w}^* = \frac{1}{\gamma}\,\Sigma^{-1}\,\boldsymbol{\mu}
+\end{equation}
+
+With $\rho = 0$ and $\mu_b = 0$, the matrix is diagonal and the solution simplifies to:
+\begin{align}
+w^*_{\text{stock}} &= \frac{\mu_s}{\gamma\,\sigma_s^2}
+= \frac{0.045}{2 \times 0.0324} \approx 69.4\% \\[4pt]
+w^*_{\text{bond}} &= \frac{\mu_b}{\gamma\,(D\,\sigma_r)^2}
+= \frac{0}{2 \times 0.0196} = 0\% \\[4pt]
+w^*_{\text{cash}} &= 1 - w^*_s - w^*_b \approx 30.6\%
+\end{align}
+
+\textit{Key implication.} With a zero bond Sharpe ratio, the speculative demand for bonds is zero. Any bond holding in the financial portfolio arises purely from the LDI hedge (matching duration of human capital and expense liabilities).
+
+%----------------------------------------------------------------------
+\section{Lifecycle Parameters}
+%----------------------------------------------------------------------
+
+\begin{table}[h]
+\centering
+\begin{tabular}{l r l}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+Start age & 25 & Career begins \\
+Retirement age & 65 & 40 working years \\
+End age & 95 & 30 years of retirement \\
+\midrule
+Initial earnings & \$200K & Annual pre-retirement income \\
+Earnings growth & 0\% & Flat real earnings \\
+Base expenses & \$100K & Subsistence expenses (working) \\
+Retirement expenses & \$100K & Subsistence expenses (retired) \\
+\midrule
+Initial financial wealth & \$100K & Starting savings \\
+Risk aversion $\gamma$ & 2.0 & Moderate risk aversion \\
+$\beta_{\text{HC}}$ & 0.0 & Human capital is bond-like \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%----------------------------------------------------------------------
+\section{Parameter Summary}
+%----------------------------------------------------------------------
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{l c r l}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Value} & \textbf{Derived quantities} \\
+\midrule
+\multicolumn{4}{l}{\textit{Interest rates}} \\
+Long-run real rate & $\bar{r}$ & 2.0\% & \\
+Rate-change vol & $\sigma_r$ & 0.7\% & YoY std dev of $\Delta r$ \\
+Persistence & $\phi$ & 1.0 & Random walk \\
+\midrule
+\multicolumn{4}{l}{\textit{Stocks}} \\
+Equity premium & $\mu_s$ & 4.5\% & \\
+Stock volatility & $\sigma_s$ & 18.0\% & Sharpe $= 0.25$ \\
+\midrule
+\multicolumn{4}{l}{\textit{Bonds}} \\
+Duration & $D$ & 20 yr & \\
+Bond Sharpe & & 0 & $\mu_b = 0$ \\
+Bond return vol & $D\sigma_r$ & 14.0\% & \\
+\midrule
+\multicolumn{4}{l}{\textit{Correlation}} \\
+Rate--stock corr & $\rho$ & 0 & Independent shocks \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
