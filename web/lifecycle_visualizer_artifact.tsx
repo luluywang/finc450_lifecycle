@@ -138,7 +138,7 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
 
   // Economic parameters
   riskFreeRate: 0.02,           // 2% real risk-free rate
-  equityPremium: 0.04,          // 4% equity premium
+  equityPremium: 0.045,         // 4.5% equity premium (matches DEFAULT_ECON_PARAMS.muExcess)
 
   // Initial wealth
   initialWealth: 100,           // $100k starting wealth
@@ -201,7 +201,7 @@ const CONSERVATIVE_LIFECYCLE_PARAMS: LifecycleParams = {
 
   // Economic parameters
   riskFreeRate: 0.02,
-  equityPremium: 0.04,
+  equityPremium: 0.045,
 
   // Initial wealth
   initialWealth: 100,
@@ -3247,6 +3247,26 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
   let latentRate = params.rBar;  // Latent rate follows pure random walk
   let currentRate = params.rBar; // Observed rate = capped latent rate
   const phi = params.phi;
+  const r = params.rBar;
+  const muBondVal = computeMuBond(params);
+
+  // Compute target allocations ONCE (constant, matching Python)
+  const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+    params.muStock, muBondVal, params.sigmaS, params.sigmaR,
+    params.rho, params.bondDuration, params.gamma
+  );
+
+  // Consumption rate: computed ONCE before the loop using target allocations and r_bar
+  // This matches Python simulate_paths() which uses a constant consumption rate
+  const expectedReturn = (
+    targetStock * (r + params.muStock) +
+    targetBond * (r + muBondVal) +
+    targetCash * r
+  );
+  const portfolioVar = computePortfolioVariance(
+    targetStock, targetBond, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+  );
+  const consumptionRate = expectedReturn - 0.5 * portfolioVar;
 
   // Track arrays for each year
   const {
@@ -3267,32 +3287,37 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     // Generate correlated shocks for this year
     const [stockShock, rateShock] = generateCorrelatedShocks(rand, params.rho);
 
+    // Save pre-shock rate for PV computation and bond returns (matches Python timing)
+    const preShockRate = currentRate;
+
     // Update interest rate using random walk (phi=1.0)
     [latentRate, currentRate] = updateInterestRate(latentRate, params.sigmaR, rateShock);
 
-    // Track interest rate
+    // Track interest rate (post-shock, for display)
     interestRateArr[i] = currentRate;
 
-    // Compute PVs and durations with current rate
+    // Compute PVs and durations with PRE-SHOCK rate (matches Python: rate_paths[sim, t])
+    // Python pre-generates the full rate path, then at time t uses rate_paths[sim, t]
+    // which is the rate BEFORE this period's shock is applied to wealth evolution
     let remainingEarnings: number[] = [];
     if (i < workingYears) {
       remainingEarnings = earnings.slice(i, workingYears);
     }
     const remainingExpenses = expenses.slice(i);
 
-    pvEarnings[i] = computePresentValue(remainingEarnings, currentRate, phi, params.rBar);
-    pvExpenses[i] = computePresentValue(remainingExpenses, currentRate, phi, params.rBar);
-    durationEarnings[i] = computeDuration(remainingEarnings, currentRate, phi, params.rBar);
-    durationExpenses[i] = computeDuration(remainingExpenses, currentRate, phi, params.rBar);
+    pvEarnings[i] = computePresentValue(remainingEarnings, preShockRate, phi, params.rBar);
+    pvExpenses[i] = computePresentValue(remainingExpenses, preShockRate, phi, params.rBar);
+    durationEarnings[i] = computeDuration(remainingEarnings, preShockRate, phi, params.rBar);
+    durationExpenses[i] = computeDuration(remainingExpenses, preShockRate, phi, params.rBar);
 
     humanCapital[i] = pvEarnings[i];
 
-    // Decompose human capital
+    // Decompose human capital (no cap on bond fraction — matches Python and median path)
     hcStock[i] = humanCapital[i] * params.stockBetaHC;
     const nonStockHC = humanCapital[i] * (1 - params.stockBetaHC);
 
     if (params.bondDuration > 0 && nonStockHC > 0) {
-      const bondFraction = Math.min(1, durationEarnings[i] / params.bondDuration);
+      const bondFraction = durationEarnings[i] / params.bondDuration;
       hcBond[i] = nonStockHC * bondFraction;
       hcCash[i] = nonStockHC * (1 - bondFraction);
     } else {
@@ -3308,18 +3333,13 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
       expCash[i] = pvExpenses[i];
     }
 
-    // Compute target allocation based on current market conditions
-    const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
-      params.muStock, computeMuBond(params), params.sigmaS, params.sigmaR,
-      params.rho, params.bondDuration, params.gamma
-    );
-
     totalWealth[i] = financialWealth[i] + humanCapital[i];
 
     // Portfolio weights using normalize helper
+    // Include expense hedge: + expBond, + expCash (matches Python simulate_paths)
     const targetFinStocks = targetStock * totalWealth[i] - hcStock[i];
-    const targetFinBonds = targetBond * totalWealth[i] - hcBond[i];
-    const targetFinCash = targetCash * totalWealth[i] - hcCash[i];
+    const targetFinBonds = targetBond * totalWealth[i] - hcBond[i] + expBond[i];
+    const targetFinCash = targetCash * totalWealth[i] - hcCash[i] + expCash[i];
 
     const [wS, wB, wC] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
@@ -3332,18 +3352,6 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
 
     // Consumption decision
     netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
-
-    // Consumption rate: expected return minus Jensen's correction for portfolio variance
-    const muBondVal = computeMuBond(params);
-    const expectedReturn = (
-      stockWeight[i] * (currentRate + params.muStock) +
-      bondWeight[i] * (currentRate + muBondVal) +
-      cashWeight[i] * currentRate
-    );
-    const portfolioVar = computePortfolioVariance(
-      stockWeight[i], bondWeight[i], params.sigmaS, params.sigmaR, params.bondDuration, params.rho
-    );
-    const consumptionRate = expectedReturn - 0.5 * portfolioVar;
 
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
@@ -3374,11 +3382,15 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     if (i < totalYears - 1) {
       const savings = earnings[i] - totalConsumption[i];
 
-      // Realized returns with shocks (arithmetic mean, matching Python)
-      const stockReturn = currentRate + params.muStock
+      // Realized returns with shocks (matching Python duration approximation)
+      // Stock return uses pre-shock rate as yield component (matches Python: rate_paths[sim, t])
+      const stockReturn = preShockRate + params.muStock
         + params.sigmaS * stockShock;
-      const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
-      const cashReturn = currentRate;
+      // Bond return: r_t - duration * delta_r + mu_bond (matches Python compute_duration_approx_returns)
+      // delta_r = currentRate - preShockRate = sigma_r * rateShock (when phi=1)
+      const deltaR = currentRate - preShockRate;
+      const bondReturn = preShockRate - params.bondDuration * deltaR + muBondVal;
+      const cashReturn = preShockRate;
 
       // Update cumulative stock return
       cumStockReturn *= (1 + stockReturn);
@@ -3414,9 +3426,9 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     variableConsumption,
     totalConsumption,
     netWorth,
-    targetStock: 0,
-    targetBond: 0,
-    targetCash: 0,
+    targetStock,
+    targetBond,
+    targetCash,
     cumulativeStockReturn: cumulativeStockReturnArr,
     interestRate: interestRateArr,
     // These are computed separately by computeNetFiPvAndDv01Paths, not in single-path simulation
@@ -3524,6 +3536,26 @@ function computeScenarioPath(
   let latentRate = params.rBar;  // Latent rate follows pure random walk
   let currentRate = params.rBar; // Observed rate = capped latent rate
   const phi = params.phi;
+  const r = params.rBar;
+  const muBondVal = computeMuBond(params);
+
+  // Compute target allocations ONCE (constant, matching Python)
+  const [targetStockAlloc, targetBondAlloc, targetCashAlloc] = computeFullMertonAllocationConstrained(
+    params.muStock, muBondVal, params.sigmaS, params.sigmaR,
+    params.rho, params.bondDuration, params.gamma
+  );
+
+  // Consumption rate: computed ONCE before the loop using target allocations and r_bar
+  // This matches Python simulate_paths() which uses a constant consumption rate
+  const expectedReturnConst = (
+    targetStockAlloc * (r + params.muStock) +
+    targetBondAlloc * (r + muBondVal) +
+    targetCashAlloc * r
+  );
+  const portfolioVarConst = computePortfolioVariance(
+    targetStockAlloc, targetBondAlloc, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+  );
+  const consumptionRateConst = expectedReturnConst - 0.5 * portfolioVarConst;
 
   const financialWealth = Array(totalYears).fill(0);
   const totalWealthArr = Array(totalYears).fill(0);
@@ -3561,53 +3593,63 @@ function computeScenarioPath(
       latentRate += scenario.rateShockMagnitude;
     }
 
+    // Save pre-shock rate for PV computation and bond returns (matches Python timing)
+    const preShockRate = currentRate;
+
     // Update interest rate using random walk (phi=1.0)
     [latentRate, currentRate] = updateInterestRate(latentRate, params.sigmaR, rateShock);
     rateHistory[i] = currentRate;
 
-    // Compute PVs with current rate
+    // Compute PVs with PRE-SHOCK rate (matches Python: rate_paths[sim, t])
     let remainingEarnings: number[] = [];
     if (i < workingYears) {
       remainingEarnings = earnings.slice(i, workingYears);
     }
     const remainingExpenses = expenses.slice(i);
 
-    const pvEarnings = computePresentValue(remainingEarnings, currentRate, phi, params.rBar);
-    const pvExpenses = computePresentValue(remainingExpenses, currentRate, phi, params.rBar);
-    const durationEarnings = computeDuration(remainingEarnings, currentRate, phi, params.rBar);
+    const pvEarnings = computePresentValue(remainingEarnings, preShockRate, phi, params.rBar);
+    const pvExpenses = computePresentValue(remainingExpenses, preShockRate, phi, params.rBar);
+    const durationEarnings = computeDuration(remainingEarnings, preShockRate, phi, params.rBar);
 
     const humanCapital = pvEarnings;
 
-    // HC decomposition for portfolio
+    // HC decomposition for portfolio (no cap on bond fraction — matches Python and median path)
     const hcStock = humanCapital * params.stockBetaHC;
     const nonStockHC = humanCapital * (1 - params.stockBetaHC);
     let hcBond = 0;
     let hcCash = 0;
     if (params.bondDuration > 0 && nonStockHC > 0) {
-      const bondFraction = Math.min(1, durationEarnings / params.bondDuration);
+      const bondFraction = durationEarnings / params.bondDuration;
       hcBond = nonStockHC * bondFraction;
       hcCash = nonStockHC * (1 - bondFraction);
     } else {
       hcCash = nonStockHC;
     }
 
-    // Target allocation
-    const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
-      params.muStock, computeMuBond(params), params.sigmaS, params.sigmaR,
-      params.rho, params.bondDuration, params.gamma
-    );
+    // Decompose expenses
+    let expBond = 0;
+    let expCash = 0;
+    if (params.bondDuration > 0 && pvExpenses > 0) {
+      const durationExp = computeDuration(remainingExpenses, preShockRate, phi, params.rBar);
+      const bondFraction = durationExp / params.bondDuration;
+      expBond = pvExpenses * bondFraction;
+      expCash = pvExpenses * (1 - bondFraction);
+    } else {
+      expCash = pvExpenses;
+    }
 
     const totalWealth = financialWealth[i] + humanCapital;
     totalWealthArr[i] = totalWealth;
 
     // Portfolio weights using normalize helper
-    const targetFinStocks = targetStock * totalWealth - hcStock;
-    const targetFinBonds = targetBond * totalWealth - hcBond;
-    const targetFinCash = targetCash * totalWealth - hcCash;
+    // Include expense hedge: + expBond, + expCash (matches Python simulate_paths)
+    const targetFinStocks = targetStockAlloc * totalWealth - hcStock;
+    const targetFinBonds = targetBondAlloc * totalWealth - hcBond + expBond;
+    const targetFinCash = targetCashAlloc * totalWealth - hcCash + expCash;
 
     const [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
-      financialWealth[i], targetStock, targetBond, targetCash,
+      financialWealth[i], targetStockAlloc, targetBondAlloc, targetCashAlloc,
       false  // no leverage
     );
 
@@ -3615,19 +3657,8 @@ function computeScenarioPath(
     const netWorth = humanCapital + financialWealth[i] - pvExpenses;
 
     if (scenario.consumptionRule === 'adaptive') {
-      // Adaptive: consume based on net worth, always protect subsistence
-      // Consumption rate: expected return minus Jensen's correction for portfolio variance
-      const muBondVal = computeMuBond(params);
-      const expectedReturn = (
-        stockWeight * (currentRate + params.muStock) +
-        bondWeight * (currentRate + muBondVal) +
-        cashWeight * currentRate
-      );
-      const portfolioVar = computePortfolioVariance(
-        stockWeight, bondWeight, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
-      );
-      const consumptionRate = expectedReturn - 0.5 * portfolioVar;
-      variableConsumption[i] = Math.max(0, consumptionRate * netWorth);
+      // Adaptive: consume based on net worth using constant consumption rate (matches Python)
+      variableConsumption[i] = Math.max(0, consumptionRateConst * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
       if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
@@ -3702,15 +3733,18 @@ function computeScenarioPath(
     // Wealth accumulation
     const savings = earnings[i] - totalConsumption[i];
 
-    // Realized returns with shocks (arithmetic mean, matching Python)
-    const stockReturn = currentRate + params.muStock
+    // Realized returns with shocks (matching Python duration approximation)
+    // Stock return uses pre-shock rate as yield component (matches Python: rate_paths[sim, t])
+    const stockReturn = preShockRate + params.muStock
       + params.sigmaS * stockShock;
     cumStockReturn *= (1 + stockReturn);
     cumulativeStockReturn[i] = cumStockReturn;
 
     if (i < totalYears - 1) {
-      const bondReturn = currentRate - params.bondDuration * params.sigmaR * rateShock;
-      const cashReturn = currentRate;
+      // Bond return: r_t - duration * delta_r + mu_bond (matches Python compute_duration_approx_returns)
+      const deltaR = currentRate - preShockRate;
+      const bondReturn = preShockRate - params.bondDuration * deltaR + muBondVal;
+      const cashReturn = preShockRate;
 
       const portfolioReturn = stockWeight * stockReturn +
                              bondWeight * bondReturn +
