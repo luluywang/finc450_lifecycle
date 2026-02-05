@@ -49,7 +49,7 @@ const DEFAULT_ECON_PARAMS: EconomicParams = {
  * mu_bond = bond_sharpe * bond_duration * sigma_r
  */
 function computeMuBondFromEcon(econ: EconomicParams): number {
-  return econ.bondSharpe * econ.bondDuration * econ.sigmaR;
+  return muBond(econ.bondSharpe, econ.bondDuration, econ.sigmaR);
 }
 
 /**
@@ -388,9 +388,52 @@ interface Params {
   phi: number;
 }
 
-// Helper function to compute muBond from bondSharpe
+// Raw muBond calculation from primitive values
+function muBond(bondSharpe: number, bondDuration: number, sigmaR: number): number {
+  return bondSharpe * bondDuration * sigmaR;
+}
+
+// Helper function to compute muBond from Params
 function computeMuBond(params: Params): number {
-  return params.bondSharpe * params.bondDuration * params.sigmaR;
+  return muBond(params.bondSharpe, params.bondDuration, params.sigmaR);
+}
+
+// Convert LifecycleParams + EconomicParams to legacy Params interface
+function toLegacyParams(lp: LifecycleParams, ep: EconomicParams): Params {
+  return {
+    startAge: lp.startAge,
+    retirementAge: lp.retirementAge,
+    endAge: lp.endAge,
+    initialEarnings: lp.initialEarnings,
+    earningsGrowth: lp.earningsGrowth,
+    earningsHumpAge: lp.earningsHumpAge,
+    earningsDecline: lp.earningsDecline,
+    baseExpenses: lp.baseExpenses,
+    expenseGrowth: lp.expenseGrowth,
+    retirementExpenses: lp.retirementExpenses,
+    stockBetaHC: lp.stockBetaHumanCapital,
+    gamma: lp.gamma,
+    initialWealth: lp.initialWealth,
+    rBar: ep.rBar,
+    muStock: ep.muExcess,
+    bondSharpe: ep.bondSharpe,
+    sigmaS: ep.sigmaS,
+    sigmaR: ep.sigmaR,
+    rho: ep.rho,
+    bondDuration: ep.bondDuration,
+    phi: ep.phi,
+  };
+}
+
+// Compute full portfolio variance with stock-bond correlation
+function computePortfolioVariance(
+  wS: number, wB: number,
+  sigmaS: number, sigmaR: number,
+  duration: number, rho: number
+): number {
+  const sigmaB = duration * sigmaR;
+  const covSB = -duration * sigmaS * sigmaR * rho;
+  return wS * wS * sigmaS * sigmaS + wB * wB * sigmaB * sigmaB + 2 * wS * wB * covSB;
 }
 
 interface LifecycleResult {
@@ -1053,43 +1096,8 @@ function simulateWithStrategy(
   }
 
   // Get BASE earnings and expenses profiles (deterministic)
-  // Create a Params object from LifecycleParams for the existing functions
-  const legacyParams: Params = {
-    startAge: params.startAge,
-    retirementAge: params.retirementAge,
-    endAge: params.endAge,
-    initialEarnings: params.initialEarnings,
-    earningsGrowth: params.earningsGrowth,
-    earningsHumpAge: params.earningsHumpAge,
-    earningsDecline: params.earningsDecline,
-    baseExpenses: params.baseExpenses,
-    expenseGrowth: params.expenseGrowth,
-    retirementExpenses: params.retirementExpenses,
-    stockBetaHC: params.stockBetaHumanCapital,
-    gamma: params.gamma,
-    initialWealth: params.initialWealth,
-    rBar: econParams.rBar,
-    muStock: econParams.muExcess,
-    bondSharpe: econParams.bondSharpe,
-    sigmaS: econParams.sigmaS,
-    sigmaR: econParams.sigmaR,
-    rho: econParams.rho,
-    bondDuration: econParams.bondDuration,
-    phi: econParams.phi,
-  };
-
-  const earningsProfile = computeEarningsProfile(legacyParams);
-  const expenseProfile = computeExpenseProfile(legacyParams);
-
-  const baseEarnings: number[] = Array(totalYears).fill(0);
-  const expenses: number[] = Array(totalYears).fill(0);
-  for (let t = 0; t < workingYears; t++) {
-    baseEarnings[t] = earningsProfile[t];
-    expenses[t] = expenseProfile.working[t];
-  }
-  for (let t = workingYears; t < totalYears; t++) {
-    expenses[t] = expenseProfile.retirement[t - workingYears];
-  }
+  const legacyParams = toLegacyParams(params, econParams);
+  const { earnings: baseEarnings, expenses } = initializeEarningsExpenses(legacyParams, totalYears, workingYears);
 
   const rBar = econParams.rBar;
   const phi = econParams.phi;
@@ -1385,14 +1393,8 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
         wB * (r + muBond) +
         state.targetCash * r;
 
-      // Full portfolio variance with correlation
-      // Bond volatility = duration * rate volatility
-      const sigmaB = D * sigmaR;
-      // Stock-bond covariance (negative when rho > 0: rising rates hurt bonds)
-      const covSB = -D * sigmaS * sigmaR * rho;
-      const portfolioVar = wS * wS * sigmaS * sigmaS + wB * wB * sigmaB * sigmaB + 2 * wS * wB * covSB;
-
-      // Median portfolio return = expected - 0.5 * variance (Jensen's correction)
+      // Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
+      const portfolioVar = computePortfolioVariance(wS, wB, sigmaS, sigmaR, D, rho);
       const medianReturn = expectedReturn - 0.5 * portfolioVar;
       effectiveConsumptionRate = medianReturn + state.params.consumptionBoost;
     } else {
@@ -1836,42 +1838,8 @@ function computeNetFiPvAndDv01Paths(
   const stockBeta = params.stockBetaHumanCapital;
 
   // Get base earnings and expenses (deterministic)
-  const legacyParams: Params = {
-    startAge: params.startAge,
-    retirementAge: params.retirementAge,
-    endAge: params.endAge,
-    initialEarnings: params.initialEarnings,
-    earningsGrowth: params.earningsGrowth,
-    earningsHumpAge: params.earningsHumpAge,
-    earningsDecline: params.earningsDecline,
-    baseExpenses: params.baseExpenses,
-    expenseGrowth: params.expenseGrowth,
-    retirementExpenses: params.retirementExpenses,
-    stockBetaHC: params.stockBetaHumanCapital,
-    gamma: params.gamma,
-    initialWealth: params.initialWealth,
-    rBar: econParams.rBar,
-    muStock: econParams.muExcess,
-    bondSharpe: econParams.bondSharpe,
-    sigmaS: econParams.sigmaS,
-    sigmaR: econParams.sigmaR,
-    rho: econParams.rho,
-    bondDuration: econParams.bondDuration,
-    phi: econParams.phi,
-  };
-
-  const earningsProfile = computeEarningsProfile(legacyParams);
-  const expenseProfile = computeExpenseProfile(legacyParams);
-
-  const baseEarnings: number[] = Array(nPeriods).fill(0);
-  const expenses: number[] = Array(nPeriods).fill(0);
-  for (let t = 0; t < workingYears; t++) {
-    baseEarnings[t] = earningsProfile[t];
-    expenses[t] = expenseProfile.working[t];
-  }
-  for (let t = workingYears; t < nPeriods; t++) {
-    expenses[t] = expenseProfile.retirement[t - workingYears];
-  }
+  const legacyParams = toLegacyParams(params, econParams);
+  const { earnings: baseEarnings, expenses } = initializeEarningsExpenses(legacyParams, nPeriods, workingYears);
 
   const netFiPvPaths: number[][] = [];
   const dv01Paths: number[][] = [];
@@ -2694,6 +2662,24 @@ function computeExpenseProfile(params: Params): { working: number[]; retirement:
   return { working, retirement };
 }
 
+// Initialize earnings and expenses arrays from profile functions
+function initializeEarningsExpenses(
+  params: Params, totalYears: number, workingYears: number
+): { earnings: number[]; expenses: number[] } {
+  const earningsProfile = computeEarningsProfile(params);
+  const expenseProfile = computeExpenseProfile(params);
+  const earnings = Array(totalYears).fill(0);
+  const expenses = Array(totalYears).fill(0);
+  for (let i = 0; i < workingYears; i++) {
+    earnings[i] = earningsProfile[i];
+    expenses[i] = expenseProfile.working[i];
+  }
+  for (let i = workingYears; i < totalYears; i++) {
+    expenses[i] = expenseProfile.retirement[i - workingYears];
+  }
+  return { earnings, expenses };
+}
+
 function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const r = params.rBar;
   const phi = params.phi;
@@ -2709,20 +2695,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
 
   // Initialize arrays
   const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
-  const earnings = Array(totalYears).fill(0);
-  const expenses = Array(totalYears).fill(0);
-
-  // Fill earnings and expenses
-  const earningsProfile = computeEarningsProfile(params);
-  const expenseProfile = computeExpenseProfile(params);
-
-  for (let i = 0; i < workingYears; i++) {
-    earnings[i] = earningsProfile[i];
-    expenses[i] = expenseProfile.working[i];
-  }
-  for (let i = workingYears; i < totalYears; i++) {
-    expenses[i] = expenseProfile.retirement[i - workingYears];
-  }
+  const { earnings, expenses } = initializeEarningsExpenses(params, totalYears, workingYears);
 
   // Forward-looking present values
   const pvEarnings = Array(totalYears).fill(0);
@@ -2799,12 +2772,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     targetCash * r
   );
   // Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
-  const sigmaB = params.bondDuration * params.sigmaR;
-  const covSB = -params.bondDuration * params.sigmaS * params.sigmaR * params.rho;
-  const portfolioVar = (
-    targetStock * targetStock * params.sigmaS * params.sigmaS +
-    targetBond * targetBond * sigmaB * sigmaB +
-    2 * targetStock * targetBond * covSB
+  const portfolioVar = computePortfolioVariance(
+    targetStock, targetBond, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
   );
   const medianReturn = expectedReturn - 0.5 * portfolioVar;
   // consumption_boost defaults to 0.0 in Python, matching the default behavior
@@ -3184,20 +3153,7 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
 
   // Initialize arrays
   const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
-  const earnings = Array(totalYears).fill(0);
-  const expenses = Array(totalYears).fill(0);
-
-  // Fill earnings and expenses (these don't change with market shocks)
-  const earningsProfile = computeEarningsProfile(params);
-  const expenseProfile = computeExpenseProfile(params);
-
-  for (let i = 0; i < workingYears; i++) {
-    earnings[i] = earningsProfile[i];
-    expenses[i] = expenseProfile.working[i];
-  }
-  for (let i = workingYears; i < totalYears; i++) {
-    expenses[i] = expenseProfile.retirement[i - workingYears];
-  }
+  const { earnings, expenses } = initializeEarningsExpenses(params, totalYears, workingYears);
 
   // State variables that evolve with shocks
   let latentRate = params.rBar;  // Latent rate follows pure random walk
@@ -3205,25 +3161,12 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
   const phi = params.phi;
 
   // Track arrays for each year
-  const pvEarnings = Array(totalYears).fill(0);
-  const pvExpenses = Array(totalYears).fill(0);
-  const durationEarnings = Array(totalYears).fill(0);
-  const durationExpenses = Array(totalYears).fill(0);
-  const humanCapital = Array(totalYears).fill(0);
-  const hcStock = Array(totalYears).fill(0);
-  const hcBond = Array(totalYears).fill(0);
-  const hcCash = Array(totalYears).fill(0);
-  const expBond = Array(totalYears).fill(0);
-  const expCash = Array(totalYears).fill(0);
-  const financialWealth = Array(totalYears).fill(0);
-  const totalWealth = Array(totalYears).fill(0);
-  const stockWeight = Array(totalYears).fill(0);
-  const bondWeight = Array(totalYears).fill(0);
-  const cashWeight = Array(totalYears).fill(0);
-  const subsistenceConsumption = [...expenses];
-  const variableConsumption = Array(totalYears).fill(0);
-  const totalConsumption = Array(totalYears).fill(0);
-  const netWorth = Array(totalYears).fill(0);
+  const {
+    pvEarnings, pvExpenses, durationEarnings, durationExpenses,
+    humanCapital, hcStock, hcBond, hcCash, expBond, expCash,
+    financialWealth, totalWealth, stockWeight, bondWeight, cashWeight,
+    subsistenceConsumption, variableConsumption, totalConsumption, netWorth,
+  } = initializeLifecycleArrays(totalYears, expenses);
   // Market conditions tracking
   const interestRateArr = Array(totalYears).fill(params.rBar);
   const cumulativeStockReturnArr = Array(totalYears).fill(1);
@@ -3382,6 +3325,9 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     targetCash: 0,
     cumulativeStockReturn: cumulativeStockReturnArr,
     interestRate: interestRateArr,
+    // These are computed separately by computeNetFiPvAndDv01Paths, not in single-path simulation
+    netFiPv: Array(totalYears).fill(0),
+    dv01: Array(totalYears).fill(0),
   };
 }
 
@@ -3392,6 +3338,60 @@ function computePercentile(values: number[], p: number): number {
   const upper = Math.ceil(index);
   if (lower === upper) return sorted[lower];
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
+// Create histogram bins from two datasets using geometrically spaced edges
+function createGeomHistogramBins(
+  dataA: number[], dataB: number[],
+  edges: number[],
+  labelFn: (lo: number) => string,
+  nameA = 'LDI', nameB = 'RoT'
+): { bin: string; [key: string]: number | string }[] {
+  const result: { bin: string; [key: string]: number | string }[] = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const lo = edges[i];
+    const hi = edges[i + 1];
+    result.push({
+      bin: labelFn(lo),
+      [nameA]: dataA.filter(v => v >= lo && v < hi).length,
+      [nameB]: dataB.filter(v => v >= lo && v < hi).length,
+    });
+  }
+  return result;
+}
+
+// Create geometrically spaced bin edges
+function geomSpacedEdges(min: number, max: number, numBins: number): number[] {
+  const edges: number[] = [];
+  for (let i = 0; i <= numBins; i++) {
+    edges.push(min * Math.pow(max / min, i / numBins));
+  }
+  return edges;
+}
+
+// Initialize standard lifecycle tracking arrays (all zero-filled except subsistenceConsumption)
+function initializeLifecycleArrays(totalYears: number, expenses: number[]) {
+  return {
+    pvEarnings: Array(totalYears).fill(0) as number[],
+    pvExpenses: Array(totalYears).fill(0) as number[],
+    durationEarnings: Array(totalYears).fill(0) as number[],
+    durationExpenses: Array(totalYears).fill(0) as number[],
+    humanCapital: Array(totalYears).fill(0) as number[],
+    hcStock: Array(totalYears).fill(0) as number[],
+    hcBond: Array(totalYears).fill(0) as number[],
+    hcCash: Array(totalYears).fill(0) as number[],
+    expBond: Array(totalYears).fill(0) as number[],
+    expCash: Array(totalYears).fill(0) as number[],
+    financialWealth: Array(totalYears).fill(0) as number[],
+    totalWealth: Array(totalYears).fill(0) as number[],
+    stockWeight: Array(totalYears).fill(0) as number[],
+    bondWeight: Array(totalYears).fill(0) as number[],
+    cashWeight: Array(totalYears).fill(0) as number[],
+    subsistenceConsumption: [...expenses] as number[],
+    variableConsumption: Array(totalYears).fill(0) as number[],
+    totalConsumption: Array(totalYears).fill(0) as number[],
+    netWorth: Array(totalYears).fill(0) as number[],
+  };
 }
 
 // =============================================================================
@@ -3424,20 +3424,7 @@ function computeScenarioPath(
   const workingYears = params.retirementAge - params.startAge;
 
   const ages = Array.from({ length: totalYears }, (_, i) => params.startAge + i);
-  const earnings = Array(totalYears).fill(0);
-  const expenses = Array(totalYears).fill(0);
-
-  // Fill earnings and expenses
-  const earningsProfile = computeEarningsProfile(params);
-  const expenseProfile = computeExpenseProfile(params);
-
-  for (let i = 0; i < workingYears; i++) {
-    earnings[i] = earningsProfile[i];
-    expenses[i] = expenseProfile.working[i];
-  }
-  for (let i = workingYears; i < totalYears; i++) {
-    expenses[i] = expenseProfile.retirement[i - workingYears];
-  }
+  const { earnings, expenses } = initializeEarningsExpenses(params, totalYears, workingYears);
 
   // State tracking
   let latentRate = params.rBar;  // Latent rate follows pure random walk
@@ -3821,11 +3808,14 @@ const formatDollar = (value: number) => Math.round(value).toLocaleString();
 const formatPercent = (value: number) => `${Math.round(value)}`;
 const formatYears = (value: number) => value.toFixed(1);
 
-const dollarMTooltipFormatter = (value: number | undefined) => value !== undefined ? formatDollarM(value) : '';
-const dollarKTooltipFormatter = (value: number | undefined) => value !== undefined ? formatDollarK(value) : '';
-const dollarTooltipFormatter = (value: number | undefined) => value !== undefined ? `$${formatDollar(value)}k` : '';
-const percentTooltipFormatter = (value: number | undefined) => value !== undefined ? `${Math.round(value)}%` : '';
-const yearsTooltipFormatter = (value: number | undefined) => value !== undefined ? `${formatYears(value)} yrs` : '';
+const tooltipFmt = (fn: (v: number) => string) =>
+  (v: number | undefined) => v !== undefined ? fn(v) : '';
+
+const dollarMTooltipFormatter = tooltipFmt(formatDollarM);
+const dollarKTooltipFormatter = tooltipFmt(formatDollarK);
+const dollarTooltipFormatter = tooltipFmt((v) => `$${formatDollar(v)}k`);
+const percentTooltipFormatter = tooltipFmt((v) => `${Math.round(v)}%`);
+const yearsTooltipFormatter = tooltipFmt((v) => `${formatYears(v)} yrs`);
 
 function ChartSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -4935,12 +4925,11 @@ export default function LifecycleVisualizer() {
                         const wS = result.targetStock;
                         const wB = result.targetBond;
                         const wC = result.targetCash;
-                        const muBond = computeMuBondFromEcon(econParams);
-                        const expectedReturn = wS * (r + econParams.muExcess) + wB * (r + muBond) + wC * r;
-                        const D = econParams.bondDuration;
-                        const sigmaB = D * econParams.sigmaR;
-                        const covSB = -D * econParams.sigmaS * econParams.sigmaR * econParams.rho;
-                        const portfolioVar = wS * wS * econParams.sigmaS * econParams.sigmaS + wB * wB * sigmaB * sigmaB + 2 * wS * wB * covSB;
+                        const muBondVal = computeMuBondFromEcon(econParams);
+                        const expectedReturn = wS * (r + econParams.muExcess) + wB * (r + muBondVal) + wC * r;
+                        const portfolioVar = computePortfolioVariance(
+                          wS, wB, econParams.sigmaS, econParams.sigmaR, econParams.bondDuration, econParams.rho
+                        );
                         const medianReturn = expectedReturn - 0.5 * portfolioVar;
                         return (
                           <div style={{ textAlign: 'center', fontSize: '12px', color: '#555' }}>
@@ -5342,7 +5331,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="scenario" fontSize={11} />
                         <YAxis fontSize={11} domain={[0, 60]} tickFormatter={(v) => `${v}%`} />
-                        <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, '']} />
+                        <Tooltip formatter={(v: number | undefined) => v !== undefined ? [`${v.toFixed(1)}%`, ''] : ''} />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
                         <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
                         <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
@@ -5379,7 +5368,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="scenario" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
-                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                        <Tooltip formatter={(v: number | undefined) => v !== undefined ? [`$${Math.round(v)}k`, ''] : ''} />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
                         <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
                         <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
@@ -5416,7 +5405,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="scenario" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
-                        <Tooltip formatter={(v: number) => [`$${Math.round(v)}k`, '']} />
+                        <Tooltip formatter={(v: number | undefined) => v !== undefined ? [`$${Math.round(v)}k`, ''] : ''} />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
                         <Bar dataKey="LDI" fill="#2980b9" name="LDI" />
                         <Bar dataKey="RoT" fill="#d4a84c" name="RoT" />
@@ -5660,7 +5649,6 @@ export default function LifecycleVisualizer() {
               }
 
               // Panel 7 data: Terminal wealth histogram
-              // Use log-scale bins matching Python: np.geomspace(floor_val, max_val, 20)
               const ldiTerminalWealth = scenario.ldi.result.finalWealth as number[];
               const rotTerminalWealth = scenario.rot.result.finalWealth as number[];
               const wealthFloor = 10;
@@ -5670,25 +5658,13 @@ export default function LifecycleVisualizer() {
                 computePercentile(ldiWealthFloored, 99),
                 computePercentile(rotWealthFloored, 99)
               );
-              // Create geometrically spaced bins
-              const numWealthBins = 15;
-              const wealthBins: number[] = [];
-              for (let i = 0; i <= numWealthBins; i++) {
-                wealthBins.push(wealthFloor * Math.pow(wealthMax / wealthFloor, i / numWealthBins));
-              }
-              const wealthHistData: { bin: string; LDI: number; RoT: number }[] = [];
-              for (let i = 0; i < wealthBins.length - 1; i++) {
-                const lo = wealthBins[i];
-                const hi = wealthBins[i + 1];
-                wealthHistData.push({
-                  bin: `$${Math.round(lo)}k`,
-                  LDI: ldiWealthFloored.filter(w => w >= lo && w < hi).length,
-                  RoT: rotWealthFloored.filter(w => w >= lo && w < hi).length,
-                });
-              }
+              const wealthBins = geomSpacedEdges(wealthFloor, wealthMax, 15);
+              const wealthHistData = createGeomHistogramBins(
+                ldiWealthFloored, rotWealthFloored, wealthBins,
+                (lo) => `$${Math.round(lo)}k`
+              );
 
               // Panel 8 data: PV consumption histogram
-              // Use log-scale bins matching Python: np.geomspace(min_val, max_val, 20)
               const ldiPvConsumption = scenario.ldi.pvConsumption;
               const rotPvConsumption = scenario.rot.pvConsumption;
               const pvFloor = 100;
@@ -5702,21 +5678,11 @@ export default function LifecycleVisualizer() {
                 computePercentile(ldiPvFloored, 99),
                 computePercentile(rotPvFloored, 99)
               );
-              const numPvBins = 15;
-              const pvBins: number[] = [];
-              for (let i = 0; i <= numPvBins; i++) {
-                pvBins.push(pvMin * Math.pow(pvMax / pvMin, i / numPvBins));
-              }
-              const pvHistData: { bin: string; LDI: number; RoT: number }[] = [];
-              for (let i = 0; i < pvBins.length - 1; i++) {
-                const lo = pvBins[i];
-                const hi = pvBins[i + 1];
-                pvHistData.push({
-                  bin: `$${Math.round(lo / 1000)}M`,
-                  LDI: ldiPvFloored.filter(pv => pv >= lo && pv < hi).length,
-                  RoT: rotPvFloored.filter(pv => pv >= lo && pv < hi).length,
-                });
-              }
+              const pvBins = geomSpacedEdges(pvMin, pvMax, 15);
+              const pvHistData = createGeomHistogramBins(
+                ldiPvFloored, rotPvFloored, pvBins,
+                (lo) => `$${Math.round(lo / 1000)}M`
+              );
 
               // Panel 9 data: Net FI PV (median path comparison)
               const netFiPvData = ages.map((age, i) => ({
@@ -5980,7 +5946,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
-                        <Tooltip formatter={(v: number, name: string) => [`$${Math.round(v)}k`, name]} />
+                        <Tooltip formatter={(v, name) => [`$${Math.round(v as number)}k`, name]} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
                         {/* LDI lines */}
@@ -6006,7 +5972,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}`} />
-                        <Tooltip formatter={(v: number, name: string) => [`$${Math.round(v)}`, name]} />
+                        <Tooltip formatter={(v, name) => [`$${Math.round(v as number)}`, name]} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
                         {/* LDI lines */}
