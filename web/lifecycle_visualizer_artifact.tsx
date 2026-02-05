@@ -4738,12 +4738,12 @@ export default function LifecycleVisualizer() {
                   </ResponsiveContainer>
                 </ChartCard>
 
-                <ChartCard title="Cumulative Stock Return (Growth of $1)">
+                <ChartCard title="Cumulative Stock Return (Growth of $1, Log Scale)">
                   <ResponsiveContainer width="100%" height={280}>
                     <LineChart data={oneDrawChartData}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="age" fontSize={11} />
-                      <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
+                      <YAxis fontSize={11} scale="log" domain={['auto', 'auto']} allowDataOverflow tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
                       <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(2)}x` : ''} />
                       <Legend wrapperStyle={{ fontSize: '11px' }} />
                       <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
