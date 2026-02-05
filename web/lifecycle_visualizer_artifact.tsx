@@ -427,7 +427,7 @@ interface LifecycleResult {
   dv01: number[];         // Dollar Value of 01bp rate change (per percentage point)
 }
 
-type PageType = 'base' | 'scenarios';
+type PageType = 'base' | 'oneDraw' | 'scenarios';
 
 type ConsumptionRule = 'adaptive' | 'fourPercent';
 
@@ -498,14 +498,11 @@ function updateInterestRate(
   latentRate: number,
   sigmaR: number,
   rateShock: number,
-  rateFloor: number = -0.02,
-  rateCap: number = 0.15
 ): [number, number] {
   // Random walk update: r_t = r_{t-1} + sigma_r * shock
   const newLatentRate = latentRate + sigmaR * rateShock;
-  // Observed rate = capped latent rate
-  const observedRate = Math.max(rateFloor, Math.min(rateCap, newLatentRate));
-  return [newLatentRate, observedRate];
+  // No floor/cap — matches Python core/economics.py
+  return [newLatentRate, newLatentRate];
 }
 
 // =============================================================================
@@ -3913,6 +3910,15 @@ export default function LifecycleVisualizer() {
     rateShockMagnitude: number;
   } | null>(null);
 
+  // One Draw state
+  const [oneDrawSeedInput, setOneDrawSeedInput] = useState('');
+  const [oneDrawVersion, setOneDrawVersion] = useState(0);
+  const [oneDrawComputing, setOneDrawComputing] = useState(false);
+  const [cachedOneDraw, setCachedOneDraw] = useState<{
+    ldiResult: SimulationResult;
+    seed: number;
+  } | null>(null);
+
   // Create LifecycleParams for runTeachingScenarios
   const lifecycleParams = useMemo((): LifecycleParams => ({
     startAge: params.startAge,
@@ -4000,6 +4006,124 @@ export default function LifecycleVisualizer() {
 
   // teachingScenarios is the SINGLE SOURCE OF TRUTH for both Summary and individual tabs
   const teachingScenarios = cachedTeachingScenarios;
+
+  // ==========================================================================
+  // One Draw Computation
+  // ==========================================================================
+  const [pendingOneDrawParams, setPendingOneDrawParams] = useState<{
+    lifecycleParams: LifecycleParams;
+    econParams: EconomicParams;
+    seed: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (oneDrawVersion === 0) return;
+    if (!pendingOneDrawParams) return;
+
+    const { lifecycleParams: lp, econParams: ep, seed } = pendingOneDrawParams;
+    const totalYears = lp.endAge - lp.startAge;
+
+    // Generate shocks for one simulation
+    const rand = mulberry32(seed);
+    const rateShocks: number[] = [];
+    const stockShocks: number[] = [];
+    for (let t = 0; t < totalYears; t++) {
+      const [sShock, rShock] = generateCorrelatedShocks(rand, ep.rho);
+      stockShocks.push(sShock);
+      rateShocks.push(rShock);
+    }
+
+    // Run LDI strategy with these shocks
+    const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+    const ldiResult = simulateWithStrategy(
+      ldiStrategy, lp, ep,
+      [rateShocks], [stockShocks],
+      null, `One Draw (seed=${seed})`
+    );
+
+    setCachedOneDraw({ ldiResult, seed });
+    setOneDrawComputing(false);
+  }, [oneDrawVersion, pendingOneDrawParams]);
+
+  // Transform cached one-draw result into chart data
+  const oneDrawChartData = useMemo(() => {
+    if (!cachedOneDraw) return null;
+    const { ldiResult } = cachedOneDraw;
+    const ages = ldiResult.ages;
+    const fw = ldiResult.financialWealth as number[];
+    const rates = ldiResult.interestRates as number[];
+    const stockReturns = ldiResult.stockReturns as number[];
+    const hc = ldiResult.humanCapital as number[];
+    const sW = ldiResult.stockWeight as number[];
+    const bW = ldiResult.bondWeight as number[];
+    const cW = ldiResult.cashWeight as number[];
+    const subsCons = ldiResult.subsistenceConsumption as number[];
+    const varCons = ldiResult.variableConsumption as number[];
+    const earnings = ldiResult.earnings as number[];
+
+    // Compute cumulative stock return (growth of $1)
+    const cumStockReturn: number[] = [1];
+    for (let i = 0; i < stockReturns.length; i++) {
+      cumStockReturn.push(cumStockReturn[i] * (1 + stockReturns[i]));
+    }
+
+    // Compute bond returns: r_t + mu_bond - D * delta_r
+    const muBond = computeMuBondFromEcon(econParams);
+    const D = econParams.bondDuration;
+    const bondReturns: number[] = [];
+    for (let t = 0; t < ages.length - 1; t++) {
+      const deltaR = rates[t + 1] - rates[t];
+      bondReturns.push(rates[t] + muBond - D * deltaR);
+    }
+    bondReturns.push(rates[ages.length - 1] + muBond); // last period: no rate change
+
+    // Compute cumulative bond return (growth of $1)
+    const cumBondReturn: number[] = [1];
+    for (let i = 0; i < bondReturns.length; i++) {
+      cumBondReturn.push(cumBondReturn[i] * (1 + bondReturns[i]));
+    }
+
+    // Compute rebalancing: purchase = fw[t+1]*w[t+1] - fw[t]*w[t]*(1+asset_ret[t])
+    const stockPurchasePct: (number | null)[] = [null]; // no trade at t=0
+    const bondPurchasePct: (number | null)[] = [null];
+    for (let t = 0; t < ages.length - 1; t++) {
+      const stockAfter = fw[t] * sW[t] * (1 + stockReturns[t]);
+      const bondAfter = fw[t] * bW[t] * (1 + bondReturns[t]);
+      const sPurch = fw[t + 1] * sW[t + 1] - stockAfter;
+      const bPurch = fw[t + 1] * bW[t + 1] - bondAfter;
+      stockPurchasePct.push(fw[t + 1] > 0 ? (sPurch / fw[t + 1]) * 100 : 0);
+      bondPurchasePct.push(fw[t + 1] > 0 ? (bPurch / fw[t + 1]) * 100 : 0);
+    }
+
+    return ages.map((age, i) => ({
+      age,
+      // Market
+      interestRate: rates[i] * 100,
+      cumStockReturn: cumStockReturn[i],
+      cumBondReturn: cumBondReturn[i],
+      // Wealth
+      humanCapital: hc[i],
+      financialWealth: fw[i],
+      totalWealth: hc[i] + fw[i],
+      // Allocation
+      stockWeight: sW[i] * 100,
+      bondWeight: bW[i] * 100,
+      cashWeight: cW[i] * 100,
+      // Consumption
+      subsistence: subsCons[i],
+      variable: varCons[i],
+      totalConsumption: subsCons[i] + varCons[i],
+      // Base case median reference
+      baseMedianFW: result.financialWealth[i],
+      baseMedianConsumption: result.totalConsumption[i],
+      // Cash flow
+      earnings: earnings[i],
+      cashFlow: earnings[i] - (subsCons[i] + varCons[i]),
+      // Rebalancing
+      stockPurchasePct: stockPurchasePct[i],
+      bondPurchasePct: bondPurchasePct[i],
+    }));
+  }, [cachedOneDraw, result, econParams]);
 
   // Check if simulation results are stale (params have changed since last run)
   const simulationResultsStale = useMemo(() => {
@@ -4284,6 +4408,22 @@ export default function LifecycleVisualizer() {
               Base Case
             </button>
             <button
+              onClick={() => setCurrentPage('oneDraw')}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: currentPage === 'oneDraw' ? 'bold' : 'normal',
+                background: currentPage === 'oneDraw' ? '#fff' : 'transparent',
+                color: currentPage === 'oneDraw' ? '#2c3e50' : '#666',
+                cursor: 'pointer',
+                boxShadow: currentPage === 'oneDraw' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              }}
+            >
+              One Draw
+            </button>
+            <button
               onClick={() => setCurrentPage('scenarios')}
               style={{
                 padding: '8px 16px',
@@ -4474,6 +4614,340 @@ export default function LifecycleVisualizer() {
             </ResponsiveContainer>
           </ChartCard>
         </ChartSection>
+          </>
+        )}
+
+        {currentPage === 'oneDraw' && (
+          <>
+            {/* Control Bar */}
+            <div style={{
+              background: '#fff',
+              border: '1px solid #e0e0e0',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '24px',
+            }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px', color: '#2c3e50' }}>
+                One Random Market Scenario
+              </div>
+              <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
+                Draw one random future and see how the LDI strategy responds. Each draw is a complete 70-year market history.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => {
+                    const seed = oneDrawSeedInput.trim() !== ''
+                      ? parseInt(oneDrawSeedInput.trim(), 10)
+                      : Math.floor(Math.random() * 100000);
+                    if (isNaN(seed)) return;
+                    setOneDrawComputing(true);
+                    setPendingOneDrawParams({ lifecycleParams, econParams, seed });
+                    setTimeout(() => {
+                      setOneDrawVersion(v => v + 1);
+                    }, 50);
+                  }}
+                  disabled={oneDrawComputing}
+                  style={{
+                    padding: '10px 24px',
+                    background: oneDrawComputing ? '#ccc' : '#27ae60',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: oneDrawComputing ? 'wait' : 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '14px',
+                  }}
+                >
+                  {oneDrawComputing ? 'Drawing...' : 'New Draw'}
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <label style={{ fontSize: '12px', color: '#666' }}>Seed (optional):</label>
+                  <input
+                    type="text"
+                    value={oneDrawSeedInput}
+                    onChange={(e) => setOneDrawSeedInput(e.target.value)}
+                    placeholder="random"
+                    style={{
+                      width: '80px',
+                      padding: '4px 8px',
+                      border: '1px solid #ccc',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                    }}
+                  />
+                </div>
+                {cachedOneDraw && (
+                  <div style={{ fontSize: '12px', color: '#888' }}>
+                    Current seed: <strong>{cachedOneDraw.seed}</strong>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Empty state */}
+            {!cachedOneDraw && !oneDrawComputing && (
+              <div style={{ textAlign: 'center', padding: '60px', color: '#666' }}>
+                <div style={{ fontSize: '16px', marginBottom: '8px' }}>
+                  Click "New Draw" to generate a random market scenario
+                </div>
+                <div style={{ fontSize: '13px' }}>
+                  Each draw simulates one complete market history with random interest rate and stock return shocks
+                </div>
+              </div>
+            )}
+            {oneDrawComputing && !cachedOneDraw && (
+              <div style={{ textAlign: 'center', padding: '60px', color: '#666' }}>
+                Computing...
+              </div>
+            )}
+
+            {/* Charts */}
+            {oneDrawChartData && cachedOneDraw && (() => {
+              const retAge = params.retirementAge;
+              const ldiRes = cachedOneDraw.ldiResult;
+              const fwArr = ldiRes.financialWealth as number[];
+              const peakWealth = Math.max(...fwArr);
+              const peakAge = ldiRes.ages[fwArr.indexOf(peakWealth)];
+              const terminalWealth = fwArr[fwArr.length - 1];
+              const defaulted = ldiRes.defaulted as boolean;
+              const defaultAge = ldiRes.defaultAge as number | null;
+
+              return (
+                <>
+              {/* Section 1: The Market You Drew */}
+              <ChartSection title="Section 1: The Market You Drew">
+                <ChartCard title="Interest Rate Path (%)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+                      <Tooltip formatter={percentTooltipFormatter} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" label={{ value: 'Retire', fontSize: 10 }} />
+                      <ReferenceLine y={params.rBar * 100} stroke="#999" strokeDasharray="5 5" label={{ value: `r̄=${(params.rBar * 100).toFixed(1)}%`, fontSize: 10, position: 'right' }} />
+                      <Line type="monotone" dataKey="interestRate" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Interest Rate" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Cumulative Stock Return (Growth of $1)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
+                      <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(2)}x` : ''} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <ReferenceLine y={1} stroke="#999" strokeDasharray="3 3" />
+                      <Line type="monotone" dataKey="cumStockReturn" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Stocks" />
+                      <Line type="monotone" dataKey="cumBondReturn" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Bonds" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              </ChartSection>
+
+              {/* Section 2: LDI Advice */}
+              <ChartSection title="Section 2: LDI Advice for This Draw">
+                <ChartCard title="Total Wealth = Human Capital + Financial ($k)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <AreaChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={formatDollar} />
+                      <Tooltip formatter={dollarTooltipFormatter} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <Area type="monotone" dataKey="financialWealth" stackId="1" stroke={COLORS.fw} fill={COLORS.fw} fillOpacity={0.6} name="Financial Wealth" />
+                      <Area type="monotone" dataKey="humanCapital" stackId="1" stroke={COLORS.hc} fill={COLORS.hc} fillOpacity={0.6} name="Human Capital" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Portfolio Allocation (%)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <AreaChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} domain={[0, 100]} tickFormatter={formatPercent} />
+                      <Tooltip formatter={percentTooltipFormatter} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <Area type="monotone" dataKey="cashWeight" stackId="1" stroke={COLORS.cash} fill={COLORS.cash} name="Cash" />
+                      <Area type="monotone" dataKey="bondWeight" stackId="1" stroke={COLORS.bond} fill={COLORS.bond} name="Bonds" />
+                      <Area type="monotone" dataKey="stockWeight" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Stocks" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Consumption Path ($k)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <AreaChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={formatDollar} />
+                      <Tooltip formatter={dollarTooltipFormatter} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <Area type="monotone" dataKey="subsistence" stackId="1" stroke={COLORS.subsistence} fill={COLORS.subsistence} fillOpacity={0.6} name="Subsistence" />
+                      <Area type="monotone" dataKey="variable" stackId="1" stroke={COLORS.variable} fill={COLORS.variable} fillOpacity={0.6} name="Variable" />
+                      <Line type="monotone" dataKey="baseMedianConsumption" stroke="#999" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Base Case Median" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Financial Wealth ($k)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={formatDollar} />
+                      <Tooltip formatter={dollarTooltipFormatter} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <Line type="monotone" dataKey="financialWealth" stroke={COLORS.fw} strokeWidth={2} dot={false} name="Realized FW" />
+                      <Line type="monotone" dataKey="baseMedianFW" stroke="#999" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Base Case Median" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              </ChartSection>
+
+              {/* Section 3: Rebalancing & Outcomes */}
+              <ChartSection title="Section 3: Rebalancing & Outcomes">
+                <ChartCard title="Stock Rebalancing (% of portfolio)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={oneDrawChartData.slice(1)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
+                      <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)}%` : ''} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <ReferenceLine y={0} stroke="#666" strokeWidth={1} />
+                      <Bar dataKey="stockPurchasePct" name="Stock Purchase">
+                        {oneDrawChartData.slice(1).map((entry, index) => (
+                          <Cell key={index} fill={(entry.stockPurchasePct ?? 0) >= 0 ? '#1abc9c' : COLORS.expenses} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                    Teal = buying | Orange = selling
+                  </div>
+                </ChartCard>
+
+                <ChartCard title="Bond Rebalancing (% of portfolio)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={oneDrawChartData.slice(1)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(0)}%`} />
+                      <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)}%` : ''} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <ReferenceLine y={0} stroke="#666" strokeWidth={1} />
+                      <Bar dataKey="bondPurchasePct" name="Bond Purchase">
+                        {oneDrawChartData.slice(1).map((entry, index) => (
+                          <Cell key={index} fill={(entry.bondPurchasePct ?? 0) >= 0 ? '#1abc9c' : COLORS.expenses} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div style={{ fontSize: '11px', color: '#666', textAlign: 'center', marginTop: '4px' }}>
+                    Teal = buying | Orange = selling
+                  </div>
+                </ChartCard>
+
+                <ChartCard title="Cash Flow: Earnings minus Consumption ($k)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={formatDollar} />
+                      <Tooltip formatter={dollarTooltipFormatter} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <ReferenceLine y={0} stroke="#666" strokeWidth={1} />
+                      <Bar dataKey="cashFlow" name="Cash Flow">
+                        {oneDrawChartData.map((entry, index) => (
+                          <Cell key={index} fill={entry.cashFlow >= 0 ? COLORS.cash : COLORS.stock} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Summary Statistics">
+                  <div style={{ padding: '16px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: '#888' }}>Terminal Wealth</div>
+                        <div style={{ fontSize: '22px', fontWeight: 'bold', color: terminalWealth > 0 ? COLORS.cash : COLORS.stock }}>
+                          ${Math.round(terminalWealth)}k
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: '#888' }}>Peak Wealth</div>
+                        <div style={{ fontSize: '22px', fontWeight: 'bold', color: COLORS.fw }}>
+                          ${Math.round(peakWealth)}k
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#888' }}>at age {peakAge}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: '#888' }}>Default?</div>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold', color: defaulted ? COLORS.stock : COLORS.cash }}>
+                          {defaulted ? `Yes (age ${defaultAge})` : 'No'}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: '#888' }}>Seed</div>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#666' }}>
+                          {cachedOneDraw.seed}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ borderTop: '1px solid #eee', paddingTop: '12px' }}>
+                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>MV Optimal Targets</div>
+                      <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', marginBottom: '8px' }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: COLORS.stock }}>Stocks</div>
+                          <div style={{ fontWeight: 'bold' }}>{(result.targetStock * 100).toFixed(0)}%</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: COLORS.bond }}>Bonds</div>
+                          <div style={{ fontWeight: 'bold' }}>{(result.targetBond * 100).toFixed(0)}%</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: COLORS.cash }}>Cash</div>
+                          <div style={{ fontWeight: 'bold' }}>{(result.targetCash * 100).toFixed(0)}%</div>
+                        </div>
+                      </div>
+                      {(() => {
+                        // Compute median portfolio return (same formula as LDI strategy)
+                        const r = econParams.rBar;
+                        const wS = result.targetStock;
+                        const wB = result.targetBond;
+                        const wC = result.targetCash;
+                        const muBond = computeMuBondFromEcon(econParams);
+                        const expectedReturn = wS * (r + econParams.muExcess) + wB * (r + muBond) + wC * r;
+                        const D = econParams.bondDuration;
+                        const sigmaB = D * econParams.sigmaR;
+                        const covSB = -D * econParams.sigmaS * econParams.sigmaR * econParams.rho;
+                        const portfolioVar = wS * wS * econParams.sigmaS * econParams.sigmaS + wB * wB * sigmaB * sigmaB + 2 * wS * wB * covSB;
+                        const medianReturn = expectedReturn - 0.5 * portfolioVar;
+                        return (
+                          <div style={{ textAlign: 'center', fontSize: '12px', color: '#555' }}>
+                            Median portfolio return: <strong>{(medianReturn * 100).toFixed(2)}%</strong>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </ChartCard>
+              </ChartSection>
+                </>
+              );
+            })()}
           </>
         )}
 
