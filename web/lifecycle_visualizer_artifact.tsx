@@ -2065,6 +2065,9 @@ function runMonteCarloSimulation(
   // Compute Net FI PV and DV01 paths
   const { netFiPv: netFiPvPaths, dv01: dv01Paths } = computeNetFiPvAndDv01Paths(result, params, econParams);
 
+  // Compute wealth decomposition paths for Net Wealth charts
+  const { pvExpenses: pvExpensesPaths, totalWealth: totalWealthPaths, netWorth: netWorthPaths } = computeWealthDecompositionPaths(result, params, econParams);
+
   // Compute percentile statistics
   const percentiles: PercentileStats = {
     financialWealth: computeFieldPercentiles(financialWealthPaths),
@@ -2077,6 +2080,9 @@ function runMonteCarloSimulation(
     cumulativeStockReturns: computeFieldPercentiles(cumulativeStockReturnPaths),
     netFiPv: computeFieldPercentiles(netFiPvPaths),
     dv01: computeFieldPercentiles(dv01Paths),
+    pvExpenses: computeFieldPercentiles(pvExpensesPaths),
+    totalWealth: computeFieldPercentiles(totalWealthPaths),
+    netWorth: computeFieldPercentiles(netWorthPaths),
   };
 
   // Compute summary statistics
@@ -2577,6 +2583,10 @@ function runTeachingScenarios(
     const { netFiPv: ldiNetFiPvPaths, dv01: ldiDv01Paths } = computeNetFiPvAndDv01Paths(ldiResult, params, econParams);
     const { netFiPv: rotNetFiPvPaths, dv01: rotDv01Paths } = computeNetFiPvAndDv01Paths(rotResult, params, econParams);
 
+    // Compute wealth decomposition paths for Net Wealth charts
+    const { pvExpenses: ldiPvExpensesPaths, totalWealth: ldiTotalWealthPaths, netWorth: ldiNetWorthPaths } = computeWealthDecompositionPaths(ldiResult, params, econParams);
+    const { pvExpenses: rotPvExpensesPaths, totalWealth: rotTotalWealthPaths, netWorth: rotNetWorthPaths } = computeWealthDecompositionPaths(rotResult, params, econParams);
+
     // Compute percentiles and summary stats for LDI
     const ldiPercentiles: PercentileStats = {
       financialWealth: computeFieldPercentiles(ldiResult.financialWealth as number[][]),
@@ -2589,6 +2599,9 @@ function runTeachingScenarios(
       cumulativeStockReturns: computeFieldPercentiles(ldiCumulativeStockReturns),
       netFiPv: computeFieldPercentiles(ldiNetFiPvPaths),
       dv01: computeFieldPercentiles(ldiDv01Paths),
+      pvExpenses: computeFieldPercentiles(ldiPvExpensesPaths),
+      totalWealth: computeFieldPercentiles(ldiTotalWealthPaths),
+      netWorth: computeFieldPercentiles(ldiNetWorthPaths),
     };
     const ldiDefaulted = ldiResult.defaulted as boolean[];
     const ldiFinalWealth = ldiResult.finalWealth as number[];
@@ -2605,6 +2618,9 @@ function runTeachingScenarios(
       cumulativeStockReturns: computeFieldPercentiles(rotCumulativeStockReturns),
       netFiPv: computeFieldPercentiles(rotNetFiPvPaths),
       dv01: computeFieldPercentiles(rotDv01Paths),
+      pvExpenses: computeFieldPercentiles(rotPvExpensesPaths),
+      totalWealth: computeFieldPercentiles(rotTotalWealthPaths),
+      netWorth: computeFieldPercentiles(rotNetWorthPaths),
     };
     const rotDefaulted = rotResult.defaulted as boolean[];
     const rotFinalWealth = rotResult.finalWealth as number[];
@@ -4177,6 +4193,18 @@ export default function LifecycleVisualizer() {
       bondPurchasePct.push(fw[t + 1] > 0 ? (bPurch / fw[t + 1]) * 100 : 0);
     }
 
+    // Compute PV expenses at each time step using the realized rate path
+    const nPeriods = ages.length;
+    const workingYears = params.retirementAge - params.startAge;
+    const legacyParams = toLegacyParams(lifecycleParams, econParams);
+    const { expenses } = initializeEarningsExpenses(legacyParams, nPeriods, workingYears);
+    const pvExpenses: number[] = [];
+    for (let t = 0; t < nPeriods; t++) {
+      const remainingExpenses = expenses.slice(t);
+      const pvExp = computePresentValue(remainingExpenses, rates[t], econParams.phi, econParams.rBar);
+      pvExpenses.push(pvExp);
+    }
+
     return ages.map((age, i) => ({
       age,
       // Market
@@ -4187,6 +4215,9 @@ export default function LifecycleVisualizer() {
       humanCapital: hc[i],
       financialWealth: fw[i],
       totalWealth: hc[i] + fw[i],
+      // PV Expenses and Net Worth
+      pvExpenses: pvExpenses[i],
+      netWorth: hc[i] + fw[i] - pvExpenses[i],
       // Allocation
       stockWeight: sW[i] * 100,
       bondWeight: bW[i] * 100,
@@ -4205,7 +4236,7 @@ export default function LifecycleVisualizer() {
       stockPurchasePct: stockPurchasePct[i],
       bondPurchasePct: bondPurchasePct[i],
     }));
-  }, [cachedOneDraw, result, econParams]);
+  }, [cachedOneDraw, result, econParams, params, lifecycleParams]);
 
   // Check if simulation results are stale (params have changed since last run)
   const simulationResultsStale = useMemo(() => {
@@ -4268,6 +4299,8 @@ export default function LifecycleVisualizer() {
       interestRate: result.interestRate[i] * 100,  // Convert to percentage
       // Total Wealth (HC + FW)
       totalWealth: result.totalWealth[i],
+      // Net Worth (HC + FW - PV Expenses)
+      netWorth: result.netWorth[i],
     }));
   }, [result]);
 
@@ -4663,6 +4696,23 @@ export default function LifecycleVisualizer() {
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
+
+          <ChartCard title="Net Wealth: HC + FW − Expenses ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <ReferenceLine y={0} stroke="#333" strokeWidth={1.5} />
+                <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
+                <Area type="monotone" dataKey="netWorth" stroke={COLORS.fw} fill={COLORS.fw} fillOpacity={0.4} name="Net Worth" />
+                <Line type="monotone" dataKey="totalWealth" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Total Wealth (HC+FW)" />
+                <Line type="monotone" dataKey="pvExpenses" stroke={COLORS.expenses} strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="PV Expenses" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </ChartSection>
 
         {/* Section 4: Choices */}
@@ -4891,6 +4941,23 @@ export default function LifecycleVisualizer() {
                       <Line type="monotone" dataKey="financialWealth" stroke={COLORS.fw} strokeWidth={2} dot={false} name="Realized FW" />
                       <Line type="monotone" dataKey="baseMedianFW" stroke="#999" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Base Case Median" />
                     </LineChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Net Wealth: HC + FW − Expenses ($k)">
+                  <ResponsiveContainer width="100%" height={280}>
+                    <AreaChart data={oneDrawChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="age" fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={formatDollar} />
+                      <Tooltip formatter={dollarTooltipFormatter} />
+                      <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      <ReferenceLine y={0} stroke="#333" strokeWidth={1.5} />
+                      <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
+                      <Area type="monotone" dataKey="netWorth" stroke={COLORS.fw} fill={COLORS.fw} fillOpacity={0.4} name="Net Worth" />
+                      <Line type="monotone" dataKey="totalWealth" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Total Wealth (HC+FW)" />
+                      <Line type="monotone" dataKey="pvExpenses" stroke={COLORS.expenses} strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="PV Expenses" />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </ChartCard>
               </ChartSection>
@@ -5791,6 +5858,22 @@ export default function LifecycleVisualizer() {
                 rot_p95: scenario.rot.percentiles.dv01.p95[i],
               }));
 
+              // Panel 11 data: Net Wealth (HC + FW - PV Expenses)
+              const netWealthData = ages.map((age, i) => ({
+                age,
+                ldi_nw_p5: scenario.ldi.percentiles.netWorth.p5[i],
+                ldi_nw_p50: scenario.ldi.percentiles.netWorth.p50[i],
+                ldi_nw_p95: scenario.ldi.percentiles.netWorth.p95[i],
+                rot_nw_p5: scenario.rot.percentiles.netWorth.p5[i],
+                rot_nw_p50: scenario.rot.percentiles.netWorth.p50[i],
+                rot_nw_p95: scenario.rot.percentiles.netWorth.p95[i],
+                // Reference lines: total wealth and PV expenses (median only)
+                ldi_tw_p50: scenario.ldi.percentiles.totalWealth.p50[i],
+                rot_tw_p50: scenario.rot.percentiles.totalWealth.p50[i],
+                ldi_pvexp_p50: scenario.ldi.percentiles.pvExpenses.p50[i],
+                rot_pvexp_p50: scenario.rot.percentiles.pvExpenses.p50[i],
+              }));
+
               return (
               <div style={{
                 opacity: simulationResultsStale ? 0.5 : 1,
@@ -6073,6 +6156,32 @@ export default function LifecycleVisualizer() {
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       DV01 = Dollar value change per 1pp rate move. Zero = duration matched.
+                    </div>
+                  </ChartCard>
+
+                  {/* Panel 11: Net Wealth (HC + FW - PV Expenses) */}
+                  <ChartCard title="Panel 11: Net Wealth (HC + FW − Expenses)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={netWealthData}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={formatDollarK} />
+                        <Tooltip formatter={dollarKTooltipFormatter} />
+                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
+                        {/* LDI Net Worth lines */}
+                        <Line type="monotone" dataKey="ldi_nw_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        <Line type="monotone" dataKey="ldi_nw_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
+                        <Line type="monotone" dataKey="ldi_nw_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
+                        {/* RoT Net Worth lines */}
+                        <Line type="monotone" dataKey="rot_nw_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
+                        <Line type="monotone" dataKey="rot_nw_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
+                        <Line type="monotone" dataKey="rot_nw_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
+                      Net Wealth = HC + FW − PV(Expenses). Zero means exactly funded.
                     </div>
                   </ChartCard>
 
