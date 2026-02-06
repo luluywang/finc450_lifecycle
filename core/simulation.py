@@ -26,7 +26,6 @@ from .strategies import (
 )
 from .economics import (
     compute_present_value,
-    compute_pv_consumption,
     compute_duration,
     compute_mv_optimal_allocation,
     generate_correlated_shocks,

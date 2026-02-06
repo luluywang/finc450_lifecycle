@@ -34,7 +34,6 @@ from core import (
     EconomicParams,
     simulate_with_strategy,
     generate_correlated_shocks,
-    compute_pv_consumption,
     compute_pv_consumption_realized,
     compute_lifecycle_median_path,
     LDIStrategy,

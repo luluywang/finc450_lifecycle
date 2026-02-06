@@ -210,25 +210,6 @@ def compute_present_value(
         return pv
 
 
-def compute_pv_consumption(consumption: np.ndarray, rate: float) -> float:
-    """
-    Compute Present Value of consumption at time 0.
-
-    This discounts all future consumption back to the starting age,
-    providing a single metric for lifetime consumption in present value terms.
-
-    Args:
-        consumption: Array of consumption values over time
-        rate: Discount rate (typically the risk-free rate)
-
-    Returns:
-        Present value of total lifetime consumption at time 0
-    """
-    pv = 0.0
-    for t, c in enumerate(consumption):
-        pv += c / (1 + rate) ** t
-    return pv
-
 
 def compute_pv_consumption_realized(consumption: np.ndarray, rates: np.ndarray) -> float:
     """

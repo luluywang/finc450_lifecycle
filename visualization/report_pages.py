@@ -686,7 +686,7 @@ def create_scenario_page(
         simulate_interest_rates,
         simulate_stock_returns,
         run_strategy_comparison,
-        compute_pv_consumption,
+        compute_pv_consumption_realized,
     )
 
     fig = plt.figure(figsize=figsize)
@@ -750,20 +750,19 @@ def create_scenario_page(
     # Define percentiles for comparison
     percentiles = [5, 25, 50, 75, 95]
 
-    # Compute PV consumption for each simulation using initial rate
-    initial_rate = econ_params.r_bar
+    # Compute PV consumption for each simulation using realized rate paths
     if comparison.result_a.consumption.ndim == 1:
         # Single simulation
-        optimal_pv_consumption = np.array([compute_pv_consumption(comparison.result_a.consumption, initial_rate)])
-        rot_pv_consumption = np.array([compute_pv_consumption(comparison.result_b.consumption, initial_rate)])
+        optimal_pv_consumption = np.array([compute_pv_consumption_realized(comparison.result_a.consumption, comparison.result_a.interest_rates)])
+        rot_pv_consumption = np.array([compute_pv_consumption_realized(comparison.result_b.consumption, comparison.result_b.interest_rates)])
     else:
         # Monte Carlo - compute PV for each simulation
         optimal_pv_consumption = np.array([
-            compute_pv_consumption(comparison.result_a.consumption[i], initial_rate)
+            compute_pv_consumption_realized(comparison.result_a.consumption[i], comparison.result_a.interest_rates[i])
             for i in range(comparison.n_sims)
         ])
         rot_pv_consumption = np.array([
-            compute_pv_consumption(comparison.result_b.consumption[i], initial_rate)
+            compute_pv_consumption_realized(comparison.result_b.consumption[i], comparison.result_b.interest_rates[i])
             for i in range(comparison.n_sims)
         ])
 
