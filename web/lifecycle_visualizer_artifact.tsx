@@ -389,6 +389,7 @@ interface Params {
   bondDuration: number;
   phi: number;
   maxDuration?: number;  // Cap on computed durations (undefined = no cap)
+  consumptionBoost: number;  // Boost above median return for consumption rate
 }
 
 // Raw muBond calculation from primitive values
@@ -426,6 +427,7 @@ function toLegacyParams(lp: LifecycleParams, ep: EconomicParams): Params {
     bondDuration: ep.bondDuration,
     phi: ep.phi,
     maxDuration: ep.maxDuration,
+    consumptionBoost: lp.consumptionBoost,
   };
 }
 
@@ -2883,7 +2885,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const portfolioVarI = computePortfolioVariance(
       wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
     );
-    const consumptionRate = expectedReturnI - 0.5 * portfolioVarI;
+    const consumptionRate = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
 
     // Compute consumption using dynamic rate
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
@@ -3325,7 +3327,7 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     const portfolioVarI = computePortfolioVariance(
       wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
     );
-    const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI;
+    const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
 
     variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
@@ -3619,7 +3621,7 @@ function computeScenarioPath(
       const portfolioVarI = computePortfolioVariance(
         stockWeight, bondWeight, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
       );
-      const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI;
+      const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
       variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
@@ -3974,6 +3976,7 @@ export default function LifecycleVisualizer() {
     rho: 0.0,
     bondDuration: 20,
     phi: 1.0,
+    consumptionBoost: 0.0,
   });
 
   const updateParam = (key: keyof Params, value: number) => {
@@ -4030,7 +4033,7 @@ export default function LifecycleVisualizer() {
     expenseGrowth: params.expenseGrowth,
     retirementExpenses: params.retirementExpenses,
     consumptionShare: 0.05,
-    consumptionBoost: 0.0,
+    consumptionBoost: params.consumptionBoost,
     gamma: params.gamma,
     stockBetaHumanCapital: params.stockBetaHC,  // Use selected beta from params
     targetStockAllocation: 0.6,
@@ -4464,6 +4467,12 @@ export default function LifecycleVisualizer() {
             value={params.stockBetaHC}
             onChange={(v) => updateParam('stockBetaHC', v)}
             min={0} max={0.5} step={0.1} suffix="" decimals={1}
+          />
+          <StepperInput
+            label="Consumption boost"
+            value={params.consumptionBoost * 100}
+            onChange={(v) => updateParam('consumptionBoost', v / 100)}
+            min={0} max={5} step={0.5} suffix="%" decimals={1}
           />
         </ParamGroup>
 
