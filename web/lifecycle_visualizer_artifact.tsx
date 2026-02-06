@@ -19,12 +19,13 @@ import {
 interface EconomicParams {
   rBar: number;           // Long-run mean real rate (Python: r_bar = 0.02)
   phi: number;            // Interest rate persistence (1.0 = random walk)
-  sigmaR: number;         // Rate shock volatility (0.7 pp = 0.007)
+  sigmaR: number;         // Rate shock volatility (0.3 pp = 0.003)
   muExcess: number;       // Equity risk premium (stock excess return)
   bondSharpe: number;     // Bond Sharpe ratio (replaces fixed mu_bond)
   sigmaS: number;         // Stock return volatility
   rho: number;            // Correlation between rate and stock shocks
   bondDuration: number;   // Duration for HC decomposition and MV optimization
+  maxDuration?: number;   // Cap on computed durations (undefined = no cap)
 }
 
 /**
@@ -36,12 +37,13 @@ interface EconomicParams {
 const DEFAULT_ECON_PARAMS: EconomicParams = {
   rBar: 0.02,             // Long-run mean real rate
   phi: 1.0,               // Interest rate persistence (random walk)
-  sigmaR: 0.007,          // Rate shock volatility (0.7 pp)
+  sigmaR: 0.003,          // Rate shock volatility (0.3 pp)
   muExcess: 0.045,        // Equity risk premium (4.5 pp)
   bondSharpe: 0.0,        // Bond Sharpe ratio (no term premium)
   sigmaS: 0.18,           // Stock return volatility
   rho: 0.0,               // Correlation between rate and stock shocks
   bondDuration: 20.0,     // Duration for HC decomposition
+  maxDuration: undefined, // No cap on computed durations
 };
 
 /**
@@ -155,12 +157,13 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
 const AGGRESSIVE_ECON_PARAMS: EconomicParams = {
   rBar: 0.02,             // Same mean rate
   phi: 1.0,               // Random walk persistence
-  sigmaR: 0.014,          // 2x rate volatility (1.4 pp vs 0.7 pp)
+  sigmaR: 0.006,          // 2x rate volatility (0.6 pp vs 0.3 pp)
   muExcess: 0.06,         // Higher equity premium (6% vs 4%)
   bondSharpe: 0.0,        // Same bond Sharpe (no term premium)
   sigmaS: 0.25,           // Higher stock volatility (25% vs 18%)
   rho: -0.2,              // Negative stock-rate correlation (flight to quality)
   bondDuration: 20.0,     // Same duration
+  maxDuration: undefined, // No cap on computed durations
 };
 
 /**
@@ -385,6 +388,7 @@ interface Params {
   rho: number;
   bondDuration: number;
   phi: number;
+  maxDuration?: number;  // Cap on computed durations (undefined = no cap)
 }
 
 // Raw muBond calculation from primitive values
@@ -421,6 +425,7 @@ function toLegacyParams(lp: LifecycleParams, ep: EconomicParams): Params {
     rho: ep.rho,
     bondDuration: ep.bondDuration,
     phi: ep.phi,
+    maxDuration: ep.maxDuration,
   };
 }
 
@@ -655,7 +660,8 @@ function computeDuration(
   cashflows: number[],
   rate: number,
   phi: number | null = null,
-  rBar: number | null = null
+  rBar: number | null = null,
+  maxDuration?: number
 ): number {
   if (cashflows.length === 0) return 0;
 
@@ -676,7 +682,9 @@ function computeDuration(
       weightedSum += (t + 1) * cashflows[t] / Math.pow(1 + rate, t + 1);
     }
   }
-  return weightedSum / pv;
+  const duration = weightedSum / pv;
+  if (maxDuration !== undefined) return Math.min(duration, maxDuration);
+  return duration;
 }
 
 /**
@@ -1129,14 +1137,14 @@ function simulateWithStrategy(
       // Compute PV values at current rate (dynamic revaluation)
       const remainingExpenses = expenses.slice(t);
       const pvExp = computePresentValue(remainingExpenses, currentRate, phi, rBar);
-      const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar);
+      const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar, econParams.maxDuration);
 
       let hc = 0.0;
       let durationHc = 0.0;
       if (isWorking) {
         const remainingEarnings = baseEarnings.slice(t, workingYears);
         hc = computePresentValue(remainingEarnings, currentRate, phi, rBar);
-        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar);
+        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar, econParams.maxDuration);
       }
 
       humanCapital[t] = hc;
@@ -1837,13 +1845,13 @@ function computeNetFiPvAndDv01Paths(
       // Compute PV and duration of remaining expenses at current rate
       const remainingExpenses = expenses.slice(t);
       const pvExp = computePresentValue(remainingExpenses, currentRate, phi, rBar);
-      const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar);
+      const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar, econParams.maxDuration);
 
       // Compute duration of HC at current rate
       let durationHc = 0;
       if (isWorking) {
         const remainingEarnings = baseEarnings.slice(t, workingYears);
-        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar);
+        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar, econParams.maxDuration);
       }
 
       // Decompose HC into bond-like and other components
@@ -2780,8 +2788,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     // Use VCV term structure (phi, rBar) to match Python compute_static_pvs
     pvEarnings[i] = computePresentValue(remainingEarnings, r, phi, r);
     pvExpenses[i] = computePresentValue(remainingExpenses, r, phi, r);
-    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r);
-    durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r);
+    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r, params.maxDuration);
+    durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r, params.maxDuration);
   }
 
   // Human capital = PV of future earnings
@@ -3119,6 +3127,7 @@ function generateVerificationData(params: Params): Record<string, unknown> {
     sigmaS: params.sigmaS,
     rho: params.rho,
     bondDuration: params.bondDuration,
+    maxDuration: params.maxDuration,
   };
 
   const ldiStrategy = createLDIStrategy({ allowLeverage: false });
@@ -3265,8 +3274,8 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
 
     pvEarnings[i] = computePresentValue(remainingEarnings, preShockRate, phi, params.rBar);
     pvExpenses[i] = computePresentValue(remainingExpenses, preShockRate, phi, params.rBar);
-    durationEarnings[i] = computeDuration(remainingEarnings, preShockRate, phi, params.rBar);
-    durationExpenses[i] = computeDuration(remainingExpenses, preShockRate, phi, params.rBar);
+    durationEarnings[i] = computeDuration(remainingEarnings, preShockRate, phi, params.rBar, params.maxDuration);
+    durationExpenses[i] = computeDuration(remainingExpenses, preShockRate, phi, params.rBar, params.maxDuration);
 
     humanCapital[i] = pvEarnings[i];
 
@@ -3557,7 +3566,7 @@ function computeScenarioPath(
 
     const pvEarnings = computePresentValue(remainingEarnings, preShockRate, phi, params.rBar);
     const pvExpenses = computePresentValue(remainingExpenses, preShockRate, phi, params.rBar);
-    const durationEarnings = computeDuration(remainingEarnings, preShockRate, phi, params.rBar);
+    const durationEarnings = computeDuration(remainingEarnings, preShockRate, phi, params.rBar, params.maxDuration);
 
     const humanCapital = pvEarnings;
 
@@ -3578,7 +3587,7 @@ function computeScenarioPath(
     let expBond = 0;
     let expCash = 0;
     if (params.bondDuration > 0 && pvExpenses > 0) {
-      const durationExp = computeDuration(remainingExpenses, preShockRate, phi, params.rBar);
+      const durationExp = computeDuration(remainingExpenses, preShockRate, phi, params.rBar, params.maxDuration);
       const bondFraction = durationExp / params.bondDuration;
       expBond = pvExpenses * bondFraction;
       expCash = pvExpenses * (1 - bondFraction);
@@ -3961,7 +3970,7 @@ export default function LifecycleVisualizer() {
     muStock: 0.045,
     bondSharpe: 0.0,
     sigmaS: 0.18,
-    sigmaR: 0.007,
+    sigmaR: 0.003,
     rho: 0.0,
     bondDuration: 20,
     phi: 1.0,
@@ -3980,6 +3989,11 @@ export default function LifecycleVisualizer() {
   const [rateShockMagnitude, setRateShockMagnitude] = useState(-0.02);
   const [scenarioRetirementAge, setScenarioRetirementAge] = useState(params.retirementAge);
   const [scenarioEndAge, setScenarioEndAge] = useState(params.endAge);
+
+  // Sync scenario ages when main params change
+  useEffect(() => { setScenarioRetirementAge(params.retirementAge); }, [params.retirementAge]);
+  useEffect(() => { setScenarioEndAge(params.endAge); }, [params.endAge]);
+
   // scenarioBadReturns is handled by the scenarioType - sequenceRisk forces bad returns
   // Simulation control state for deferred computation
   // simulationVersion increments each time "Run Simulation" is clicked
@@ -4037,6 +4051,7 @@ export default function LifecycleVisualizer() {
     sigmaS: params.sigmaS,
     rho: params.rho,
     bondDuration: params.bondDuration,
+    maxDuration: params.maxDuration,
   }), [params]);
 
   // ==========================================================================
@@ -4386,6 +4401,12 @@ export default function LifecycleVisualizer() {
             value={params.bondDuration}
             onChange={(v) => updateParam('bondDuration', v)}
             min={1} max={30} step={1} suffix="yrs" decimals={0}
+          />
+          <StepperInput
+            label="Max duration cap"
+            value={params.maxDuration ?? 0}
+            onChange={(v) => setParams(prev => ({ ...prev, maxDuration: v === 0 ? undefined : v }))}
+            min={0} max={50} step={5} suffix={params.maxDuration ? 'yrs' : ''} decimals={0}
           />
         </ParamGroup>
 

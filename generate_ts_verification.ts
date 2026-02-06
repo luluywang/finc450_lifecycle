@@ -51,7 +51,8 @@ function computeDuration(
   cashflows: number[],
   rate: number,
   phi: number | null = null,
-  rBar: number | null = null
+  rBar: number | null = null,
+  maxDuration?: number
 ): number {
   if (cashflows.length === 0) return 0;
 
@@ -70,7 +71,9 @@ function computeDuration(
       weightedSum += (t + 1) * cashflows[t] / Math.pow(1 + rate, t + 1);
     }
   }
-  return weightedSum / pv;
+  const duration = weightedSum / pv;
+  if (maxDuration !== undefined) return Math.min(duration, maxDuration);
+  return duration;
 }
 
 function computeFullMertonAllocation(
@@ -169,6 +172,7 @@ interface Params {
   rho: number;
   bondDuration: number;
   phi: number;
+  maxDuration?: number;  // Cap on computed durations (undefined = no cap)
 }
 
 const DEFAULT_PARAMS: Params = {
@@ -189,7 +193,7 @@ const DEFAULT_PARAMS: Params = {
   muStock: 0.045,
   bondSharpe: 0.0,
   sigmaS: 0.18,
-  sigmaR: 0.007,
+  sigmaR: 0.003,
   rho: 0.0,
   bondDuration: 20.0,
   phi: 1.0,
@@ -362,8 +366,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     // Use VCV term structure (phi, rBar) to match Python compute_static_pvs
     pvEarnings[i] = computePresentValue(remainingEarnings, r, phi, r);
     pvExpenses[i] = computePresentValue(remainingExpenses, r, phi, r);
-    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r);
-    durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r);
+    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r, params.maxDuration);
+    durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r, params.maxDuration);
   }
 
   // Human capital = PV of future earnings
