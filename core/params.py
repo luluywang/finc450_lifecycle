@@ -37,6 +37,7 @@ class EconomicParams:
     sigma_s: float = 0.18      # Stock return volatility
     rho: float = 0.0           # Correlation between rate and stock shocks (was -0.2)
     bond_duration: float = 20.0 # Duration for HC decomposition and MV optimization
+    max_duration: float = None   # Cap on computed durations (None = no cap)
 
     @property
     def mu_bond(self) -> float:

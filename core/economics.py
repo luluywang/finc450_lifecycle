@@ -245,12 +245,16 @@ def compute_duration(
     cashflows: np.ndarray,
     rate: float,
     phi: float = 0.85,
-    r_bar: float = None
+    r_bar: float = None,
+    max_duration: float = None,
 ) -> float:
     """
     Compute effective duration of cashflow stream.
 
     Under mean reversion, duration is the PV-weighted average of effective durations.
+
+    Args:
+        max_duration: If not None, cap the result at this value.
     """
     if len(cashflows) == 0:
         return 0.0
@@ -265,12 +269,16 @@ def compute_duration(
             P_t = zero_coupon_price(rate, t, r_bar, phi)
             B_t = effective_duration(t, phi)
             weighted_sum += cf * P_t * B_t
-        return weighted_sum / pv
+        duration = weighted_sum / pv
     else:
         weighted_sum = 0.0
         for t, cf in enumerate(cashflows, 1):
             weighted_sum += t * cf / (1 + rate) ** t
-        return weighted_sum / pv
+        duration = weighted_sum / pv
+
+    if max_duration is not None:
+        duration = min(duration, max_duration)
+    return duration
 
 
 def liability_pv(

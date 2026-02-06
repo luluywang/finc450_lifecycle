@@ -48,6 +48,7 @@ def compute_static_pvs(
     r: float,
     phi: float,
     hc_spread: float = 0.0,
+    max_duration: float = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute PV values and durations for earnings and expenses at constant rate.
@@ -86,8 +87,8 @@ def compute_static_pvs(
 
         pv_earnings[t] = compute_present_value(remaining_earnings, r + hc_spread, phi, r + hc_spread)
         pv_expenses[t] = compute_present_value(remaining_expenses, r, phi, r)
-        duration_earnings[t] = compute_duration(remaining_earnings, r + hc_spread, phi, r + hc_spread)
-        duration_expenses[t] = compute_duration(remaining_expenses, r, phi, r)
+        duration_earnings[t] = compute_duration(remaining_earnings, r + hc_spread, phi, r + hc_spread, max_duration=max_duration)
+        duration_expenses[t] = compute_duration(remaining_expenses, r, phi, r, max_duration=max_duration)
 
     return pv_earnings, pv_expenses, duration_earnings, duration_expenses
 
@@ -440,7 +441,7 @@ def simulate_with_strategy(
             # Compute PV values at current rate (dynamic revaluation)
             remaining_expenses = expenses[t:]
             pv_exp = compute_present_value(remaining_expenses, current_rate, phi, r_bar)
-            duration_exp = compute_duration(remaining_expenses, current_rate, phi, r_bar)
+            duration_exp = compute_duration(remaining_expenses, current_rate, phi, r_bar, max_duration=econ_params.max_duration)
 
             if is_working:
                 # Scale remaining earnings by current wage level (permanent shock)
@@ -448,7 +449,7 @@ def simulate_with_strategy(
                 remaining_base = base_earnings[t:working_years]
                 remaining_earnings = remaining_base * wage_multiplier
                 hc = compute_present_value(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread)
-                duration_hc = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread)
+                duration_hc = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread, max_duration=econ_params.max_duration)
             else:
                 hc = 0.0
                 duration_hc = 0.0
@@ -690,7 +691,8 @@ def simulate_paths(
 
     # Use DRY helper functions for PV calculations (needed for return values)
     pv_earnings_static, pv_expenses_static, duration_earnings, duration_expenses = compute_static_pvs(
-        base_earnings, expenses, working_years, total_years, r, phi, hc_spread=hc_spread
+        base_earnings, expenses, working_years, total_years, r, phi, hc_spread=hc_spread,
+        max_duration=econ_params.max_duration
     )
 
     # NOTE: consumption_rate is now computed INSIDE the loop using current_rate
@@ -782,7 +784,7 @@ def simulate_paths(
             # Surplus optimization: target = target_pct * surplus - HC + expenses
             # Always compute decomposition at current_rate (dynamic or r_bar depending on flag)
             remaining_expenses = expenses[t:]
-            duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
+            duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r, max_duration=econ_params.max_duration)
             if econ_params.bond_duration > 0 and pv_exp > 0:
                 exp_bond_frac = duration_exp_t / econ_params.bond_duration
                 exp_bond_t = pv_exp * exp_bond_frac
@@ -795,7 +797,7 @@ def simulate_paths(
             if is_working and hc > 0:
                 remaining_base = base_earnings[t:working_years]
                 remaining_earnings = remaining_base * wage_multiplier
-                duration_hc_t = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r + hc_spread)
+                duration_hc_t = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r + hc_spread, max_duration=econ_params.max_duration)
                 hc_stock_t = hc * params.stock_beta_human_capital
                 non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
                 if econ_params.bond_duration > 0:
@@ -1379,7 +1381,8 @@ def compute_lifecycle_fixed_consumption(
 
     # Forward-looking present values using DRY helper
     pv_earnings, pv_expenses, duration_earnings, duration_expenses = compute_static_pvs(
-        earnings, expenses, working_years, total_years, r, phi
+        earnings, expenses, working_years, total_years, r, phi,
+        max_duration=econ_params.max_duration
     )
 
     # Human capital
