@@ -27,6 +27,7 @@ from .strategies import (
 from .economics import (
     compute_present_value,
     compute_duration,
+    compute_full_merton_allocation,
     compute_mv_optimal_allocation,
     generate_correlated_shocks,
     simulate_interest_rates,
@@ -177,7 +178,7 @@ def compute_target_allocations(
     Uses MV optimization if gamma > 0, otherwise returns fixed targets.
     """
     if params.gamma > 0:
-        return compute_mv_optimal_allocation(
+        return compute_full_merton_allocation(
             mu_stock=econ_params.mu_excess,
             mu_bond=econ_params.mu_bond,
             sigma_s=econ_params.sigma_s,
@@ -221,7 +222,14 @@ def normalize_portfolio_weights(
     Returns (stock_weight, bond_weight, cash_weight).
     """
     if fw <= 1e-6:
-        return target_stock, target_bond, target_cash
+        # Clip MV targets (may be negative with unconstrained optimization)
+        ws = max(0.0, target_stock)
+        wb = max(0.0, target_bond)
+        wc = max(0.0, target_cash)
+        total = ws + wb + wc
+        if total > 0:
+            return ws / total, wb / total, wc / total
+        return 0.0, 0.0, 1.0
 
     w_stock = target_fin_stock / fw
     w_bond = target_fin_bond / fw
@@ -240,8 +248,14 @@ def normalize_portfolio_weights(
     if total > 0:
         return w_s / total, w_b / total, w_c / total
     else:
-        # All targets non-positive: fall back to MV optimal
-        return target_stock, target_bond, target_cash
+        # All targets non-positive: clip MV targets and normalize
+        ws = max(0.0, target_stock)
+        wb = max(0.0, target_bond)
+        wc = max(0.0, target_cash)
+        total = ws + wb + wc
+        if total > 0:
+            return ws / total, wb / total, wc / total
+        return 0.0, 0.0, 1.0
 
 
 def apply_consumption_constraints(
@@ -1329,9 +1343,9 @@ def compute_lifecycle_fixed_consumption(
     r = econ_params.r_bar
     phi = econ_params.phi
 
-    # Compute target allocations from MV optimization
+    # Compute target allocations from MV optimization (unconstrained)
     if params.gamma > 0:
-        target_stock, target_bond, target_cash = compute_mv_optimal_allocation(
+        target_stock, target_bond, target_cash = compute_full_merton_allocation(
             mu_stock=econ_params.mu_excess,
             mu_bond=econ_params.mu_bond,
             sigma_s=econ_params.sigma_s,

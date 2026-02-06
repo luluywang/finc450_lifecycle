@@ -15,7 +15,7 @@ from .params import (
     ScenarioResult,
     SimulationResult,
 )
-from .economics import compute_mv_optimal_allocation
+from .economics import compute_full_merton_allocation
 from .simulation import compute_lifecycle_median_path
 
 
@@ -56,7 +56,7 @@ def create_teaching_scenario(
 
     # Compute target allocations
     if params.gamma > 0:
-        target_stock, target_bond, target_cash = compute_mv_optimal_allocation(
+        target_stock, target_bond, target_cash = compute_full_merton_allocation(
             mu_stock=econ_params.mu_excess,
             mu_bond=econ_params.mu_bond,
             sigma_s=econ_params.sigma_s,

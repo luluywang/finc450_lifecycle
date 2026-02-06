@@ -36,7 +36,14 @@ def _normalize_weights_no_leverage(
     Clips negative weights to 0 and normalizes to sum to 1.0.
     """
     if fw <= 1e-6:
-        return target_stock, target_bond, target_cash
+        # Clip MV targets (may be negative with unconstrained optimization)
+        ws = max(0.0, target_stock)
+        wb = max(0.0, target_bond)
+        wc = max(0.0, target_cash)
+        total = ws + wb + wc
+        if total > 0:
+            return ws / total, wb / total, wc / total
+        return 0.0, 0.0, 1.0
 
     # Clip each component independently at 0
     w_s = max(0.0, target_fin_stock)
@@ -47,8 +54,14 @@ def _normalize_weights_no_leverage(
     if total > 0:
         return w_s / total, w_b / total, w_c / total
     else:
-        # All targets non-positive: fall back to MV optimal
-        return target_stock, target_bond, target_cash
+        # All targets non-positive: clip MV targets and normalize
+        ws = max(0.0, target_stock)
+        wb = max(0.0, target_bond)
+        wc = max(0.0, target_cash)
+        total = ws + wb + wc
+        if total > 0:
+            return ws / total, wb / total, wc / total
+        return 0.0, 0.0, 1.0
 
 
 @dataclass

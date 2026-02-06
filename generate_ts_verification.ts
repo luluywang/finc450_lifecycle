@@ -249,7 +249,13 @@ function normalizePortfolioWeights(
   allowLeverage: boolean = false
 ): [number, number, number] {
   if (fw <= 1e-6) {
-    return [targetStock, targetBond, targetCash];
+    // Clip MV targets (may be negative with unconstrained optimization)
+    const ws = Math.max(0, targetStock);
+    const wb = Math.max(0, targetBond);
+    const wc = Math.max(0, targetCash);
+    const t = ws + wb + wc;
+    if (t > 0) return [ws / t, wb / t, wc / t];
+    return [0, 0, 1];
   }
 
   let wStock = targetFinStock / fw;
@@ -269,8 +275,13 @@ function normalizePortfolioWeights(
   if (total > 0) {
     return [wS / total, wB / total, wC / total];
   } else {
-    // All targets non-positive: fall back to MV optimal
-    return [targetStock, targetBond, targetCash];
+    // All targets non-positive: clip MV targets and normalize
+    const ws = Math.max(0, targetStock);
+    const wb = Math.max(0, targetBond);
+    const wc = Math.max(0, targetCash);
+    const t = ws + wb + wc;
+    if (t > 0) return [ws / t, wb / t, wc / t];
+    return [0, 0, 1];
   }
 }
 
@@ -311,9 +322,9 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const totalYears = params.endAge - params.startAge;
   const workingYears = params.retirementAge - params.startAge;
 
-  // Compute target allocations from MV optimization
+  // Compute target allocations from MV optimization (unconstrained)
   const muBond = computeMuBond(params);
-  const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+  const [targetStock, targetBond, targetCash] = computeFullMertonAllocation(
     params.muStock, muBond, params.sigmaS, params.sigmaR,
     params.rho, params.bondDuration, params.gamma
   );

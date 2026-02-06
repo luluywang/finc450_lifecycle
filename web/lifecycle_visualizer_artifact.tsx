@@ -931,9 +931,14 @@ function normalizePortfolioWeights(
   targetCash: number,
   allowLeverage: boolean = false
 ): [number, number, number] {
-  // Edge case: no financial wealth, return baseline targets
+  // Edge case: no financial wealth — clip MV targets (may be negative)
   if (fw <= 1e-6) {
-    return [targetStock, targetBond, targetCash];
+    const ws = Math.max(0, targetStock);
+    const wb = Math.max(0, targetBond);
+    const wc = Math.max(0, targetCash);
+    const t = ws + wb + wc;
+    if (t > 0) return [ws / t, wb / t, wc / t];
+    return [0, 0, 1];
   }
 
   // Compute raw weights
@@ -955,8 +960,13 @@ function normalizePortfolioWeights(
   if (total > 0) {
     return [wS / total, wB / total, wC / total];
   } else {
-    // All targets non-positive: fall back to MV optimal
-    return [targetStock, targetBond, targetCash];
+    // All targets non-positive: clip MV targets and normalize
+    const ws = Math.max(0, targetStock);
+    const wb = Math.max(0, targetBond);
+    const wc = Math.max(0, targetCash);
+    const t = ws + wb + wc;
+    if (t > 0) return [ws / t, wb / t, wc / t];
+    return [0, 0, 1];
   }
 }
 
@@ -1005,9 +1015,9 @@ function simulateWithStrategy(
     throw new Error(`Shock periods ${nPeriods} != total years ${totalYears}`);
   }
 
-  // Compute target allocations from MV optimization
+  // Compute target allocations from MV optimization (unconstrained)
   const muBond = computeMuBondFromEcon(econParams);
-  const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+  const [targetStock, targetBond, targetCash] = computeFullMertonAllocation(
     econParams.muExcess, muBond, econParams.sigmaS, econParams.sigmaR,
     econParams.rho, econParams.bondDuration, params.gamma
   );
@@ -2740,9 +2750,9 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const totalYears = params.endAge - params.startAge;
   const workingYears = params.retirementAge - params.startAge;
 
-  // Compute target allocations from MV optimization
+  // Compute target allocations from MV optimization (unconstrained)
   const muBond = computeMuBond(params);
-  const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+  const [targetStock, targetBond, targetCash] = computeFullMertonAllocation(
     params.muStock, muBond, params.sigmaS, params.sigmaR,
     params.rho, params.bondDuration, params.gamma
   );
@@ -3207,8 +3217,8 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
   const r = params.rBar;
   const muBondVal = computeMuBond(params);
 
-  // Compute target allocations ONCE (constant, matching Python)
-  const [targetStock, targetBond, targetCash] = computeFullMertonAllocationConstrained(
+  // Compute target allocations ONCE (constant, matching Python — unconstrained)
+  const [targetStock, targetBond, targetCash] = computeFullMertonAllocation(
     params.muStock, muBondVal, params.sigmaS, params.sigmaR,
     params.rho, params.bondDuration, params.gamma
   );
@@ -3487,8 +3497,8 @@ function computeScenarioPath(
   const r = params.rBar;
   const muBondVal = computeMuBond(params);
 
-  // Compute target allocations ONCE (constant, matching Python)
-  const [targetStockAlloc, targetBondAlloc, targetCashAlloc] = computeFullMertonAllocationConstrained(
+  // Compute target allocations ONCE (constant, matching Python — unconstrained)
+  const [targetStockAlloc, targetBondAlloc, targetCashAlloc] = computeFullMertonAllocation(
     params.muStock, muBondVal, params.sigmaS, params.sigmaR,
     params.rho, params.bondDuration, params.gamma
   );

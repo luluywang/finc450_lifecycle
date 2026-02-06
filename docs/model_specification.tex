@@ -21,7 +21,7 @@ This document describes the lifecycle investment model with \textbf{random walk 
 
 The short-term interest rate evolves as:
 \begin{equation}
-r_{t+1} = r_t + \sigma_r \varepsilon^r_t, \quad \varepsilon^r_t \sim N(0,1)
+r_{t+1} = r_t + \sigma_r \varepsilon^r_{t+1}, \quad \varepsilon^r_{t+1} \sim N(0,1)
 \end{equation}
 where:
 \begin{itemize}
@@ -35,38 +35,44 @@ where:
 
 \subsection{Stock Returns}
 
-Stock returns follow:
+Stock returns from $t$ to $t+1$:
 \begin{equation}
-R^s_t = r_t + \mu_s + \sigma_s \varepsilon^s_t
+R^s_{t+1} = r_t + \mu_s + \sigma_s \varepsilon^s_{t+1}
 \end{equation}
 where:
 \begin{itemize}
     \item $\mu_s$ = equity risk premium (excess return over short rate)
     \item $\sigma_s$ = stock volatility
-    \item $\text{Corr}(\varepsilon^r_t, \varepsilon^s_t) = \rho$ (typically small or zero)
+    \item $\text{Corr}(\varepsilon^r_{t+1}, \varepsilon^s_{t+1}) = \rho$ (typically small or zero)
 \end{itemize}
 
 \subsection{Bond Returns (Modified Duration Approximation)}
 
-For a bond with modified duration $D^{\text{mod}}$, the return approximation is:
+For a bond with modified duration $D^{\text{mod}}$, the return from $t$ to $t+1$ is:
 \begin{equation}
-R^b_t \approx r_t + \mu_b - D^{\text{mod}} \cdot \Delta r_{t+1}
+R^b_{t+1} \approx r_t + \mu_b - D^{\text{mod}} \cdot \Delta r_{t+1}
 \end{equation}
 where:
 \begin{itemize}
     \item $D^{\text{mod}}$ = modified duration (not Macaulay duration)
     \item $\mu_b$ = bond risk premium (term spread over short rate)
-    \item $\Delta r_{t+1} = r_{t+1} - r_t = \sigma_r \varepsilon^r_t$
+    \item $\Delta r_{t+1} = r_{t+1} - r_t = \sigma_r \varepsilon^r_{t+1}$
 \end{itemize}
 
 Substituting the rate change:
 \begin{equation}
-R^b_t \approx r_t + \mu_b - D^{\text{mod}} \cdot \sigma_r \varepsilon^r_t
+R^b_{t+1} \approx r_t + \mu_b - D^{\text{mod}} \cdot \sigma_r \varepsilon^r_{t+1}
 \end{equation}
 
 \textbf{Note:} Modified duration $D^{\text{mod}} = D^{\text{Mac}}/(1+r)$ gives the percentage price change per unit change in yield. Using modified duration directly in the return equation is correct; using Macaulay duration would overstate interest rate sensitivity.
 
-\textbf{Intuition:} When rates rise ($\varepsilon^r > 0$), bond prices fall, generating a negative capital gain proportional to modified duration.
+\textbf{Intuition:} When rates rise ($\varepsilon^r_{t+1} > 0$), bond prices fall, generating a negative capital gain proportional to modified duration.
+
+\textbf{Bond risk premium.} The bond excess return is parameterized via the Bond Sharpe ratio $\text{SR}_b$:
+\begin{equation}
+\mu_b = \text{SR}_b \cdot D^{\text{mod}} \cdot \sigma_r
+\end{equation}
+The bond return volatility is $\sigma_b = D^{\text{mod}} \cdot \sigma_r$, so $\mu_b = \text{SR}_b \cdot \sigma_b$. The default is $\text{SR}_b = 0$ (expectations hypothesis: no term premium).
 
 %----------------------------------------------------------------------
 \section{Portfolio Allocation Rule}
@@ -121,14 +127,28 @@ The optimal portfolio weights from mean-variance optimization:
 \begin{equation}
 \mathbf{w}^* = \frac{1}{\gamma} \Sigma^{-1} \boldsymbol{\mu}
 \end{equation}
-where:
-\begin{itemize}
-    \item $\gamma$ = risk aversion coefficient
-    \item $\Sigma$ = covariance matrix of asset returns
-    \item $\boldsymbol{\mu}$ = vector of excess returns
-\end{itemize}
 
-This yields target weights $(w^*_s, w^*_b, w^*_c)$ for stocks, bonds, and cash.
+\textbf{Explicit 2-asset system.} Cash earns the risk-free rate, so we solve for stock and bond weights over cash. The excess return vector is:
+\begin{equation}
+\boldsymbol{\mu} = \begin{pmatrix} \mu_s \\ \mu_b \end{pmatrix}
+\end{equation}
+
+The covariance matrix of risky asset returns uses $\sigma_b = D^{\text{mod}} \cdot \sigma_r$ for bond volatility:
+\begin{equation}
+\Sigma = \begin{pmatrix}
+\sigma_s^2 & -D^{\text{mod}} \sigma_s \sigma_r \rho \\
+-D^{\text{mod}} \sigma_s \sigma_r \rho & (D^{\text{mod}} \sigma_r)^2
+\end{pmatrix}
+\end{equation}
+
+The off-diagonal term reflects $\text{Cov}(R^s_{t+1}, R^b_{t+1}) = -D^{\text{mod}} \sigma_s \sigma_r \rho$: the negative sign arises because rising rates ($\varepsilon^r_{t+1} > 0$) hurt bond returns.
+
+Solving $\mathbf{w}^* = \frac{1}{\gamma} \Sigma^{-1} \boldsymbol{\mu}$ gives the optimal stock and bond weights $(w^*_s, w^*_b)$, with cash as the residual:
+\begin{equation}
+w^*_c = 1 - w^*_s - w^*_b
+\end{equation}
+
+These MV weights are used \emph{unconstrained} as target allocations. Constraints are applied only to the final dollar-level portfolio holdings (see Section~\ref{sec:weight_truncation}).
 
 \subsection{Modified Duration of Human Capital and Expenses}
 
@@ -164,44 +184,46 @@ L^{\text{bond}} &= L_t \cdot \frac{D^{L,\text{mod}}_t}{D^{\text{mod}}} \\
 L^{\text{cash}} &= L_t \cdot \left(1 - \frac{D^{L,\text{mod}}_t}{D^{\text{mod}}}\right)
 \end{align}
 
-\subsection{Target Financial Holdings (LDI Adjustment)}
+\subsection{Target Financial Holdings (Surplus Optimization)}
 
-The target allocation is applied to total wealth (net worth), $TW = FW + HC - L$. We then solve for the financial portfolio weights that achieve this target, accounting for implicit positions in HC and the need to hedge expenses.
+We define \textbf{surplus} as the positive part of net worth:
+\begin{equation}
+S_t = \max(0,\; TW_t) = \max(0,\; FW_t + HC_t - L_t)
+\end{equation}
+
+The target allocation is applied to surplus rather than raw net worth. This prevents the optimizer from taking leveraged bets when the agent is ``underwater'' ($TW < 0$).
 
 \begin{align}
-w^{\text{fin}}_{\text{stock}} \cdot FW &= w^*_{\text{stock}} \cdot TW - HC^{\text{stock}} \\
-w^{\text{fin}}_{\text{bond}} \cdot FW &= w^*_{\text{bond}} \cdot TW - HC^{\text{bond}} + L^{\text{bond}} \\
-w^{\text{fin}}_{\text{cash}} \cdot FW &= w^*_{\text{cash}} \cdot TW - HC^{\text{cash}} + L^{\text{cash}}
+\text{target\_fin\_stock} &= w^*_{\text{stock}} \cdot S_t - HC^{\text{stock}} \\
+\text{target\_fin\_bond} &= w^*_{\text{bond}} \cdot S_t - HC^{\text{bond}} + L^{\text{bond}} \\
+\text{target\_fin\_cash} &= w^*_{\text{cash}} \cdot S_t - HC^{\text{cash}} + L^{\text{cash}}
 \end{align}
 
 \textbf{Derivation:} The right-hand side represents the target dollar position in each asset class:
 \begin{itemize}
-    \item $w^*_i \cdot TW$: target allocation of net worth to asset class $i$
+    \item $w^*_i \cdot S_t$: target allocation of surplus to asset class $i$
     \item $-HC^{\text{stock/bond/cash}}$: subtract implicit exposure from human capital
     \item $+L^{\text{bond/cash}}$: add positions needed to hedge the expense liability
 \end{itemize}
-The left-hand side is the financial portfolio holding that achieves this net exposure.
+
+\textbf{When $TW_t < 0$} (net worth is negative): surplus $S_t = 0$, so the stock target is $-HC^{\text{stock}} \leq 0$. After clipping negatives to zero (Section~\ref{sec:weight_truncation}), the financial portfolio holds zero stocks and allocates entirely to bonds and cash to hedge the expense liability. This is the conservative ``underwater'' behavior: the agent cannot take equity risk until net worth recovers.
 
 \subsection{Weight Truncation (No Leverage Constraint)}
+\label{sec:weight_truncation}
 
-The LDI-adjusted weights can produce values outside $[0,1]$, implying leverage or short positions. For example, when human capital is large relative to financial wealth (early career), the optimal stock weight in the financial portfolio may exceed 100\%.
+The target financial holdings can be negative (e.g., when human capital already provides more stock exposure than the optimum requires). We impose a \textbf{no-leverage, no-short-selling constraint}:
 
-We impose a \textbf{no-leverage, no-short-selling constraint} by truncating weights:
-
-\textbf{Step 1: Compute raw weights}
+\textbf{Step 1: Clip negative dollar targets to zero}
 \begin{equation}
-\tilde{w}_i = \frac{w^{\text{fin}}_i \cdot FW}{FW} = w^{\text{fin}}_i, \quad i \in \{\text{stock}, \text{bond}, \text{cash}\}
+\hat{d}_i = \max(0,\; \text{target\_fin}_i), \quad i \in \{\text{stock}, \text{bond}, \text{cash}\}
 \end{equation}
 
-\textbf{Step 2: Truncate to $[0,1]$}
+\textbf{Step 2: Normalize to portfolio weights}
 \begin{equation}
-\hat{w}_i = \max(0, \min(1, \tilde{w}_i))
+w^{\text{final}}_i = \frac{\hat{d}_i}{\sum_j \hat{d}_j}
 \end{equation}
 
-\textbf{Step 3: Renormalize to sum to 1}
-\begin{equation}
-w^{\text{final}}_i = \frac{\hat{w}_i}{\sum_j \hat{w}_j}
-\end{equation}
+There is no separate $\min(1, \cdot)$ step---the upper bound is enforced automatically by normalization. The clipping operates on \emph{dollar amounts} (not weights), preserving the relative sizing of positive positions.
 
 \textbf{Implications:}
 \begin{itemize}
@@ -217,15 +239,35 @@ w^{\text{final}}_i = \frac{\hat{w}_i}{\sum_j \hat{w}_j}
 
 \subsection{Consumption Function}
 
-Consumption depends on total wealth (net worth):
+Consumption depends on net worth:
 \begin{equation}
-C_t = \underbrace{E_t}_{\text{subsistence}} + \underbrace{c \cdot \max(0, TW_t)}_{\text{variable}}
+C_t = \underbrace{E_t}_{\text{subsistence}} + \underbrace{c_t \cdot \max(0, TW_t)}_{\text{variable}}
 \end{equation}
-where:
+
+The consumption rate $c_t$ is computed dynamically at each time step from the current portfolio and market state.
+
+\textbf{Expected portfolio return} (arithmetic mean, conditional on time-$t$ information):
+\begin{equation}
+\mathbb{E}_t[R^p_{t+1}] = w_s(r_t + \mu_s) + w_b(r_t + \mu_b) + w_c \cdot r_t
+\end{equation}
+
+\textbf{Portfolio variance} (using realized post-constraint weights $w_s, w_b, w_c$):
+\begin{equation}
+\text{Var}_t(R^p_{t+1}) = w_s^2 \sigma_s^2 + w_b^2 (D^{\text{mod}} \sigma_r)^2 + 2 w_s w_b (-D^{\text{mod}} \sigma_s \sigma_r \rho)
+\end{equation}
+
+\textbf{Consumption rate} (certainty-equivalent return):
+\begin{equation}
+\label{eq:consumption_rate}
+c_t = \mathbb{E}_t[R^p_{t+1}] - \tfrac{1}{2}\text{Var}_t(R^p_{t+1}) + \delta
+\end{equation}
+where $\delta$ is an optional consumption boost parameter (default 0).
+
+\textbf{Key features:}
 \begin{itemize}
-    \item $E_t$ = subsistence expenses (baseline/floor)
-    \item $c$ = consumption rate ($\approx$ expected portfolio return)
-    \item Variable consumption is positive only if $TW > 0$
+    \item \textbf{Jensen's correction} ($-\frac{1}{2}\text{Var}_t$): converts the arithmetic mean return to the median (geometric) return, which governs long-run wealth growth. Without this correction, the consumption rate would be too high and wealth would deplete on average.
+    \item \textbf{Dynamic rate}: uses the current short rate $r_t$ (not the long-run mean $\bar{r}$), so consumption responds to the prevailing interest rate environment.
+    \item \textbf{Realized weights}: uses the post-constraint portfolio weights $w_s, w_b, w_c$, not the unconstrained MV targets. This ensures the variance correction matches the actual portfolio risk.
 \end{itemize}
 
 \subsection{Constraints}
@@ -244,11 +286,11 @@ where:
 \subsection{Wealth Evolution}
 
 \begin{equation}
-FW_{t+1} = FW_t \cdot (1 + R^p_t) + S_t
+FW_{t+1} = FW_t \cdot (1 + R^p_{t+1}) + S_t
 \end{equation}
 where:
 \begin{itemize}
-    \item $R^p_t = w^s R^s_t + w^b R^b_t + w^c r_t$ (portfolio return)
+    \item $R^p_{t+1} = w_s R^s_{t+1} + w_b R^b_{t+1} + w_c \, r_t$ (portfolio return)
     \item $S_t = Y_t - C_t$ (savings; can be negative in retirement)
 \end{itemize}
 
@@ -268,7 +310,7 @@ $\sigma_r$ & & Interest rate volatility \\
 $\phi$ & & Rate persistence (= 1 for random walk) \\
 $\mu_s$ & & Equity risk premium \\
 $\sigma_s$ & & Stock volatility \\
-$\mu_b$ & & Bond risk premium \\
+$\text{SR}_b$ & & Bond Sharpe ratio (default 0; $\mu_b = \text{SR}_b \cdot D^{\text{mod}} \cdot \sigma_r$) \\
 $D^{\text{mod}}$ & & Bond modified duration \\
 $\rho$ & & Stock-rate correlation \\
 \midrule
@@ -279,7 +321,8 @@ $Y_t$ & & Earnings profile \\
 $E_t$ & & Expense profile \\
 $\beta_{HC}$ & & Stock beta of human capital \\
 $\gamma$ & & Risk aversion \\
-$c$ & & Consumption rate \\
+$\delta$ & & Consumption boost (default 0) \\
+\multicolumn{3}{l}{\quad\textit{Note: consumption rate $c_t$ is derived dynamically (Eq.~\ref{eq:consumption_rate})}} \\
 \bottomrule
 \end{tabular}
 \end{table}
