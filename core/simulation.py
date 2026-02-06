@@ -232,39 +232,17 @@ def normalize_portfolio_weights(
     if allow_leverage:
         return w_stock, w_bond, w_cash
 
-    # Apply no-short constraint
-    equity = max(0, w_stock)
-    fixed_income = max(0, w_bond + w_cash)
+    # Clip each component independently at 0
+    w_s = max(0.0, target_fin_stock)
+    w_b = max(0.0, target_fin_bond)
+    w_c = max(0.0, target_fin_cash)
 
-    total_agg = equity + fixed_income
-    if total_agg > 0:
-        equity /= total_agg
-        fixed_income /= total_agg
+    total = w_s + w_b + w_c
+    if total > 0:
+        return w_s / total, w_b / total, w_c / total
     else:
-        equity = target_stock
-        fixed_income = target_bond + target_cash
-
-    # Split fixed income between bonds and cash
-    if w_bond > 0 and w_cash > 0:
-        fi_total = w_bond + w_cash
-        w_b = fixed_income * (w_bond / fi_total)
-        w_c = fixed_income * (w_cash / fi_total)
-    elif w_bond > 0:
-        w_b = fixed_income
-        w_c = 0.0
-    elif w_cash > 0:
-        w_b = 0.0
-        w_c = fixed_income
-    else:
-        target_fi = target_bond + target_cash
-        if target_fi > 0:
-            w_b = fixed_income * (target_bond / target_fi)
-            w_c = fixed_income * (target_cash / target_fi)
-        else:
-            w_b = fixed_income / 2.0
-            w_c = fixed_income / 2.0
-
-    return equity, w_b, w_c
+        # All targets non-positive: fall back to MV optimal
+        return target_stock, target_bond, target_cash
 
 
 def apply_consumption_constraints(
@@ -403,7 +381,6 @@ def simulate_with_strategy(
     # Initialize output arrays
     financial_wealth_paths = np.zeros((n_sims, total_years))
     human_capital_paths = np.zeros((n_sims, total_years))
-    total_wealth_paths = np.zeros((n_sims, total_years))
     pv_expenses_paths = np.zeros((n_sims, total_years))
     net_worth_paths = np.zeros((n_sims, total_years))
 
@@ -493,8 +470,6 @@ def simulate_with_strategy(
             # Store values
             human_capital_paths[sim, t] = hc
             pv_expenses_paths[sim, t] = pv_exp
-            total_wealth = fw + hc
-            total_wealth_paths[sim, t] = total_wealth
             net_worth = hc + fw - pv_exp
             net_worth_paths[sim, t] = net_worth
 
@@ -507,7 +482,6 @@ def simulate_with_strategy(
                 human_capital=hc,
                 pv_expenses=pv_exp,
                 net_worth=net_worth,
-                total_wealth=total_wealth,
                 earnings=current_earnings,
                 expenses=expenses[t],
                 current_rate=current_rate,
@@ -650,7 +624,6 @@ def simulate_paths(
         Dictionary containing all simulation outputs:
         - financial_wealth_paths: (n_sims, n_periods)
         - human_capital_paths: (n_sims, n_periods)
-        - total_wealth_paths: (n_sims, n_periods)
         - consumption paths (total, subsistence, variable)
         - weight paths (stock, bond, cash)
         - rate_paths, stock_return_paths
@@ -712,7 +685,6 @@ def simulate_paths(
     # Initialize output arrays
     financial_wealth_paths = np.zeros((n_sims, total_years))
     human_capital_paths = np.zeros((n_sims, total_years))
-    total_wealth_paths = np.zeros((n_sims, total_years))
     pv_expenses_paths = np.zeros((n_sims, total_years))
     net_worth_paths = np.zeros((n_sims, total_years))
 
@@ -787,13 +759,11 @@ def simulate_paths(
 
             human_capital_paths[sim, t] = hc
             pv_expenses_paths[sim, t] = pv_exp
-            total_wealth = fw + hc
-            total_wealth_paths[sim, t] = total_wealth
             net_worth = hc + fw - pv_exp
             net_worth_paths[sim, t] = net_worth
 
             # Compute portfolio weights FIRST (needed for dynamic consumption rate)
-            # Target financial holdings = target total - HC component + expense component
+            # Surplus optimization: target = target_pct * surplus - HC + expenses
             # Always compute decomposition at current_rate (dynamic or r_bar depending on flag)
             remaining_expenses = expenses[t:]
             duration_exp_t = compute_duration(remaining_expenses, current_rate, phi, r)
@@ -831,9 +801,10 @@ def simulate_paths(
             exp_bond_paths[sim, t] = exp_bond_t
             exp_cash_paths[sim, t] = exp_cash_t
 
-            target_fin_stock = target_stock * total_wealth - hc_stock_t
-            target_fin_bond = target_bond * total_wealth - hc_bond_t + exp_bond_t
-            target_fin_cash = target_cash * total_wealth - hc_cash_t + exp_cash_t
+            surplus = max(0, net_worth)
+            target_fin_stock = target_stock * surplus - hc_stock_t
+            target_fin_bond = target_bond * surplus - hc_bond_t + exp_bond_t
+            target_fin_cash = target_cash * surplus - hc_cash_t + exp_cash_t
 
             target_fin_stocks_paths[sim, t] = target_fin_stock
             target_fin_bonds_paths[sim, t] = target_fin_bond
@@ -900,7 +871,6 @@ def simulate_paths(
         # Core paths
         'financial_wealth_paths': financial_wealth_paths,
         'human_capital_paths': human_capital_paths,
-        'total_wealth_paths': total_wealth_paths,
         'pv_expenses_paths': pv_expenses_paths,
         'net_worth_paths': net_worth_paths,
         # Consumption
@@ -1045,7 +1015,6 @@ def compute_lifecycle_median_path(
 
     # Extract single path (sim=0) from result arrays
     financial_wealth = result['financial_wealth_paths'][0]
-    total_wealth = result['total_wealth_paths'][0]
     human_capital = result['human_capital_paths'][0]
     net_worth = result['net_worth_paths'][0]
 
@@ -1092,7 +1061,6 @@ def compute_lifecycle_median_path(
         duration_earnings=result['duration_earnings'],
         duration_expenses=result['duration_expenses'],
         financial_wealth=financial_wealth,
-        total_wealth=total_wealth,
         target_fin_stocks=target_fin_stocks,
         target_fin_bonds=target_fin_bonds,
         target_fin_cash=target_fin_cash,
@@ -1225,7 +1193,6 @@ def run_lifecycle_monte_carlo(
     return MonteCarloResult(
         ages=ages,
         financial_wealth_paths=result['financial_wealth_paths'],
-        total_wealth_paths=result['total_wealth_paths'],
         human_capital_paths=result['human_capital_paths'],
         total_consumption_paths=result['total_consumption_paths'],
         subsistence_consumption_paths=result['subsistence_consumption_paths'],
@@ -1482,15 +1449,14 @@ def compute_lifecycle_fixed_consumption(
             if financial_wealth[i+1] < 0:
                 financial_wealth[i+1] = 0
 
-    # Total wealth
-    total_wealth = financial_wealth + human_capital
+    # Surplus optimization: use max(0, net_worth) instead of total_wealth
+    surplus = np.maximum(0, net_worth)
 
-    # Target financial holdings and weights (same logic as optimal)
-    # Implicit = HC (asset) - Expenses (liability)
-    # HC is bond-like asset → subtract; Expenses is bond-like liability → add
-    target_fin_stocks = target_stock * total_wealth - hc_stock_component
-    target_fin_bonds = target_bond * total_wealth - hc_bond_component + exp_bond_component
-    target_fin_cash = target_cash * total_wealth - hc_cash_component + exp_cash_component
+    # Target financial holdings and weights (surplus optimization)
+    # Surplus = HC + FW - PV(expenses), targets sum to FW (no leverage needed)
+    target_fin_stocks = target_stock * surplus - hc_stock_component
+    target_fin_bonds = target_bond * surplus - hc_bond_component + exp_bond_component
+    target_fin_cash = target_cash * surplus - hc_cash_component + exp_cash_component
 
     stock_weight_no_short = np.zeros(total_years)
     bond_weight_no_short = np.zeros(total_years)
@@ -1535,7 +1501,6 @@ def compute_lifecycle_fixed_consumption(
         duration_earnings=duration_earnings,
         duration_expenses=duration_expenses,
         financial_wealth=financial_wealth,
-        total_wealth=total_wealth,
         target_fin_stocks=target_fin_stocks,
         target_fin_bonds=target_fin_bonds,
         target_fin_cash=target_fin_cash,

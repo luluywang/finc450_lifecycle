@@ -10,5 +10,5 @@
   - TypeScript: TypeScript (standalone generator)
 
 ### Missing Typescript
-- `root.simulation_test`
 - `root.monte_carlo_stats`
+- `root.simulation_test`

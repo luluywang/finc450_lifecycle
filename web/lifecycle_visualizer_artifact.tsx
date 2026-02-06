@@ -246,7 +246,6 @@ interface SimulationState {
 
   // Wealth measures
   financialWealth: number;      // Current FW (Python: financial_wealth)
-  totalWealth: number;          // HC + FW (Python: total_wealth)
   netWorth: number;             // HC + FW - PV(expenses) (Python: net_worth)
 
   // Cash flows
@@ -451,7 +450,6 @@ interface LifecycleResult {
   expBond: number[];
   expCash: number[];
   financialWealth: number[];
-  totalWealth: number[];
   stockWeight: number[];
   bondWeight: number[];
   cashWeight: number[];
@@ -948,49 +946,18 @@ function normalizePortfolioWeights(
     return [wStock, wBond, wCash];
   }
 
-  // Apply no-short constraint
-  let equity = Math.max(0, wStock);
-  let fixedIncome = Math.max(0, wBond + wCash);
+  // Clip each component independently at 0
+  const wS = Math.max(0, targetFinStock);
+  const wB = Math.max(0, targetFinBond);
+  const wC = Math.max(0, targetFinCash);
 
-  const totalAgg = equity + fixedIncome;
-  if (totalAgg > 0) {
-    equity /= totalAgg;
-    fixedIncome /= totalAgg;
+  const total = wS + wB + wC;
+  if (total > 0) {
+    return [wS / total, wB / total, wC / total];
   } else {
-    // Edge case: all target financial holdings are non-positive
-    // Fall back to baseline target allocations
-    equity = targetStock;
-    fixedIncome = targetBond + targetCash;
+    // All targets non-positive: fall back to MV optimal
+    return [targetStock, targetBond, targetCash];
   }
-
-  // Split fixed income between bonds and cash
-  let wB: number;
-  let wC: number;
-
-  if (wBond > 0 && wCash > 0) {
-    const fiTotal = wBond + wCash;
-    wB = fixedIncome * (wBond / fiTotal);
-    wC = fixedIncome * (wCash / fiTotal);
-  } else if (wBond > 0) {
-    wB = fixedIncome;
-    wC = 0;
-  } else if (wCash > 0) {
-    wB = 0;
-    wC = fixedIncome;
-  } else {
-    // Both wBond and wCash are non-positive
-    const targetFI = targetBond + targetCash;
-    if (targetFI > 0) {
-      wB = fixedIncome * (targetBond / targetFI);
-      wC = fixedIncome * (targetCash / targetFI);
-    } else {
-      // Edge case: target FI is also zero/negative, split equally
-      wB = fixedIncome / 2;
-      wC = fixedIncome / 2;
-    }
-  }
-
-  return [equity, wB, wC];
 }
 
 // =============================================================================
@@ -1194,7 +1161,6 @@ function simulateWithStrategy(
       }
 
       // Compute wealth measures
-      const totalWealth = fw + hc;
       const netWorth = hc + fw - pvExp;
 
       // Build state for strategy
@@ -1209,7 +1175,6 @@ function simulateWithStrategy(
         durationHc: durationHc,
         durationExp: durationExp,
         financialWealth: fw,
-        totalWealth: totalWealth,
         netWorth: netWorth,
         earnings: currentEarnings,
         expenses: expenses[t],
@@ -1433,11 +1398,12 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
       }
     }
 
-    // LDI allocation: target financial holdings
-    // Target = target_pct * total_wealth - HC_component + expense_component
-    const targetFinStock = state.targetStock * state.totalWealth - state.hcStockComponent;
-    const targetFinBond = state.targetBond * state.totalWealth - state.hcBondComponent + state.expBondComponent;
-    const targetFinCash = state.targetCash * state.totalWealth - state.hcCashComponent + state.expCashComponent;
+    // LDI allocation: surplus optimization
+    // Surplus = max(0, net_worth), targets sum to FW (no leverage needed)
+    const surplus = Math.max(0, state.netWorth);
+    const targetFinStock = state.targetStock * surplus - state.hcStockComponent;
+    const targetFinBond = state.targetBond * surplus - state.hcBondComponent + state.expBondComponent;
+    const targetFinCash = state.targetCash * surplus - state.hcCashComponent + state.expCashComponent;
 
     // Normalize to weights
     const [wS, wB, wC] = normalizePortfolioWeights(
@@ -1746,7 +1712,7 @@ interface PercentileStats {
   netFiPv: FieldPercentiles;
   dv01: FieldPercentiles;
   pvExpenses: FieldPercentiles;
-  totalWealth: FieldPercentiles;
+  totalAssets: FieldPercentiles;   // HC + FW (renamed from totalWealth)
   netWorth: FieldPercentiles;
 }
 
@@ -1905,19 +1871,19 @@ function computeNetFiPvAndDv01Paths(
 }
 
 /**
- * Compute pvExpenses, totalWealth, and netWorth paths for all simulations.
+ * Compute pvExpenses, totalAssets (HC+FW), and netWorth paths for all simulations.
  * These are derived from simulation results to support Net Wealth charts.
  *
  * @param result - SimulationResult from simulateWithStrategy (2D arrays for MC)
  * @param params - Lifecycle parameters
  * @param econParams - Economic parameters
- * @returns Object with pvExpenses, totalWealth, and netWorth 2D arrays
+ * @returns Object with pvExpenses, totalAssets, and netWorth 2D arrays
  */
 function computeWealthDecompositionPaths(
   result: SimulationResult,
   params: LifecycleParams,
   econParams: EconomicParams
-): { pvExpenses: number[][]; totalWealth: number[][]; netWorth: number[][] } {
+): { pvExpenses: number[][]; totalAssets: number[][]; netWorth: number[][] } {
   const financialWealth = result.financialWealth as number[][];
   const humanCapital = result.humanCapital as number[][];
   const interestRates = result.interestRates as number[][];
@@ -1933,12 +1899,12 @@ function computeWealthDecompositionPaths(
   const { expenses } = initializeEarningsExpenses(legacyParams, nPeriods, workingYears);
 
   const pvExpensesPaths: number[][] = [];
-  const totalWealthPaths: number[][] = [];
+  const totalAssetsPaths: number[][] = [];
   const netWorthPaths: number[][] = [];
 
   for (let sim = 0; sim < nSims; sim++) {
     const pvExp: number[] = [];
-    const tw: number[] = [];
+    const ta: number[] = [];
     const nw: number[] = [];
 
     for (let t = 0; t < nPeriods; t++) {
@@ -1951,16 +1917,16 @@ function computeWealthDecompositionPaths(
       const pvExpVal = computePresentValue(remainingExpenses, currentRate, phi, rBar);
 
       pvExp.push(pvExpVal);
-      tw.push(hc + fw);
+      ta.push(hc + fw);
       nw.push(hc + fw - pvExpVal);
     }
 
     pvExpensesPaths.push(pvExp);
-    totalWealthPaths.push(tw);
+    totalAssetsPaths.push(ta);
     netWorthPaths.push(nw);
   }
 
-  return { pvExpenses: pvExpensesPaths, totalWealth: totalWealthPaths, netWorth: netWorthPaths };
+  return { pvExpenses: pvExpensesPaths, totalAssets: totalAssetsPaths, netWorth: netWorthPaths };
 }
 
 /**
@@ -2066,7 +2032,7 @@ function runMonteCarloSimulation(
   const { netFiPv: netFiPvPaths, dv01: dv01Paths } = computeNetFiPvAndDv01Paths(result, params, econParams);
 
   // Compute wealth decomposition paths for Net Wealth charts
-  const { pvExpenses: pvExpensesPaths, totalWealth: totalWealthPaths, netWorth: netWorthPaths } = computeWealthDecompositionPaths(result, params, econParams);
+  const { pvExpenses: pvExpensesPaths, totalAssets: totalAssetsPaths, netWorth: netWorthPaths } = computeWealthDecompositionPaths(result, params, econParams);
 
   // Compute percentile statistics
   const percentiles: PercentileStats = {
@@ -2081,7 +2047,7 @@ function runMonteCarloSimulation(
     netFiPv: computeFieldPercentiles(netFiPvPaths),
     dv01: computeFieldPercentiles(dv01Paths),
     pvExpenses: computeFieldPercentiles(pvExpensesPaths),
-    totalWealth: computeFieldPercentiles(totalWealthPaths),
+    totalAssets: computeFieldPercentiles(totalAssetsPaths),
     netWorth: computeFieldPercentiles(netWorthPaths),
   };
 
@@ -2231,8 +2197,8 @@ function runMonteCarloStrategyComparison(
   const { netFiPv: rotNetFiPvPaths, dv01: rotDv01Paths } = computeNetFiPvAndDv01Paths(rotResult, params, econParams);
 
   // Compute wealth decomposition paths for Net Wealth charts
-  const { pvExpenses: ldiPvExpensesPaths, totalWealth: ldiTotalWealthPaths, netWorth: ldiNetWorthPaths } = computeWealthDecompositionPaths(ldiResult, params, econParams);
-  const { pvExpenses: rotPvExpensesPaths, totalWealth: rotTotalWealthPaths, netWorth: rotNetWorthPaths } = computeWealthDecompositionPaths(rotResult, params, econParams);
+  const { pvExpenses: ldiPvExpensesPaths, totalAssets: ldiTotalAssetsPaths, netWorth: ldiNetWorthPaths } = computeWealthDecompositionPaths(ldiResult, params, econParams);
+  const { pvExpenses: rotPvExpensesPaths, totalAssets: rotTotalAssetsPaths, netWorth: rotNetWorthPaths } = computeWealthDecompositionPaths(rotResult, params, econParams);
 
   // Compute percentile statistics for both
   const ldiPercentiles: PercentileStats = {
@@ -2247,7 +2213,7 @@ function runMonteCarloStrategyComparison(
     netFiPv: computeFieldPercentiles(ldiNetFiPvPaths),
     dv01: computeFieldPercentiles(ldiDv01Paths),
     pvExpenses: computeFieldPercentiles(ldiPvExpensesPaths),
-    totalWealth: computeFieldPercentiles(ldiTotalWealthPaths),
+    totalAssets: computeFieldPercentiles(ldiTotalAssetsPaths),
     netWorth: computeFieldPercentiles(ldiNetWorthPaths),
   };
 
@@ -2263,7 +2229,7 @@ function runMonteCarloStrategyComparison(
     netFiPv: computeFieldPercentiles(rotNetFiPvPaths),
     dv01: computeFieldPercentiles(rotDv01Paths),
     pvExpenses: computeFieldPercentiles(rotPvExpensesPaths),
-    totalWealth: computeFieldPercentiles(rotTotalWealthPaths),
+    totalAssets: computeFieldPercentiles(rotTotalAssetsPaths),
     netWorth: computeFieldPercentiles(rotNetWorthPaths),
   };
 
@@ -2584,8 +2550,8 @@ function runTeachingScenarios(
     const { netFiPv: rotNetFiPvPaths, dv01: rotDv01Paths } = computeNetFiPvAndDv01Paths(rotResult, params, econParams);
 
     // Compute wealth decomposition paths for Net Wealth charts
-    const { pvExpenses: ldiPvExpensesPaths, totalWealth: ldiTotalWealthPaths, netWorth: ldiNetWorthPaths } = computeWealthDecompositionPaths(ldiResult, params, econParams);
-    const { pvExpenses: rotPvExpensesPaths, totalWealth: rotTotalWealthPaths, netWorth: rotNetWorthPaths } = computeWealthDecompositionPaths(rotResult, params, econParams);
+    const { pvExpenses: ldiPvExpensesPaths, totalAssets: ldiTotalAssetsPaths, netWorth: ldiNetWorthPaths } = computeWealthDecompositionPaths(ldiResult, params, econParams);
+    const { pvExpenses: rotPvExpensesPaths, totalAssets: rotTotalAssetsPaths, netWorth: rotNetWorthPaths } = computeWealthDecompositionPaths(rotResult, params, econParams);
 
     // Compute percentiles and summary stats for LDI
     const ldiPercentiles: PercentileStats = {
@@ -2600,7 +2566,7 @@ function runTeachingScenarios(
       netFiPv: computeFieldPercentiles(ldiNetFiPvPaths),
       dv01: computeFieldPercentiles(ldiDv01Paths),
       pvExpenses: computeFieldPercentiles(ldiPvExpensesPaths),
-      totalWealth: computeFieldPercentiles(ldiTotalWealthPaths),
+      totalAssets: computeFieldPercentiles(ldiTotalAssetsPaths),
       netWorth: computeFieldPercentiles(ldiNetWorthPaths),
     };
     const ldiDefaulted = ldiResult.defaulted as boolean[];
@@ -2619,7 +2585,7 @@ function runTeachingScenarios(
       netFiPv: computeFieldPercentiles(rotNetFiPvPaths),
       dv01: computeFieldPercentiles(rotDv01Paths),
       pvExpenses: computeFieldPercentiles(rotPvExpensesPaths),
-      totalWealth: computeFieldPercentiles(rotTotalWealthPaths),
+      totalAssets: computeFieldPercentiles(rotTotalAssetsPaths),
       netWorth: computeFieldPercentiles(rotNetWorthPaths),
     };
     const rotDefaulted = rotResult.defaulted as boolean[];
@@ -2861,8 +2827,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const bondReturn = r + muBond;
   const cashReturn = r;
 
-  // Initialize total wealth and weight arrays (computed inside the loop)
-  const totalWealth = Array(totalYears).fill(0);
+  // Initialize weight arrays (computed inside the loop)
   const stockWeight = Array(totalYears).fill(0);
   const bondWeight = Array(totalYears).fill(0);
   const cashWeight = Array(totalYears).fill(0);
@@ -2873,14 +2838,13 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     // Current financial wealth and human capital
     const fw = financialWealth[i];
     const hc = humanCapital[i];
-    const tw = fw + hc;
-    totalWealth[i] = tw;
     netWorth[i] = hc + fw - pvExpenses[i];
 
-    // Compute portfolio weights FIRST (needed for dynamic consumption rate)
-    const targetFinStock = targetStock * tw - hcStock[i];
-    const targetFinBond = targetBond * tw - hcBond[i] + expBond[i];
-    const targetFinCash = targetCash * tw - hcCash[i] + expCash[i];
+    // Surplus optimization: target = target_pct * surplus - HC + expenses
+    const surplus = Math.max(0, netWorth[i]);
+    const targetFinStock = targetStock * surplus - hcStock[i];
+    const targetFinBond = targetBond * surplus - hcBond[i] + expBond[i];
+    const targetFinCash = targetCash * surplus - hcCash[i] + expCash[i];
 
     const [wS, wB, wC] = normalizePortfolioWeights(
       targetFinStock, targetFinBond, targetFinCash,
@@ -2975,7 +2939,6 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     expBond,
     expCash,
     financialWealth,
-    totalWealth,
     stockWeight,
     bondWeight,
     cashWeight,
@@ -3090,7 +3053,6 @@ function generateVerificationData(params: Params): Record<string, unknown> {
   const medianPath = {
     ages: result.ages,
     financial_wealth: result.financialWealth,
-    total_wealth: result.totalWealth,
     net_worth: result.netWorth,
     stock_weight: result.stockWeight,
     bond_weight: result.bondWeight,
@@ -3258,7 +3220,7 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
   const {
     pvEarnings, pvExpenses, durationEarnings, durationExpenses,
     humanCapital, hcStock, hcBond, hcCash, expBond, expCash,
-    financialWealth, totalWealth, stockWeight, bondWeight, cashWeight,
+    financialWealth, stockWeight, bondWeight, cashWeight,
     subsistenceConsumption, variableConsumption, totalConsumption, netWorth,
   } = initializeLifecycleArrays(totalYears, expenses);
   // Market conditions tracking
@@ -3319,13 +3281,12 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
       expCash[i] = pvExpenses[i];
     }
 
-    totalWealth[i] = financialWealth[i] + humanCapital[i];
-
-    // Portfolio weights using normalize helper
-    // Include expense hedge: + expBond, + expCash (matches Python simulate_paths)
-    const targetFinStocks = targetStock * totalWealth[i] - hcStock[i];
-    const targetFinBonds = targetBond * totalWealth[i] - hcBond[i] + expBond[i];
-    const targetFinCash = targetCash * totalWealth[i] - hcCash[i] + expCash[i];
+    // Surplus optimization: target = target_pct * surplus - HC + expenses
+    netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
+    const surplus = Math.max(0, netWorth[i]);
+    const targetFinStocks = targetStock * surplus - hcStock[i];
+    const targetFinBonds = targetBond * surplus - hcBond[i] + expBond[i];
+    const targetFinCash = targetCash * surplus - hcCash[i] + expCash[i];
 
     const [wS, wB, wC] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
@@ -3335,9 +3296,6 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     stockWeight[i] = wS;
     bondWeight[i] = wB;
     cashWeight[i] = wC;
-
-    // Consumption decision using dynamic rate (current_rate + realized weights)
-    netWorth[i] = humanCapital[i] + financialWealth[i] - pvExpenses[i];
 
     // Dynamic consumption rate: use preShockRate (current rate) and realized weights
     const expectedReturnI = (
@@ -3411,7 +3369,6 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     expBond,
     expCash,
     financialWealth,
-    totalWealth,
     stockWeight,
     bondWeight,
     cashWeight,
@@ -3482,7 +3439,6 @@ function initializeLifecycleArrays(totalYears: number, expenses: number[]) {
     expBond: Array(totalYears).fill(0) as number[],
     expCash: Array(totalYears).fill(0) as number[],
     financialWealth: Array(totalYears).fill(0) as number[],
-    totalWealth: Array(totalYears).fill(0) as number[],
     stockWeight: Array(totalYears).fill(0) as number[],
     bondWeight: Array(totalYears).fill(0) as number[],
     cashWeight: Array(totalYears).fill(0) as number[],
@@ -3500,7 +3456,6 @@ function initializeLifecycleArrays(totalYears: number, expenses: number[]) {
 interface ScenarioResult {
   ages: number[];
   financialWealth: number[];
-  totalWealth: number[];      // financialWealth + humanCapital
   totalConsumption: number[];
   subsistenceConsumption: number[];
   variableConsumption: number[];
@@ -3542,7 +3497,6 @@ function computeScenarioPath(
   // and realized weights (dynamic programming principle)
 
   const financialWealth = Array(totalYears).fill(0);
-  const totalWealthArr = Array(totalYears).fill(0);
   const subsistenceConsumption = [...expenses];
   const variableConsumption = Array(totalYears).fill(0);
   const totalConsumption = Array(totalYears).fill(0);
@@ -3622,14 +3576,12 @@ function computeScenarioPath(
       expCash = pvExpenses;
     }
 
-    const totalWealth = financialWealth[i] + humanCapital;
-    totalWealthArr[i] = totalWealth;
-
-    // Portfolio weights using normalize helper
-    // Include expense hedge: + expBond, + expCash (matches Python simulate_paths)
-    const targetFinStocks = targetStockAlloc * totalWealth - hcStock;
-    const targetFinBonds = targetBondAlloc * totalWealth - hcBond + expBond;
-    const targetFinCash = targetCashAlloc * totalWealth - hcCash + expCash;
+    // Surplus optimization: target = target_pct * surplus - HC + expenses
+    const netWorth = humanCapital + financialWealth[i] - pvExpenses;
+    const surplus = Math.max(0, netWorth);
+    const targetFinStocks = targetStockAlloc * surplus - hcStock;
+    const targetFinBonds = targetBondAlloc * surplus - hcBond + expBond;
+    const targetFinCash = targetCashAlloc * surplus - hcCash + expCash;
 
     const [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
@@ -3638,8 +3590,6 @@ function computeScenarioPath(
     );
 
     // Consumption decision based on rule
-    const netWorth = humanCapital + financialWealth[i] - pvExpenses;
-
     if (scenario.consumptionRule === 'adaptive') {
       // Adaptive: dynamic consumption rate using preShockRate and realized weights
       const expectedReturnI = (
@@ -3750,7 +3700,6 @@ function computeScenarioPath(
   return {
     ages,
     financialWealth,
-    totalWealth: totalWealthArr,
     totalConsumption,
     subsistenceConsumption,
     variableConsumption,
@@ -4241,7 +4190,7 @@ export default function LifecycleVisualizer() {
       // Wealth
       humanCapital: hc[i],
       financialWealth: fw[i],
-      totalWealth: hc[i] + fw[i],
+      totalAssets: hc[i] + fw[i],
       // PV Expenses and Net Worth
       pvExpenses: pvExpenses[i],
       netWorth: hc[i] + fw[i] - pvExpenses[i],
@@ -4324,8 +4273,8 @@ export default function LifecycleVisualizer() {
       // Market assumptions
       cumulativeStockReturn: result.cumulativeStockReturn[i],
       interestRate: result.interestRate[i] * 100,  // Convert to percentage
-      // Total Wealth (HC + FW)
-      totalWealth: result.totalWealth[i],
+      // Total Assets (HC + FW)
+      totalAssets: result.humanCapital[i] + result.financialWealth[i],
       // Net Worth (HC + FW - PV Expenses)
       netWorth: result.netWorth[i],
     }));
@@ -4735,7 +4684,7 @@ export default function LifecycleVisualizer() {
                 <ReferenceLine y={0} stroke="#333" strokeWidth={1.5} />
                 <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
                 <Area type="monotone" dataKey="netWorth" stroke={COLORS.fw} fill={COLORS.fw} fillOpacity={0.4} name="Net Worth" />
-                <Line type="monotone" dataKey="totalWealth" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Total Wealth (HC+FW)" />
+                <Line type="monotone" dataKey="totalAssets" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Total Assets (HC+FW)" />
                 <Line type="monotone" dataKey="pvExpenses" stroke={COLORS.expenses} strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="PV Expenses" />
               </AreaChart>
             </ResponsiveContainer>
@@ -4982,7 +4931,7 @@ export default function LifecycleVisualizer() {
                       <ReferenceLine y={0} stroke="#333" strokeWidth={1.5} />
                       <ReferenceLine x={retAge} stroke="#999" strokeDasharray="3 3" />
                       <Area type="monotone" dataKey="netWorth" stroke={COLORS.fw} fill={COLORS.fw} fillOpacity={0.4} name="Net Worth" />
-                      <Line type="monotone" dataKey="totalWealth" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Total Wealth (HC+FW)" />
+                      <Line type="monotone" dataKey="totalAssets" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Total Assets (HC+FW)" />
                       <Line type="monotone" dataKey="pvExpenses" stroke={COLORS.expenses} strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="PV Expenses" />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -5895,8 +5844,8 @@ export default function LifecycleVisualizer() {
                 rot_nw_p50: scenario.rot.percentiles.netWorth.p50[i],
                 rot_nw_p95: scenario.rot.percentiles.netWorth.p95[i],
                 // Reference lines: total wealth and PV expenses (median only)
-                ldi_tw_p50: scenario.ldi.percentiles.totalWealth.p50[i],
-                rot_tw_p50: scenario.rot.percentiles.totalWealth.p50[i],
+                ldi_tw_p50: scenario.ldi.percentiles.totalAssets.p50[i],
+                rot_tw_p50: scenario.rot.percentiles.totalAssets.p50[i],
                 ldi_pvexp_p50: scenario.ldi.percentiles.pvExpenses.p50[i],
                 rot_pvexp_p50: scenario.rot.percentiles.pvExpenses.p50[i],
               }));

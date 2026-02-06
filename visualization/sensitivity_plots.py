@@ -272,7 +272,7 @@ def create_gamma_comparison_figure(
     # Plot 4: Total Wealth comparison
     ax = axes[1, 0]
     for i, gamma in enumerate(gamma_values):
-        ax.plot(x, results[gamma].total_wealth, color=gamma_colors[i],
+        ax.plot(x, results[gamma].human_capital + results[gamma].financial_wealth, color=gamma_colors[i],
                 linewidth=2, label=f'gamma = {gamma}')
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -383,7 +383,7 @@ def create_initial_wealth_comparison_figure(
     ax = axes[0, 1]
     for i, wealth in enumerate(wealth_values):
         label = f'${wealth:+}k' if wealth != 0 else '$0k'
-        ax.plot(x, results[wealth].total_wealth, color=wealth_colors[i],
+        ax.plot(x, results[wealth].human_capital + results[wealth].financial_wealth, color=wealth_colors[i],
                 linewidth=2, label=label)
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -570,7 +570,7 @@ def create_consumption_boost_comparison_figure(
     # Plot 6: Total Wealth comparison
     ax = axes[1, 2]
     for i, boost in enumerate(boost_values):
-        ax.plot(x, results[boost].total_wealth, color=boost_colors[i],
+        ax.plot(x, results[boost].human_capital + results[boost].financial_wealth, color=boost_colors[i],
                 linewidth=2, label=f'+{boost*100:.0f}pp')
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -674,7 +674,7 @@ def create_equity_premium_comparison_figure(
     # Plot 4: Total Wealth comparison
     ax = axes[1, 0]
     for i, premium in enumerate(premium_values):
-        ax.plot(x, results[premium].total_wealth, color=premium_colors[i],
+        ax.plot(x, results[premium].human_capital + results[premium].financial_wealth, color=premium_colors[i],
                 linewidth=2, label=f'{premium*100:.0f}%')
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
@@ -961,7 +961,7 @@ def create_volatility_comparison_figure(
     # Plot 6: Total Wealth comparison
     ax = axes[1, 2]
     for i, vol in enumerate(volatility_values):
-        ax.plot(x, results[vol].total_wealth, color=vol_colors[i],
+        ax.plot(x, results[vol].human_capital + results[vol].financial_wealth, color=vol_colors[i],
                 linewidth=2, label=f'{vol*100:.0f}%')
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)

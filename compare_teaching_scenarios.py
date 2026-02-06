@@ -283,6 +283,11 @@ def _plot_net_fi_pv(
     ax.set_title('Net Fixed Income PV (Bonds + HC - Expense Liability)')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
+    # Cap y-axis to keep LDI detail visible (RoT tails can be extreme)
+    all_data = np.concatenate([result.ldi_net_fi_pv_paths, result.rot_net_fi_pv_paths])
+    lo = np.percentile(all_data, 5) * 1.3
+    hi = np.percentile(all_data, 95) * 1.3
+    ax.set_ylim(lo, hi)
 
 
 def _plot_dv01(
@@ -309,6 +314,11 @@ def _plot_dv01(
     ax.set_title('Interest Rate Sensitivity ($ gain per 1pp rate drop)')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
+    # Cap y-axis to keep LDI detail visible (RoT tails can be extreme)
+    all_data = np.concatenate([result.ldi_dv01_paths, result.rot_dv01_paths])
+    lo = np.percentile(all_data, 5) * 1.3
+    hi = np.percentile(all_data, 95) * 1.3
+    ax.set_ylim(lo, hi)
 
 
 # =============================================================================

@@ -55,7 +55,6 @@ finc450_lifecycle/
 ├── output/                            # Generated outputs (tracked in git)
 │   ├── figures/                       # Lecture figures (PNG)
 │   ├── lifecycle_strategy.pdf         # Main lifecycle report
-│   ├── strategy_comparison.pdf        # LDI vs RoT comparison
 │   ├── python_verification.json       # Python verification data
 │   ├── typescript_verification.json   # TypeScript verification data
 │   └── verification_report.md         # Comparison report
@@ -73,7 +72,6 @@ finc450_lifecycle/
 │       └── vite.config.ts
 │
 ├── generate_report.py                 # Main lifecycle report PDF generator
-├── compare_strategies.py              # LDI vs RoT comparison PDF generator
 ├── compare_teaching_scenarios.py      # Teaching scenario comparisons
 ├── generate_lecture_figures.py        # Lecture figure generation
 ├── compare_implementations.py         # Python vs TypeScript verification
@@ -267,7 +265,6 @@ make help         # Show available targets
 
 Outputs are written to `output/`:
 - `output/lifecycle_strategy.pdf` - Main lifecycle analysis
-- `output/strategy_comparison.pdf` - LDI vs RoT comparison
 - `output/figures/` - Lecture figures (PNG)
 
 ### Custom Parameters

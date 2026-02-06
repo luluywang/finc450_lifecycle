@@ -260,43 +260,18 @@ function normalizePortfolioWeights(
     return [wStock, wBond, wCash];
   }
 
-  let equity = Math.max(0, wStock);
-  let fixedIncome = Math.max(0, wBond + wCash);
+  // Clip each component independently at 0
+  const wS = Math.max(0, targetFinStock);
+  const wB = Math.max(0, targetFinBond);
+  const wC = Math.max(0, targetFinCash);
 
-  const totalAgg = equity + fixedIncome;
-  if (totalAgg > 0) {
-    equity /= totalAgg;
-    fixedIncome /= totalAgg;
+  const total = wS + wB + wC;
+  if (total > 0) {
+    return [wS / total, wB / total, wC / total];
   } else {
-    equity = targetStock;
-    fixedIncome = targetBond + targetCash;
+    // All targets non-positive: fall back to MV optimal
+    return [targetStock, targetBond, targetCash];
   }
-
-  let wB: number;
-  let wC: number;
-
-  if (wBond > 0 && wCash > 0) {
-    const fiTotal = wBond + wCash;
-    wB = fixedIncome * (wBond / fiTotal);
-    wC = fixedIncome * (wCash / fiTotal);
-  } else if (wBond > 0) {
-    wB = fixedIncome;
-    wC = 0;
-  } else if (wCash > 0) {
-    wB = 0;
-    wC = fixedIncome;
-  } else {
-    const targetFI = targetBond + targetCash;
-    if (targetFI > 0) {
-      wB = fixedIncome * (targetBond / targetFI);
-      wC = fixedIncome * (targetCash / targetFI);
-    } else {
-      wB = fixedIncome / 2;
-      wC = fixedIncome / 2;
-    }
-  }
-
-  return [equity, wB, wC];
 }
 
 // =============================================================================
@@ -318,7 +293,6 @@ interface LifecycleResult {
   expBond: number[];
   expCash: number[];
   financialWealth: number[];
-  totalWealth: number[];
   stockWeight: number[];
   bondWeight: number[];
   cashWeight: number[];
@@ -433,8 +407,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const bondReturn = r + muBond;
   const cashReturn = r;
 
-  // Initialize total wealth and weight arrays (computed inside the loop)
-  const totalWealth = Array(totalYears).fill(0);
+  // Initialize weight arrays (computed inside the loop)
   const stockWeight = Array(totalYears).fill(0);
   const bondWeight = Array(totalYears).fill(0);
   const cashWeight = Array(totalYears).fill(0);
@@ -445,14 +418,13 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     // Current financial wealth and human capital
     const fw = financialWealth[i];
     const hc = humanCapital[i];
-    const tw = fw + hc;
-    totalWealth[i] = tw;
     netWorth[i] = hc + fw - pvExpenses[i];
 
-    // Compute portfolio weights FIRST (needed for dynamic consumption rate)
-    const targetFinStock = targetStock * tw - hcStock[i];
-    const targetFinBond = targetBond * tw - hcBond[i] + expBond[i];
-    const targetFinCash = targetCash * tw - hcCash[i] + expCash[i];
+    // Surplus optimization: target = target_pct * surplus - HC + expenses
+    const surplus = Math.max(0, netWorth[i]);
+    const targetFinStock = targetStock * surplus - hcStock[i];
+    const targetFinBond = targetBond * surplus - hcBond[i] + expBond[i];
+    const targetFinCash = targetCash * surplus - hcCash[i] + expCash[i];
 
     const [wS, wB, wC] = normalizePortfolioWeights(
       targetFinStock, targetFinBond, targetFinCash,
@@ -522,7 +494,6 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     expBond,
     expCash,
     financialWealth,
-    totalWealth,
     stockWeight,
     bondWeight,
     cashWeight,
@@ -623,7 +594,6 @@ function generateVerificationData(params: Params): Record<string, unknown> {
   const medianPath = {
     ages: result.ages,
     financial_wealth: result.financialWealth,
-    total_wealth: result.totalWealth,
     net_worth: result.netWorth,
     stock_weight: result.stockWeight,
     bond_weight: result.bondWeight,

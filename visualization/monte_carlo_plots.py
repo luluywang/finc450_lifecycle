@@ -252,9 +252,10 @@ def create_monte_carlo_detailed_view(
     ax.legend(loc='upper right', fontsize=8)
     ax.set_ylim(0, 105)
 
-    # Panel 4: Total Wealth
+    # Panel 4: Total Assets (HC + FW)
     ax = axes[1, 0]
-    tw_percentiles = np.percentile(mc_result.total_wealth_paths, percentiles, axis=0)
+    total_assets_paths = mc_result.human_capital_paths + mc_result.financial_wealth_paths
+    tw_percentiles = np.percentile(total_assets_paths, percentiles, axis=0)
     ax.fill_between(x, tw_percentiles[0], tw_percentiles[2],
                     alpha=0.3, color='purple', label='10-90th pctl')
     ax.plot(x, tw_percentiles[1], color='purple', linewidth=2, label='Median')

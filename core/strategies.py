@@ -38,43 +38,17 @@ def _normalize_weights_no_leverage(
     if fw <= 1e-6:
         return target_stock, target_bond, target_cash
 
-    w_stock = target_fin_stock / fw
-    w_bond = target_fin_bond / fw
-    w_cash = target_fin_cash / fw
+    # Clip each component independently at 0
+    w_s = max(0.0, target_fin_stock)
+    w_b = max(0.0, target_fin_bond)
+    w_c = max(0.0, target_fin_cash)
 
-    # Apply no-short constraint
-    equity = max(0, w_stock)
-    fixed_income = max(0, w_bond + w_cash)
-
-    total_agg = equity + fixed_income
-    if total_agg > 0:
-        equity /= total_agg
-        fixed_income /= total_agg
+    total = w_s + w_b + w_c
+    if total > 0:
+        return w_s / total, w_b / total, w_c / total
     else:
-        equity = target_stock
-        fixed_income = target_bond + target_cash
-
-    # Split fixed income between bonds and cash
-    if w_bond > 0 and w_cash > 0:
-        fi_total = w_bond + w_cash
-        w_b = fixed_income * (w_bond / fi_total)
-        w_c = fixed_income * (w_cash / fi_total)
-    elif w_bond > 0:
-        w_b = fixed_income
-        w_c = 0.0
-    elif w_cash > 0:
-        w_b = 0.0
-        w_c = fixed_income
-    else:
-        target_fi = target_bond + target_cash
-        if target_fi > 0:
-            w_b = fixed_income * (target_bond / target_fi)
-            w_c = fixed_income * (target_cash / target_fi)
-        else:
-            w_b = fixed_income / 2.0
-            w_c = fixed_income / 2.0
-
-    return equity, w_b, w_c
+        # All targets non-positive: fall back to MV optimal
+        return target_stock, target_bond, target_cash
 
 
 @dataclass
@@ -161,11 +135,14 @@ class LDIStrategy:
                     subsistence = state.financial_wealth
                     variable = 0.0
 
-        # LDI allocation: target financial holdings
-        # Target = target_pct * total_wealth - HC_component + expense_component
-        target_fin_stock = state.target_stock * state.total_wealth - state.hc_stock_component
-        target_fin_bond = state.target_bond * state.total_wealth - state.hc_bond_component + state.exp_bond_component
-        target_fin_cash = state.target_cash * state.total_wealth - state.hc_cash_component + state.exp_cash_component
+        # LDI allocation: surplus optimization
+        # Surplus = max(0, net_worth) where net_worth = HC + FW - PV(expenses)
+        # Target = target_pct * surplus - HC_component + expense_component
+        # Sum of targets = FW (no leverage needed). When surplus=0, all FW in bonds.
+        surplus = max(0, state.net_worth)
+        target_fin_stock = state.target_stock * surplus - state.hc_stock_component
+        target_fin_bond = state.target_bond * surplus - state.hc_bond_component + state.exp_bond_component
+        target_fin_cash = state.target_cash * surplus - state.hc_cash_component + state.exp_cash_component
 
         # Normalize to weights
         fw = state.financial_wealth
@@ -374,10 +351,11 @@ class FixedConsumptionStrategy:
                 total_cons = self._retirement_consumption
                 variable = max(0, total_cons - subsistence)
 
-        # LDI allocation (same as LDIStrategy)
-        target_fin_stock = state.target_stock * state.total_wealth - state.hc_stock_component
-        target_fin_bond = state.target_bond * state.total_wealth - state.hc_bond_component + state.exp_bond_component
-        target_fin_cash = state.target_cash * state.total_wealth - state.hc_cash_component + state.exp_cash_component
+        # LDI allocation: surplus optimization (same as LDIStrategy)
+        surplus = max(0, state.net_worth)
+        target_fin_stock = state.target_stock * surplus - state.hc_stock_component
+        target_fin_bond = state.target_bond * surplus - state.hc_bond_component + state.exp_bond_component
+        target_fin_cash = state.target_cash * surplus - state.hc_cash_component + state.exp_cash_component
 
         if self.allow_leverage:
             if fw > 1e-6:

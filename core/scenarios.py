@@ -127,9 +127,9 @@ def create_teaching_scenario(
 
         total_consumption[t] = total_cons
 
-        # Compute portfolio weight
-        total_wealth = fw + hc
-        target_fin_stock = target_stock * total_wealth - hc_stock[t]
+        # Compute portfolio weight using surplus optimization
+        surplus = max(0, net_worth)
+        target_fin_stock = target_stock * surplus - hc_stock[t]
 
         if fw > 1e-6:
             w_stock = target_fin_stock / fw

@@ -190,9 +190,9 @@ def fig_wealth_composition(result: LifecycleResult, params: LifecycleParams,
                     result.financial_wealth + result.human_capital,
                     alpha=0.8, color=COLORS['hc'], label='Human Capital')
 
-    # Total wealth line
-    ax.plot(x, result.total_wealth, color='black', linewidth=2,
-            linestyle='--', label='Total Wealth')
+    # Total assets line
+    ax.plot(x, result.human_capital + result.financial_wealth, color='black', linewidth=2,
+            linestyle='--', label='Total Assets (HC+FW)')
 
     add_retirement_line(ax, retirement_x, use_years)
 
@@ -290,8 +290,9 @@ def fig_allocation_theory(result: LifecycleResult, params: LifecycleParams,
 
     # Panel 1: Human Capital as % of Total Wealth
     ax = axes[0, 0]
-    hc_share = result.human_capital / np.maximum(result.total_wealth, 1) * 100
-    fw_share = result.financial_wealth / np.maximum(result.total_wealth, 1) * 100
+    total_assets = result.human_capital + result.financial_wealth
+    hc_share = result.human_capital / np.maximum(total_assets, 1) * 100
+    fw_share = result.financial_wealth / np.maximum(total_assets, 1) * 100
 
     ax.fill_between(x, 0, fw_share, alpha=0.8, color=COLORS['fw'], label='Financial Wealth %')
     ax.fill_between(x, fw_share, 100, alpha=0.8, color=COLORS['hc'], label='Human Capital %')
@@ -462,8 +463,9 @@ def fig_allocation_risky_hc(params: LifecycleParams, econ_params: EconomicParams
 
     # Panel 1: Human Capital as % of Total Wealth
     ax = axes[0, 0]
-    hc_share = result.human_capital / np.maximum(result.total_wealth, 1) * 100
-    fw_share = result.financial_wealth / np.maximum(result.total_wealth, 1) * 100
+    total_assets = result.human_capital + result.financial_wealth
+    hc_share = result.human_capital / np.maximum(total_assets, 1) * 100
+    fw_share = result.financial_wealth / np.maximum(total_assets, 1) * 100
 
     ax.fill_between(x, 0, fw_share, alpha=0.8, color=COLORS['fw'], label='Financial Wealth %')
     ax.fill_between(x, fw_share, 100, alpha=0.8, color=COLORS['hc'], label='Human Capital %')

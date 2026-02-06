@@ -850,9 +850,9 @@ def create_gauge_wealth_composition_figure(
                     result.financial_wealth + result.human_capital,
                     alpha=0.8, color=color_hc, label='Human Capital')
 
-    # Total wealth line
-    ax.plot(x, result.total_wealth, color='black', linewidth=2,
-            linestyle='--', label='Total Wealth')
+    # Total assets line
+    ax.plot(x, result.human_capital + result.financial_wealth, color='black', linewidth=2,
+            linestyle='--', label='Total Assets (HC+FW)')
 
     ax.axvline(x=retirement_x, color='white', linestyle='--', linewidth=2)
 

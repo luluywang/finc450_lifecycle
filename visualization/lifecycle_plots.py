@@ -116,7 +116,7 @@ def plot_human_vs_financial_wealth(
 
     ax.plot(x, result.human_capital, color=COLORS['orange'], linewidth=2, label='Human Capital')
     ax.plot(x, result.financial_wealth, color=COLORS['blue'], linewidth=2, label='Financial Wealth')
-    ax.plot(x, result.total_wealth, color=COLORS['green'], linewidth=2, label='Total Wealth')
+    ax.plot(x, result.human_capital + result.financial_wealth, color=COLORS['green'], linewidth=2, label='Total Assets (HC+FW)')
 
     retirement_x = params.retirement_age - params.start_age if use_years else params.retirement_age
     ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)

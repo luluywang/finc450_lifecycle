@@ -123,8 +123,8 @@ def _plot_to_ax_hc_vs_fw(ax, x, result, COLORS, xlabel, retirement_x):
 
 def _plot_to_ax_net_wealth(ax, x, result, COLORS, xlabel, retirement_x):
     """Plot net wealth = HC + FW - PV(expenses)."""
-    ax.plot(x, result.total_wealth, color='black', linewidth=1.5,
-            linestyle='--', label='Total Wealth (HC+FW)')
+    ax.plot(x, result.human_capital + result.financial_wealth, color='black', linewidth=1.5,
+            linestyle='--', label='Total Assets (HC+FW)')
     ax.plot(x, result.pv_expenses, color=COLORS['expenses'], linewidth=1.5,
             linestyle='--', label='PV Expenses')
     ax.fill_between(x, 0, result.net_worth, alpha=0.4, color=COLORS['nw'])

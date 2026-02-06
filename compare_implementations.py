@@ -208,7 +208,6 @@ def compute_median_path(params: LifecycleParams, econ: EconomicParams) -> Dict[s
     return {
         "ages": result.ages.tolist(),
         "financial_wealth": result.financial_wealth.tolist(),
-        "total_wealth": result.total_wealth.tolist(),
         "net_worth": result.net_worth.tolist(),
         "stock_weight": result.stock_weight_no_short.tolist(),
         "bond_weight": result.bond_weight_no_short.tolist(),

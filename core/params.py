@@ -125,7 +125,6 @@ class LifecycleResult:
 
     # Financial wealth
     financial_wealth: np.ndarray
-    total_wealth: np.ndarray
 
     # Target financial portfolio
     target_fin_stocks: np.ndarray
@@ -161,7 +160,6 @@ class MonteCarloResult:
 
     # Wealth paths: (n_sims, total_years)
     financial_wealth_paths: np.ndarray
-    total_wealth_paths: np.ndarray
     human_capital_paths: np.ndarray
 
     # Consumption paths: (n_sims, total_years)
@@ -374,7 +372,6 @@ class SimulationState:
     human_capital: float            # PV of future earnings
     pv_expenses: float              # PV of future expenses
     net_worth: float                # HC + FW - PV(expenses)
-    total_wealth: float             # HC + FW
 
     # Cash flows
     earnings: float                 # Current period earnings

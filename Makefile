@@ -14,7 +14,6 @@ FIGURE_DPI = 150
 
 # Output files
 LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_report.pdf
-DASHBOARD_PDF = $(OUTPUT_DIR)/strategy_comparison.pdf
 TEACHING_PDF = $(OUTPUT_DIR)/teaching_scenarios.pdf
 SINGLE_DRAW_PDF = $(OUTPUT_DIR)/single_draw.pdf
 
@@ -38,7 +37,7 @@ $(FIGURES_DIR)/.stamp: generate_lecture_figures.py $(CORE_SOURCES) $(VIZ_SOURCES
 	@touch $@
 
 # Generate all PDFs
-pdfs: $(LIFECYCLE_PDF) $(DASHBOARD_PDF) $(TEACHING_PDF)
+pdfs: $(LIFECYCLE_PDF) $(TEACHING_PDF)
 
 # Teaching scenarios PDF
 teaching: $(TEACHING_PDF)
@@ -47,12 +46,6 @@ teaching: $(TEACHING_PDF)
 $(LIFECYCLE_PDF): generate_report.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
 	@echo "Generating $(LIFECYCLE_PDF)..."
 	$(PYTHON) generate_report.py -o $@
-
-# Strategy comparison PDF
-$(DASHBOARD_PDF): compare_strategies.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
-	@echo "Generating $(DASHBOARD_PDF)..."
-	$(PYTHON) compare_strategies.py
-	@mv strategy_comparison.pdf $@
 
 # Teaching scenarios PDF
 $(TEACHING_PDF): compare_teaching_scenarios.py $(CORE_SOURCES) $(VIZ_SOURCES) | $(OUTPUT_DIR)
@@ -97,7 +90,6 @@ help:
 	@echo ""
 	@echo "Output files:"
 	@echo "  $(LIFECYCLE_PDF)"
-	@echo "  $(DASHBOARD_PDF)"
 	@echo "  $(TEACHING_PDF)"
 	@echo "  $(SINGLE_DRAW_PDF)"
 	@echo "  $(FIGURES_DIR)/*.png"
