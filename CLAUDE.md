@@ -285,7 +285,7 @@ Run `python3 generate_report.py --help` for all available options.
 |-----------|---------|-------------|
 | `r_bar` | 0.02 | Long-run mean interest rate |
 | `phi` | 1.0 | Mean reversion parameter (1.0 = no mean reversion) |
-| `sigma_r` | 0.007 | Interest rate volatility (0.7 pp) |
+| `sigma_r` | 0.005 | Interest rate volatility (0.5 pp) |
 | `mu_excess` | 0.045 | Stock excess return (equity risk premium, 4.5 pp) |
 | `sigma_s` | 0.18 | Stock return volatility |
 | `rho` | 0.0 | Correlation between rate and stock shocks |
