@@ -82,7 +82,7 @@ class LifecycleParams:
     target_bond_allocation: float = 0.30     # Target bond allocation (used if gamma=0)
 
     # Portfolio constraint parameters
-    allow_leverage: bool = False     # Allow shorting and leverage in portfolio
+    max_leverage: float = 1.0       # Max total long exposure as multiple of FW (1.0 = no borrowing)
 
     # Initial financial wealth (can be negative for student loans)
     initial_wealth: float = 100      # Starting financial wealth ($100k, negative allowed)

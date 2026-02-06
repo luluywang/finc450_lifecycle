@@ -142,7 +142,7 @@ def run_risky_hc_comparison(
     )
 
     # Strategies
-    ldi_strategy = LDIStrategy(allow_leverage=False)
+    ldi_strategy = LDIStrategy()
     rot_strategy = RuleOfThumbStrategy(
         savings_rate=0.15,
         withdrawal_rate=0.04,

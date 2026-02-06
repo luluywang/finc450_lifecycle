@@ -21,7 +21,7 @@ from .params import (
 )
 
 
-def _normalize_weights_no_leverage(
+def _normalize_weights(
     target_fin_stock: float,
     target_fin_bond: float,
     target_fin_cash: float,
@@ -29,26 +29,44 @@ def _normalize_weights_no_leverage(
     target_stock: float,
     target_bond: float,
     target_cash: float,
+    max_leverage: float = 1.0,
 ) -> Tuple[float, float, float]:
     """
-    Normalize portfolio weights: no shorting stocks/bonds, cash can be negative.
+    Normalize portfolio weights with leverage cap.
 
-    Clips stock and bond positions at 0 (no short-selling risky assets).
-    Cash is the residual (FW - stocks - bonds) and can be negative (borrowing).
+    - Stocks >= 0, Bonds >= 0 (no shorting risky assets)
+    - Stocks + Bonds <= max_leverage * FW (cap total long exposure)
+    - Cash = FW - Stocks - Bonds (residual, can be negative = borrowing)
+
+    max_leverage=1.0 means no borrowing (cash >= 0).
+    max_leverage=inf means unconstrained.
     """
     if fw <= 1e-6:
         # Clip MV targets (may be negative with unconstrained optimization)
         ws = max(0.0, target_stock)
         wb = max(0.0, target_bond)
-        wc = max(0.0, target_cash)
-        total = ws + wb + wc
-        if total > 0:
-            return ws / total, wb / total, wc / total
+        total = ws + wb
+        if total > max_leverage:
+            scale = max_leverage / total
+            ws *= scale
+            wb *= scale
+        wc = 1.0 - ws - wb
+        if ws + wb > 0 or wc > 0:
+            return ws, wb, wc
         return 0.0, 0.0, 1.0
 
     # Clip stocks and bonds at 0 (no shorting risky assets)
     fin_stock = max(0.0, target_fin_stock)
     fin_bond = max(0.0, target_fin_bond)
+
+    # Cap total long exposure at max_leverage * FW
+    total_long = fin_stock + fin_bond
+    max_long = max_leverage * fw
+    if total_long > max_long:
+        scale = max_long / total_long
+        fin_stock *= scale
+        fin_bond *= scale
+
     # Cash is residual: can be negative (= borrowing)
     fin_cash = fw - fin_stock - fin_bond
 
@@ -69,11 +87,11 @@ class LDIStrategy:
 
     Attributes:
         consumption_rate: Share of net worth consumed above subsistence (default from expected return)
-        allow_leverage: If True, allows shorting and leverage (default False)
+        max_leverage: Max total long exposure as multiple of FW (1.0 = no borrowing, inf = unconstrained)
         name: Strategy name for display
     """
     consumption_rate: float = None  # None means derive from expected return
-    allow_leverage: bool = False
+    max_leverage: float = 1.0
     name: str = "LDI"
 
     def __call__(self, state: SimulationState) -> StrategyActions:
@@ -148,22 +166,13 @@ class LDIStrategy:
         target_fin_bond = state.target_bond * surplus - state.hc_bond_component + state.exp_bond_component
         target_fin_cash = state.target_cash * surplus - state.hc_cash_component + state.exp_cash_component
 
-        # Normalize to weights
+        # Normalize to weights with leverage cap
         fw = state.financial_wealth
-        if self.allow_leverage:
-            # Raw weights (can be negative or >1)
-            if fw > 1e-6:
-                w_s = target_fin_stock / fw
-                w_b = target_fin_bond / fw
-                w_c = target_fin_cash / fw
-            else:
-                w_s, w_b, w_c = state.target_stock, state.target_bond, state.target_cash
-        else:
-            # No-short constraint
-            w_s, w_b, w_c = _normalize_weights_no_leverage(
-                target_fin_stock, target_fin_bond, target_fin_cash, fw,
-                state.target_stock, state.target_bond, state.target_cash
-            )
+        w_s, w_b, w_c = _normalize_weights(
+            target_fin_stock, target_fin_bond, target_fin_cash, fw,
+            state.target_stock, state.target_bond, state.target_cash,
+            max_leverage=self.max_leverage
+        )
 
         return StrategyActions(
             total_consumption=total_cons,
@@ -309,11 +318,11 @@ class FixedConsumptionStrategy:
 
     Attributes:
         withdrawal_rate: Fixed withdrawal rate in retirement (default 0.04)
-        allow_leverage: If True, allows shorting and leverage (default False)
+        max_leverage: Max total long exposure as multiple of FW (1.0 = no borrowing, inf = unconstrained)
         name: Strategy name for display
     """
     withdrawal_rate: float = 0.04
-    allow_leverage: bool = False
+    max_leverage: float = 1.0
     name: str = "Fixed4%"
 
     # Internal state
@@ -361,18 +370,11 @@ class FixedConsumptionStrategy:
         target_fin_bond = state.target_bond * surplus - state.hc_bond_component + state.exp_bond_component
         target_fin_cash = state.target_cash * surplus - state.hc_cash_component + state.exp_cash_component
 
-        if self.allow_leverage:
-            if fw > 1e-6:
-                w_s = target_fin_stock / fw
-                w_b = target_fin_bond / fw
-                w_c = target_fin_cash / fw
-            else:
-                w_s, w_b, w_c = state.target_stock, state.target_bond, state.target_cash
-        else:
-            w_s, w_b, w_c = _normalize_weights_no_leverage(
-                target_fin_stock, target_fin_bond, target_fin_cash, fw,
-                state.target_stock, state.target_bond, state.target_cash
-            )
+        w_s, w_b, w_c = _normalize_weights(
+            target_fin_stock, target_fin_bond, target_fin_cash, fw,
+            state.target_stock, state.target_bond, state.target_cash,
+            max_leverage=self.max_leverage
+        )
 
         return StrategyActions(
             total_consumption=total_cons,

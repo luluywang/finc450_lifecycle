@@ -631,7 +631,7 @@ def run_teaching_scenario(
     )
 
     # Create strategy instances
-    ldi_strategy = LDIStrategy(allow_leverage=False)
+    ldi_strategy = LDIStrategy()
     rot_strategy = RuleOfThumbStrategy(savings_rate=0.15, withdrawal_rate=0.04)
 
     # Run LDI strategy

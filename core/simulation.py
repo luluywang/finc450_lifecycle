@@ -204,22 +204,19 @@ def normalize_portfolio_weights(
     target_stock: float,
     target_bond: float,
     target_cash: float,
-    allow_leverage: bool = False,
+    max_leverage: float = 1.0,
 ) -> Tuple[float, float, float]:
     """
-    Normalize portfolio weights with optional no-short constraint.
+    Normalize portfolio weights with leverage cap.
 
-    Takes target financial holdings and normalizes to valid weights.
+    - Stocks >= 0, Bonds >= 0 (no shorting risky assets)
+    - Stocks + Bonds <= max_leverage * FW (cap total long exposure)
+    - Cash = FW - Stocks - Bonds (residual, can be negative = borrowing)
 
-    When allow_leverage=False (default):
-        - Clips negative weights to 0
-        - Normalizes to sum to 1.0
-        - Preserves relative proportions where possible
-
-    When allow_leverage=True:
-        - Returns raw weights (can be negative or >1)
-        - Allows shorting and leveraged positions
-        - Properly sizes the LDI hedge regardless of financial wealth
+    Key values for max_leverage:
+        1.0: No borrowing (cash >= 0), equivalent to old allow_leverage=False
+        2.0: Can borrow up to 1x FW
+        inf: Unconstrained, equivalent to old allow_leverage=True
 
     Returns (stock_weight, bond_weight, cash_weight).
     """
@@ -227,37 +224,32 @@ def normalize_portfolio_weights(
         # Clip MV targets (may be negative with unconstrained optimization)
         ws = max(0.0, target_stock)
         wb = max(0.0, target_bond)
-        wc = max(0.0, target_cash)
-        total = ws + wb + wc
-        if total > 0:
-            return ws / total, wb / total, wc / total
+        total = ws + wb
+        if total > max_leverage:
+            scale = max_leverage / total
+            ws *= scale
+            wb *= scale
+        wc = 1.0 - ws - wb
+        if ws + wb > 0 or wc > 0:
+            return ws, wb, wc
         return 0.0, 0.0, 1.0
 
-    w_stock = target_fin_stock / fw
-    w_bond = target_fin_bond / fw
-    w_cash = target_fin_cash / fw
+    # Clip stocks and bonds at 0 (no shorting risky assets)
+    fin_stock = max(0.0, target_fin_stock)
+    fin_bond = max(0.0, target_fin_bond)
 
-    # If leverage is allowed, return raw (unconstrained) weights
-    if allow_leverage:
-        return w_stock, w_bond, w_cash
+    # Cap total long exposure at max_leverage * FW
+    total_long = fin_stock + fin_bond
+    max_long = max_leverage * fw
+    if total_long > max_long:
+        scale = max_long / total_long
+        fin_stock *= scale
+        fin_bond *= scale
 
-    # Clip each component independently at 0
-    w_s = max(0.0, target_fin_stock)
-    w_b = max(0.0, target_fin_bond)
-    w_c = max(0.0, target_fin_cash)
+    # Cash is residual: can be negative (= borrowing)
+    fin_cash = fw - fin_stock - fin_bond
 
-    total = w_s + w_b + w_c
-    if total > 0:
-        return w_s / total, w_b / total, w_c / total
-    else:
-        # All targets non-positive: clip MV targets and normalize
-        ws = max(0.0, target_stock)
-        wb = max(0.0, target_bond)
-        wc = max(0.0, target_cash)
-        total = ws + wb + wc
-        if total > 0:
-            return ws / total, wb / total, wc / total
-        return 0.0, 0.0, 1.0
+    return fin_stock / fw, fin_bond / fw, fin_cash / fw
 
 
 def apply_consumption_constraints(
@@ -837,7 +829,7 @@ def simulate_paths(
             w_s, w_b, w_c = normalize_portfolio_weights(
                 target_fin_stock, target_fin_bond, target_fin_cash, fw,
                 target_stock, target_bond, target_cash,
-                allow_leverage=params.allow_leverage
+                max_leverage=params.max_leverage
             )
 
             stock_weight_paths[sim, t] = w_s
@@ -1134,7 +1126,7 @@ def compute_median_path_comparison(
     zero_stock_shocks = np.zeros((1, n_periods))
 
     # Strategy 1: LDI (Liability-Driven Investment)
-    ldi_strategy = LDIStrategy(allow_leverage=False)
+    ldi_strategy = LDIStrategy()
     ldi_result = simulate_with_strategy(
         ldi_strategy, params, econ_params,
         zero_rate_shocks, zero_stock_shocks,
@@ -1156,7 +1148,7 @@ def compute_median_path_comparison(
     return StrategyComparison(
         result_a=ldi_result,
         result_b=rot_result,
-        strategy_a_params={'allow_leverage': False},
+        strategy_a_params={'max_leverage': 1.0},
         strategy_b_params={
             'savings_rate': rot_savings_rate,
             'withdrawal_rate': rot_withdrawal_rate,
@@ -1289,7 +1281,7 @@ def run_strategy_comparison(
     )
 
     # Strategy 1: LDI (Liability-Driven Investment)
-    ldi_strategy = LDIStrategy(allow_leverage=False)
+    ldi_strategy = LDIStrategy()
     ldi_result = simulate_with_strategy(
         ldi_strategy, params, econ_params,
         rate_shocks, stock_shocks,
@@ -1311,7 +1303,7 @@ def run_strategy_comparison(
     return StrategyComparison(
         result_a=ldi_result,
         result_b=rot_result,
-        strategy_a_params={'allow_leverage': False},
+        strategy_a_params={'max_leverage': 1.0},
         strategy_b_params={
             'savings_rate': rot_savings_rate,
             'withdrawal_rate': rot_withdrawal_rate,
@@ -1492,7 +1484,7 @@ def compute_lifecycle_fixed_consumption(
         w_s, w_b, w_c = normalize_portfolio_weights(
             target_fin_stocks[i], target_fin_bonds[i], target_fin_cash[i], fw,
             target_stock, target_bond, target_cash,
-            allow_leverage=False  # 4% rule uses no leverage
+            max_leverage=1.0  # 4% rule uses no leverage
         )
         stock_weight_no_short[i] = w_s
         bond_weight_no_short[i] = w_b

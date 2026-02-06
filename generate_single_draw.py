@@ -59,7 +59,7 @@ def generate_single_draw_data(seed, beta=0.0):
     )
 
     # Strategy engine — for rebalancing computation
-    strategy = LDIStrategy(allow_leverage=False)
+    strategy = LDIStrategy()
     sim_result = simulate_with_strategy(
         strategy, params, econ, rate_shocks, stock_shocks,
     )

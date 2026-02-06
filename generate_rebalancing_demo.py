@@ -114,7 +114,7 @@ def generate_rebalancing_demo(seed=15, output_path=None):
         n_periods, n_sims=1, rho=econ.rho, rng=rng
     )
 
-    strategy = LDIStrategy(allow_leverage=False)
+    strategy = LDIStrategy()
     result = simulate_with_strategy(strategy, params, econ, rate_shocks, stock_shocks)
 
     data = compute_rebalancing_data(result, econ)

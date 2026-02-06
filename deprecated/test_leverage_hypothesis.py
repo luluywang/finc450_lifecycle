@@ -65,8 +65,8 @@ def run_comparison(n_simulations: int = 1000, random_seed: int = 42):
     Run Monte Carlo comparison between constrained and unconstrained portfolios.
     """
     # Common parameters
-    params_constrained = LifecycleParams(allow_leverage=False)
-    params_unconstrained = LifecycleParams(allow_leverage=True)
+    params_constrained = LifecycleParams(max_leverage=1.0)
+    params_unconstrained = LifecycleParams(max_leverage=float('inf'))
     econ_params = EconomicParams()
 
     n_periods = params_constrained.end_age - params_constrained.start_age
@@ -108,8 +108,8 @@ def run_median_path_comparison():
     Run deterministic median path comparison between constrained and unconstrained.
     Uses zero shocks to show expected-value behavior.
     """
-    params_constrained = LifecycleParams(allow_leverage=False)
-    params_unconstrained = LifecycleParams(allow_leverage=True)
+    params_constrained = LifecycleParams(max_leverage=1.0)
+    params_unconstrained = LifecycleParams(max_leverage=float('inf'))
     econ_params = EconomicParams()
 
     n_periods = params_constrained.end_age - params_constrained.start_age

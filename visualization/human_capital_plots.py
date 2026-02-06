@@ -84,7 +84,7 @@ def create_hc_stock_sensitivity_figure(
     )
 
     # Run simulation with risky human capital
-    strategy = LDIStrategy(allow_leverage=False)
+    strategy = LDIStrategy()
     result = simulate_with_strategy(
         strategy, params_risky, econ_params, rate_shocks, stock_shocks
     )
