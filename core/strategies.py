@@ -31,9 +31,10 @@ def _normalize_weights_no_leverage(
     target_cash: float,
 ) -> Tuple[float, float, float]:
     """
-    Normalize portfolio weights with no-short constraint.
+    Normalize portfolio weights: no shorting stocks/bonds, cash can be negative.
 
-    Clips negative weights to 0 and normalizes to sum to 1.0.
+    Clips stock and bond positions at 0 (no short-selling risky assets).
+    Cash is the residual (FW - stocks - bonds) and can be negative (borrowing).
     """
     if fw <= 1e-6:
         # Clip MV targets (may be negative with unconstrained optimization)
@@ -45,23 +46,13 @@ def _normalize_weights_no_leverage(
             return ws / total, wb / total, wc / total
         return 0.0, 0.0, 1.0
 
-    # Clip each component independently at 0
-    w_s = max(0.0, target_fin_stock)
-    w_b = max(0.0, target_fin_bond)
-    w_c = max(0.0, target_fin_cash)
+    # Clip stocks and bonds at 0 (no shorting risky assets)
+    fin_stock = max(0.0, target_fin_stock)
+    fin_bond = max(0.0, target_fin_bond)
+    # Cash is residual: can be negative (= borrowing)
+    fin_cash = fw - fin_stock - fin_bond
 
-    total = w_s + w_b + w_c
-    if total > 0:
-        return w_s / total, w_b / total, w_c / total
-    else:
-        # All targets non-positive: clip MV targets and normalize
-        ws = max(0.0, target_stock)
-        wb = max(0.0, target_bond)
-        wc = max(0.0, target_cash)
-        total = ws + wb + wc
-        if total > 0:
-            return ws / total, wb / total, wc / total
-        return 0.0, 0.0, 1.0
+    return fin_stock / fw, fin_bond / fw, fin_cash / fw
 
 
 @dataclass

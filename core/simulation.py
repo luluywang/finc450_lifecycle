@@ -47,6 +47,7 @@ def compute_static_pvs(
     total_years: int,
     r: float,
     phi: float,
+    hc_spread: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute PV values and durations for earnings and expenses at constant rate.
@@ -65,6 +66,7 @@ def compute_static_pvs(
         total_years: Total years in simulation
         r: Risk-free rate (r_bar) - used as current_rate for PV calculation
         phi: Mean reversion parameter
+        hc_spread: CAPM spread for human capital (beta * mu_excess), default 0
 
     Returns:
         Tuple of (pv_earnings, pv_expenses, duration_earnings, duration_expenses)
@@ -82,9 +84,9 @@ def compute_static_pvs(
             remaining_earnings = np.array([])
         remaining_expenses = expenses[t:]
 
-        pv_earnings[t] = compute_present_value(remaining_earnings, r, phi, r)
+        pv_earnings[t] = compute_present_value(remaining_earnings, r + hc_spread, phi, r + hc_spread)
         pv_expenses[t] = compute_present_value(remaining_expenses, r, phi, r)
-        duration_earnings[t] = compute_duration(remaining_earnings, r, phi, r)
+        duration_earnings[t] = compute_duration(remaining_earnings, r + hc_spread, phi, r + hc_spread)
         duration_expenses[t] = compute_duration(remaining_expenses, r, phi, r)
 
     return pv_earnings, pv_expenses, duration_earnings, duration_expenses
@@ -386,6 +388,9 @@ def simulate_with_strategy(
     r_bar = econ_params.r_bar
     phi = econ_params.phi
 
+    # CAPM spread for human capital: discount earnings at r + beta * mu_excess
+    hc_spread = params.stock_beta_human_capital * econ_params.mu_excess
+
     # Initialize wage shock tracking (for risky human capital)
     # log_wage_level tracks cumulative permanent shocks to wage level
     log_wage_level = np.zeros((n_sims, total_years))
@@ -447,10 +452,11 @@ def simulate_with_strategy(
 
             if is_working:
                 # Scale remaining earnings by current wage level (permanent shock)
+                # Discount at CAPM rate: current_rate + hc_spread
                 remaining_base = base_earnings[t:working_years]
                 remaining_earnings = remaining_base * wage_multiplier
-                hc = compute_present_value(remaining_earnings, current_rate, phi, r_bar)
-                duration_hc = compute_duration(remaining_earnings, current_rate, phi, r_bar)
+                hc = compute_present_value(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread)
+                duration_hc = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread)
             else:
                 hc = 0.0
                 duration_hc = 0.0
@@ -687,9 +693,12 @@ def simulate_paths(
     r = econ_params.r_bar
     phi = econ_params.phi
 
+    # CAPM spread for human capital: discount earnings at r + beta * mu_excess
+    hc_spread = params.stock_beta_human_capital * econ_params.mu_excess
+
     # Use DRY helper functions for PV calculations (needed for return values)
     pv_earnings_static, pv_expenses_static, duration_earnings, duration_expenses = compute_static_pvs(
-        base_earnings, expenses, working_years, total_years, r, phi
+        base_earnings, expenses, working_years, total_years, r, phi, hc_spread=hc_spread
     )
 
     # NOTE: consumption_rate is now computed INSIDE the loop using current_rate
@@ -759,15 +768,17 @@ def simulate_paths(
 
                 if is_working:
                     # Scale remaining earnings by current wage level (permanent shock)
+                    # Discount at CAPM rate: current_rate + hc_spread
                     remaining_base = base_earnings[t:working_years]
                     remaining_earnings = remaining_base * wage_multiplier
-                    hc = compute_dynamic_pv(remaining_earnings, current_rate, phi, r)
+                    hc = compute_dynamic_pv(remaining_earnings, current_rate + hc_spread, phi, r + hc_spread)
                 else:
                     hc = 0.0
             else:
                 current_rate = r
                 pv_exp = pv_expenses_static[t]
                 # Static HC uses base earnings scaled by current wage level
+                # (pv_earnings_static already computed with hc_spread)
                 hc = pv_earnings_static[t] * wage_multiplier if is_working else 0.0
 
             human_capital_paths[sim, t] = hc
@@ -792,7 +803,7 @@ def simulate_paths(
             if is_working and hc > 0:
                 remaining_base = base_earnings[t:working_years]
                 remaining_earnings = remaining_base * wage_multiplier
-                duration_hc_t = compute_duration(remaining_earnings, current_rate, phi, r)
+                duration_hc_t = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r + hc_spread)
                 hc_stock_t = hc * params.stock_beta_human_capital
                 non_stock_hc_t = hc * (1.0 - params.stock_beta_human_capital)
                 if econ_params.bond_duration > 0:
