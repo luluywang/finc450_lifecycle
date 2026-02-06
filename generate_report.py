@@ -691,6 +691,7 @@ def main(
         sigma_r=sigma_r,
         rho=rho,
         bond_duration=bond_duration,
+        max_duration=bond_duration,
     )
 
     if gamma > 0:

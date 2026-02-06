@@ -758,7 +758,7 @@ def run_all_teaching_scenarios(
     if params is None:
         params = LifecycleParams()
     if econ_params is None:
-        econ_params = EconomicParams()
+        econ_params = EconomicParams(max_duration=20.0)
     if beta_values is None:
         beta_values = [0.0, DEFAULT_RISKY_BETA]
 
@@ -1136,7 +1136,7 @@ def generate_teaching_scenarios_pdf(
 
     print("Running teaching scenario simulations...")
     params = LifecycleParams(consumption_boost=0.0)
-    econ_params = EconomicParams()
+    econ_params = EconomicParams(max_duration=20.0)
 
     results = run_all_teaching_scenarios(
         params=params,
