@@ -13,7 +13,7 @@ FIGURE_FORMAT = png
 FIGURE_DPI = 150
 
 # Output files
-LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_report.pdf
+LIFECYCLE_PDF = $(OUTPUT_DIR)/lifecycle_strategy.pdf
 TEACHING_PDF = $(OUTPUT_DIR)/teaching_scenarios.pdf
 SINGLE_DRAW_PDF = $(OUTPUT_DIR)/single_draw.pdf
 
