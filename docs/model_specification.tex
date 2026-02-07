@@ -361,9 +361,35 @@ where:
 
 The model uses a single simulation engine for both deterministic and stochastic analysis:
 \begin{itemize}
-    \item \textbf{Median path}: Pass zero shocks ($\varepsilon^r = \varepsilon^s = 0$ for all $t$). Produces the expected-value trajectory.
+    \item \textbf{Zero-shock path} (called ``median path'' in the code): Pass $\varepsilon^r = \varepsilon^s = 0$ for all $t$.
     \item \textbf{Monte Carlo}: Pass random shocks drawn from $N(0,1)$ with correlation $\rho$. Produces stochastic paths with dynamic revaluation of HC and $L$ at each step.
 \end{itemize}
+
+\subsection{Jensen's Correction: Zero-Shock Path vs Monte Carlo}
+\label{sec:jensen}
+
+The consumption rate includes Jensen's correction (Eq.~\ref{eq:consumption_rate}):
+\[
+c_t = \underbrace{\mathbb{E}_t[R^p_{t+1}]}_{\text{arithmetic mean}} - \tfrac{1}{2}\text{Var}_t(R^p_{t+1}) + \delta
+\]
+But wealth evolves at the \emph{realized} portfolio return, which differs between the two modes:
+
+\textbf{Zero-shock path.} With $\varepsilon^r = \varepsilon^s = 0$:
+\begin{itemize}
+    \item Each asset earns its \emph{arithmetic} mean: $R^s = r + \mu_s$, $R^b = r + \mu_b$, $R^{\text{cash}} = r$
+    \item The portfolio return used in wealth evolution is $R^p = \mathbb{E}[R^p]$ (arithmetic mean)
+    \item The consumption rate uses $\mathbb{E}[R^p] - \tfrac{1}{2}\text{Var}(R^p)$ (geometric mean)
+    \item The wedge $\tfrac{1}{2}\text{Var}(R^p)$ means wealth grows \emph{faster} than consumption depletes it
+\end{itemize}
+This makes the zero-shock path an \textbf{expected-value (mean) trajectory}, not a true median. It is the path wealth would follow if every asset earned its arithmetic mean return every period.
+
+\textbf{Monte Carlo.} With random shocks:
+\begin{itemize}
+    \item Each asset earns a realized return that includes shocks
+    \item The \emph{median} compound return across paths $\approx$ geometric mean $= \mathbb{E}[R^p] - \tfrac{1}{2}\text{Var}(R^p)$
+    \item The consumption rate and median wealth growth are approximately aligned
+\end{itemize}
+The median of the Monte Carlo wealth distribution will therefore lie \emph{below} the zero-shock path. The gap is approximately $\tfrac{1}{2}\text{Var}(R^p)$ per period, compounded---reflecting the standard result that $\mathbb{E}[W] > \text{median}(W)$ for log-normally distributed wealth.
 
 \subsection{Time Step Sequence}
 
@@ -374,9 +400,9 @@ At each period $t$, the simulation proceeds in order:
     \item Decompose HC and $L$ into stock/bond/cash components
     \item Compute target financial holdings via surplus optimization
     \item Normalize to portfolio weights $(w_s, w_b, w_c)$ with leverage constraint
-    \item Compute dynamic consumption rate $c_t$ using realized weights
+    \item Compute dynamic consumption rate $c_t$ using realized weights and Jensen's correction
     \item Compute consumption $C_t$ and apply constraints
-    \item Evolve wealth: $FW_{t+1} = FW_t(1 + R^p_{t+1}) + Y_t - C_t$
+    \item Evolve wealth: $FW_{t+1} = FW_t(1 + R^p_{t+1}) + Y_t - C_t$ using \emph{realized} $R^p_{t+1}$
 \end{enumerate}
 
 The order is important: portfolio weights are determined \emph{before} consumption, so the variance correction in the consumption rate uses the actual portfolio allocation.
