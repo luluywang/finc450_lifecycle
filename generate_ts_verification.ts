@@ -470,22 +470,19 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
-      totalConsumption[i] = earnings[i];
-      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
-    } else if (earnings[i] === 0) {
-      if (subsistenceConsumption[i] > fw) {
-        totalConsumption[i] = fw;
-        subsistenceConsumption[i] = fw;
-        variableConsumption[i] = 0;
-      } else if (totalConsumption[i] > fw) {
-        totalConsumption[i] = fw;
-        variableConsumption[i] = fw - subsistenceConsumption[i];
-      }
+    // Cap consumption at financial wealth (can spend more than income, but can't borrow)
+    if (subsistenceConsumption[i] > fw) {
+      totalConsumption[i] = fw;
+      subsistenceConsumption[i] = fw;
+      variableConsumption[i] = 0;
+    } else if (totalConsumption[i] > fw) {
+      totalConsumption[i] = fw;
+      variableConsumption[i] = fw - subsistenceConsumption[i];
     }
 
-    // Compute portfolio return using CURRENT weights
-    const portfolioReturn = wS * stockReturn + wB * bondReturn + wC * cashReturn;
+    // Use geometric (median) return for wealth evolution: E[R_p] - 0.5*Var(R_p)
+    // expectedReturnI and portfolioVarI already computed above using per-step weights
+    const portfolioReturn = expectedReturnI - 0.5 * portfolioVarI;
 
     const savings = earnings[i] - totalConsumption[i];
 

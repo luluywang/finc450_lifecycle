@@ -114,16 +114,12 @@ def create_teaching_scenario(
         variable = max(0, consumption_rate * net_worth)
         total_cons = subsistence + variable
 
-        # Apply constraints
-        if t < working_years:
-            if total_cons > earnings[t]:
-                total_cons = earnings[t]
-        else:
-            if defaulted or fw <= 0:
-                defaulted = True
-                total_cons = 0
-            elif total_cons > fw:
-                total_cons = fw
+        # Apply constraints: can't consume more than financial wealth
+        if defaulted or fw <= 0:
+            defaulted = True
+            total_cons = 0
+        elif total_cons > fw:
+            total_cons = fw
 
         total_consumption[t] = total_cons
 

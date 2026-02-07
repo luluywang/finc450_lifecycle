@@ -268,14 +268,8 @@ def apply_consumption_constraints(
     """
     total_cons = subsistence + variable
 
-    if is_working:
-        # During working years: can't consume more than earnings
-        if total_cons > earnings:
-            total_cons = earnings
-            variable = max(0, earnings - subsistence)
-        return total_cons, subsistence, variable, defaulted
-
-    # Retirement phase
+    # Both working and retirement: can't consume more than financial wealth
+    # (you can spend more than income, but you can't borrow)
     if defaulted:
         return 0.0, 0.0, 0.0, True
 
@@ -317,6 +311,7 @@ def simulate_with_strategy(
     stock_shocks: np.ndarray,
     initial_rate: float = None,
     description: str = "",
+    use_geometric_returns: bool = False,
 ) -> SimulationResult:
     """
     Generic simulation engine that runs ANY strategy.
@@ -551,15 +546,32 @@ def simulate_with_strategy(
 
             # Evolve wealth to next period
             if t < total_years - 1 and not defaulted:
-                stock_ret = stock_return_paths[sim, t]
-                bond_ret = bond_return_paths[sim, t]
-                cash_ret = rate_paths[sim, t]
+                if use_geometric_returns:
+                    # Use geometric (median) return: E[R_p] - 0.5*Var(R_p)
+                    w_s_act = actions.stock_weight
+                    w_b_act = actions.bond_weight
+                    w_c_act = actions.cash_weight
+                    expected_ret = (
+                        w_s_act * (current_rate + econ_params.mu_excess) +
+                        w_b_act * (current_rate + econ_params.mu_bond) +
+                        w_c_act * current_rate
+                    )
+                    port_var = (
+                        w_s_act**2 * econ_params.sigma_s**2 +
+                        w_b_act**2 * (econ_params.bond_duration * econ_params.sigma_r)**2 +
+                        2 * w_s_act * w_b_act * (-econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho)
+                    )
+                    portfolio_return = expected_ret - 0.5 * port_var
+                else:
+                    stock_ret = stock_return_paths[sim, t]
+                    bond_ret = bond_return_paths[sim, t]
+                    cash_ret = rate_paths[sim, t]
+                    portfolio_return = (
+                        actions.stock_weight * stock_ret +
+                        actions.bond_weight * bond_ret +
+                        actions.cash_weight * cash_ret
+                    )
 
-                portfolio_return = (
-                    actions.stock_weight * stock_ret +
-                    actions.bond_weight * bond_ret +
-                    actions.cash_weight * cash_ret
-                )
                 savings = current_earnings - actions.total_consumption
                 financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
 
@@ -895,12 +907,18 @@ def simulate_paths(
 
             # Evolve wealth to next period
             if t < total_years - 1 and not defaulted:
-                stock_ret = stock_return_paths[sim, t]
-                # Use duration-based bond returns (includes capital gains/losses from rate changes)
-                bond_ret = bond_return_paths[sim, t]
-                cash_ret = rate_paths[sim, t]
+                if use_geometric_returns:
+                    # Use geometric (median) return: E[R_p] - 0.5*Var(R_p)
+                    # expected_return and portfolio_var already computed above
+                    # using per-step realized weights w_s, w_b, w_c
+                    portfolio_return = expected_return - 0.5 * portfolio_var
+                else:
+                    stock_ret = stock_return_paths[sim, t]
+                    # Use duration-based bond returns (includes capital gains/losses from rate changes)
+                    bond_ret = bond_return_paths[sim, t]
+                    cash_ret = rate_paths[sim, t]
+                    portfolio_return = w_s * stock_ret + w_b * bond_ret + w_c * cash_ret
 
-                portfolio_return = w_s * stock_ret + w_b * bond_ret + w_c * cash_ret
                 savings = current_earnings - total_cons
                 financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
 
@@ -1049,10 +1067,12 @@ def compute_lifecycle_median_path(
     stock_shocks = np.zeros((1, n_periods))
 
     # Run simulation with zero shocks and no dynamic revaluation
+    # use_geometric_returns=True makes this a true median path (not expected-value)
     result = simulate_paths(
         params, econ_params, rate_shocks, stock_shocks,
         initial_rate=econ_params.r_bar,
-        use_dynamic_revaluation=False
+        use_dynamic_revaluation=False,
+        use_geometric_returns=True,
     )
 
     # Extract single path (sim=0) from result arrays
@@ -1156,7 +1176,8 @@ def compute_median_path_comparison(
     ldi_result = simulate_with_strategy(
         ldi_strategy, params, econ_params,
         zero_rate_shocks, zero_stock_shocks,
-        description="LDI (Liability-Driven Investment)"
+        description="LDI (Liability-Driven Investment)",
+        use_geometric_returns=True,
     )
 
     # Strategy 2: Rule-of-Thumb (100-age rule)
@@ -1168,7 +1189,8 @@ def compute_median_path_comparison(
     rot_result = simulate_with_strategy(
         rot_strategy, params, econ_params,
         zero_rate_shocks, zero_stock_shocks,
-        description="Rule-of-Thumb (100-age rule)"
+        description="Rule-of-Thumb (100-age rule)",
+        use_geometric_returns=True,
     )
 
     return StrategyComparison(
@@ -1433,10 +1455,14 @@ def compute_lifecycle_fixed_consumption(
     total_consumption = np.zeros(total_years)
     savings = np.zeros(total_years)
 
-    # Expected portfolio return
-    expected_stock_return = r + econ_params.mu_excess
-    avg_return = (target_stock * expected_stock_return +
-                  target_bond * r + target_cash * r)
+    # Surplus optimization arrays
+    target_fin_stocks = np.zeros(total_years)
+    target_fin_bonds = np.zeros(total_years)
+    target_fin_cash = np.zeros(total_years)
+
+    stock_weight_no_short = np.zeros(total_years)
+    bond_weight_no_short = np.zeros(total_years)
+    cash_weight_no_short = np.zeros(total_years)
 
     # Fixed retirement consumption = withdrawal_rate × wealth at retirement
     # We'll compute this once we know retirement wealth
@@ -1445,7 +1471,23 @@ def compute_lifecycle_fixed_consumption(
     default_year = None
 
     for i in range(total_years):
-        net_worth[i] = human_capital[i] + financial_wealth[i] - pv_expenses[i]
+        fw = financial_wealth[i]
+        net_worth[i] = human_capital[i] + fw - pv_expenses[i]
+
+        # Compute portfolio weights at each step (needed for geometric returns)
+        surplus_i = max(0, net_worth[i])
+        target_fin_stocks[i] = target_stock * surplus_i - hc_stock_component[i]
+        target_fin_bonds[i] = target_bond * surplus_i - hc_bond_component[i] + exp_bond_component[i]
+        target_fin_cash[i] = target_cash * surplus_i - hc_cash_component[i] + exp_cash_component[i]
+
+        w_s, w_b, w_c = normalize_portfolio_weights(
+            target_fin_stocks[i], target_fin_bonds[i], target_fin_cash[i], fw,
+            target_stock, target_bond, target_cash,
+            max_leverage=1.0  # 4% rule uses no leverage
+        )
+        stock_weight_no_short[i] = w_s
+        bond_weight_no_short[i] = w_b
+        cash_weight_no_short[i] = w_c
 
         if i < working_years:
             # Working years: consume only subsistence, save the rest
@@ -1457,7 +1499,7 @@ def compute_lifecycle_fixed_consumption(
             # Retirement: use fixed consumption rule
             if fixed_retirement_consumption is None:
                 # First year of retirement: set fixed consumption
-                fixed_retirement_consumption = withdrawal_rate * financial_wealth[i]
+                fixed_retirement_consumption = withdrawal_rate * fw
 
             if defaulted:
                 # Already defaulted - no more consumption possible
@@ -1465,7 +1507,7 @@ def compute_lifecycle_fixed_consumption(
                 subsistence_consumption[i] = 0
                 variable_consumption[i] = 0
                 savings[i] = 0
-            elif financial_wealth[i] <= 0:
+            elif fw <= 0:
                 # Default!
                 defaulted = True
                 default_year = i
@@ -1473,10 +1515,10 @@ def compute_lifecycle_fixed_consumption(
                 subsistence_consumption[i] = 0
                 variable_consumption[i] = 0
                 savings[i] = 0
-            elif financial_wealth[i] < fixed_retirement_consumption:
+            elif fw < fixed_retirement_consumption:
                 # Can't meet fixed consumption - consume what's left
-                total_consumption[i] = financial_wealth[i]
-                subsistence_consumption[i] = min(expenses[i], financial_wealth[i])
+                total_consumption[i] = fw
+                subsistence_consumption[i] = min(expenses[i], fw)
                 variable_consumption[i] = max(0, total_consumption[i] - subsistence_consumption[i])
                 savings[i] = -total_consumption[i]  # Negative savings (drawdown)
             else:
@@ -1486,36 +1528,22 @@ def compute_lifecycle_fixed_consumption(
                 variable_consumption[i] = max(0, total_consumption[i] - subsistence_consumption[i])
                 savings[i] = -total_consumption[i]  # Negative savings (drawdown)
 
-        # Accumulate wealth for next period
+        # Accumulate wealth for next period using geometric (median) return
         if i < total_years - 1:
-            financial_wealth[i+1] = financial_wealth[i] * (1 + avg_return) + savings[i]
+            expected_return_i = (
+                w_s * (r + econ_params.mu_excess) +
+                w_b * (r + econ_params.mu_bond) +
+                w_c * r
+            )
+            portfolio_var_i = (
+                w_s**2 * econ_params.sigma_s**2 +
+                w_b**2 * (econ_params.bond_duration * econ_params.sigma_r)**2 +
+                2 * w_s * w_b * (-econ_params.bond_duration * econ_params.sigma_s * econ_params.sigma_r * econ_params.rho)
+            )
+            portfolio_return_i = expected_return_i - 0.5 * portfolio_var_i
+            financial_wealth[i+1] = fw * (1 + portfolio_return_i) + savings[i]
             if financial_wealth[i+1] < 0:
                 financial_wealth[i+1] = 0
-
-    # Surplus optimization: use max(0, net_worth) instead of total_wealth
-    surplus = np.maximum(0, net_worth)
-
-    # Target financial holdings and weights (surplus optimization)
-    # Surplus = HC + FW - PV(expenses), targets sum to FW (no leverage needed)
-    target_fin_stocks = target_stock * surplus - hc_stock_component
-    target_fin_bonds = target_bond * surplus - hc_bond_component + exp_bond_component
-    target_fin_cash = target_cash * surplus - hc_cash_component + exp_cash_component
-
-    stock_weight_no_short = np.zeros(total_years)
-    bond_weight_no_short = np.zeros(total_years)
-    cash_weight_no_short = np.zeros(total_years)
-
-    # Use normalize_portfolio_weights helper for consistent weight normalization
-    for i in range(total_years):
-        fw = financial_wealth[i]
-        w_s, w_b, w_c = normalize_portfolio_weights(
-            target_fin_stocks[i], target_fin_bonds[i], target_fin_cash[i], fw,
-            target_stock, target_bond, target_cash,
-            max_leverage=1.0  # 4% rule uses no leverage
-        )
-        stock_weight_no_short[i] = w_s
-        bond_weight_no_short[i] = w_b
-        cash_weight_no_short[i] = w_c
 
     # Total holdings
     total_stocks = stock_weight_no_short * financial_wealth + hc_stock_component

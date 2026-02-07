@@ -133,32 +133,27 @@ class LDIStrategy:
         variable = max(0, consumption_rate * state.net_worth)
         total_cons = subsistence + variable
 
-        # Apply constraints based on lifecycle stage
-        if state.is_working:
-            # During working years: can't consume more than earnings
-            if total_cons > state.earnings:
-                total_cons = state.earnings
-                variable = max(0, state.earnings - subsistence)
-        else:
-            # Retirement: can't consume more than financial wealth
-            if state.financial_wealth <= 0:
-                return StrategyActions(
-                    total_consumption=0.0,
-                    subsistence_consumption=0.0,
-                    variable_consumption=0.0,
-                    stock_weight=state.target_stock,
-                    bond_weight=state.target_bond,
-                    cash_weight=state.target_cash,
-                    target_fin_stock=0.0,
-                    target_fin_bond=0.0,
-                    target_fin_cash=0.0,
-                )
-            if total_cons > state.financial_wealth:
-                total_cons = state.financial_wealth
-                variable = max(0, state.financial_wealth - subsistence)
-                if variable < 0:
-                    subsistence = state.financial_wealth
-                    variable = 0.0
+        # Apply constraints: can't consume more than financial wealth
+        # (you can spend more than income, but you can't borrow)
+        fw = state.financial_wealth
+        if fw <= 0:
+            return StrategyActions(
+                total_consumption=0.0,
+                subsistence_consumption=0.0,
+                variable_consumption=0.0,
+                stock_weight=state.target_stock,
+                bond_weight=state.target_bond,
+                cash_weight=state.target_cash,
+                target_fin_stock=0.0,
+                target_fin_bond=0.0,
+                target_fin_cash=0.0,
+            )
+        if total_cons > fw:
+            total_cons = fw
+            variable = max(0, fw - subsistence)
+            if variable < 0:
+                subsistence = fw
+                variable = 0.0
 
         # LDI allocation: surplus optimization
         # Surplus = max(0, net_worth) where net_worth = HC + FW - PV(expenses)

@@ -1391,30 +1391,23 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
     let variable = Math.max(0, effectiveConsumptionRate * state.netWorth);
     let totalCons = subsistence + variable;
 
-    // Apply constraints based on lifecycle stage
-    if (state.isWorking) {
-      // During working years: can't consume more than earnings
-      if (totalCons > state.earnings) {
-        totalCons = state.earnings;
-        variable = Math.max(0, state.earnings - subsistence);
-      }
-    } else {
-      // Retirement: can't consume more than financial wealth
-      if (state.financialWealth <= 0) {
-        return {
-          consumption: 0.0,
-          stockWeight: state.targetStock,
-          bondWeight: state.targetBond,
-          cashWeight: state.targetCash,
-        };
-      }
-      if (totalCons > state.financialWealth) {
-        totalCons = state.financialWealth;
-        variable = Math.max(0, state.financialWealth - subsistence);
-        if (variable < 0) {
-          subsistence = state.financialWealth;
-          variable = 0.0;
-        }
+    // Apply constraints: can't consume more than financial wealth
+    // (you can spend more than income, but you can't borrow)
+    const fw = state.financialWealth;
+    if (fw <= 0) {
+      return {
+        consumption: 0.0,
+        stockWeight: state.targetStock,
+        bondWeight: state.targetBond,
+        cashWeight: state.targetCash,
+      };
+    }
+    if (totalCons > fw) {
+      totalCons = fw;
+      variable = Math.max(0, fw - subsistence);
+      if (variable < 0) {
+        subsistence = fw;
+        variable = 0.0;
       }
     }
 
@@ -2891,24 +2884,19 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
-      // Working years: cap consumption at earnings (can't borrow against HC)
-      totalConsumption[i] = earnings[i];
-      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
-    } else if (earnings[i] === 0) {
-      // Retirement: cap consumption at financial wealth
-      if (subsistenceConsumption[i] > fw) {
-        totalConsumption[i] = fw;
-        subsistenceConsumption[i] = fw;
-        variableConsumption[i] = 0;
-      } else if (totalConsumption[i] > fw) {
-        totalConsumption[i] = fw;
-        variableConsumption[i] = fw - subsistenceConsumption[i];
-      }
+    // Cap consumption at financial wealth (can spend more than income, but can't borrow)
+    if (subsistenceConsumption[i] > fw) {
+      totalConsumption[i] = fw;
+      subsistenceConsumption[i] = fw;
+      variableConsumption[i] = 0;
+    } else if (totalConsumption[i] > fw) {
+      totalConsumption[i] = fw;
+      variableConsumption[i] = fw - subsistenceConsumption[i];
     }
 
-    // Compute portfolio return using CURRENT weights
-    const portfolioReturn = wS * stockReturn + wB * bondReturn + wC * cashReturn;
+    // Use geometric (median) return for wealth evolution: E[R_p] - 0.5*Var(R_p)
+    // expectedReturnI and portfolioVarI already computed above using per-step weights
+    const portfolioReturn = expectedReturnI - 0.5 * portfolioVarI;
 
     const savings = earnings[i] - totalConsumption[i];
 
@@ -3329,10 +3317,8 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
-      totalConsumption[i] = earnings[i];
-      variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
-    } else if (earnings[i] === 0) {
+    // Cap consumption at financial wealth (can spend more than income, but can't borrow)
+    {
       const fw = financialWealth[i];
       if (subsistenceConsumption[i] > fw) {
         totalConsumption[i] = fw;
@@ -3622,25 +3608,18 @@ function computeScenarioPath(
       variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-      if (earnings[i] > 0 && totalConsumption[i] > earnings[i]) {
-        // Working years: cap consumption at earnings (can't borrow against HC)
-        totalConsumption[i] = earnings[i];
-        variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
-      } else if (earnings[i] === 0) {
-        // Retirement: cap consumption at financial wealth
+      // Cap consumption at financial wealth (can spend more than income, but can't borrow)
+      {
         const fw = financialWealth[i];
         if (subsistenceConsumption[i] > fw) {
-          // Bankruptcy: can't even meet subsistence
           if (!defaulted) {
             defaulted = true;
             defaultAge = params.startAge + i;
           }
-          // Consume whatever wealth remains
           totalConsumption[i] = fw;
           subsistenceConsumption[i] = fw;
           variableConsumption[i] = 0;
         } else if (totalConsumption[i] > fw) {
-          // Can meet subsistence but not variable consumption
           totalConsumption[i] = fw;
           variableConsumption[i] = fw - subsistenceConsumption[i];
         }
@@ -3653,12 +3632,13 @@ function computeScenarioPath(
           totalConsumption[i] = preRetirementConsumption[i];
           variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
         } else {
-          // Fallback: consume from earnings
+          // Fallback: consume from earnings, capped at financial wealth
           variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
           totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
-          if (totalConsumption[i] > earnings[i]) {
-            totalConsumption[i] = earnings[i];
-            variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
+          const fwCap = financialWealth[i];
+          if (totalConsumption[i] > fwCap) {
+            totalConsumption[i] = fwCap;
+            variableConsumption[i] = Math.max(0, fwCap - subsistenceConsumption[i]);
           }
         }
       } else {
