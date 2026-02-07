@@ -35,7 +35,6 @@ from core import (
     simulate_with_strategy,
     generate_correlated_shocks,
     compute_pv_consumption_realized,
-    compute_lifecycle_median_path,
     LDIStrategy,
     RuleOfThumbStrategy,
 )
@@ -635,9 +634,9 @@ class ScenarioResult:
     ldi_dv01_paths: np.ndarray            # DV01: $ change per 1bp rate increase
     rot_dv01_paths: np.ndarray
 
-    # Median path decomposition (for reference)
-    hc_bond_component: np.ndarray         # (n_periods,) bond-like portion of HC
-    exp_bond_component: np.ndarray        # (n_periods,) bond-like portion of expenses
+    # Per-path dynamic decomposition (from simulate_with_strategy)
+    hc_bond_component: np.ndarray         # (n_sims, n_periods) bond-like portion of HC
+    exp_bond_component: np.ndarray        # (n_sims, n_periods) bond-like portion of expenses
 
 
 def run_teaching_scenario(
@@ -715,14 +714,10 @@ def run_teaching_scenario(
     # =========================================================================
     # Compute fixed income hedging metrics
     # =========================================================================
-    # Get median path for HC/expense decomposition (deterministic at r_bar)
-    # This is valid because with use_dynamic_revaluation=False (default),
-    # decomposition uses r_bar (constant), so it's the same across all MC paths
-    median_result = compute_lifecycle_median_path(params_with_beta, econ_params)
-
-    # Extract decomposition from median path - shape: (n_periods,)
-    hc_bond = median_result.hc_bond_component
-    exp_bond = median_result.exp_bond_component
+    # Use per-path dynamic decomposition (computed inside simulate_with_strategy
+    # using the stochastic rate path, so HC/expense PVs vary across simulations)
+    hc_bond = ldi_result.hc_bond_component   # (n_sims, n_periods)
+    exp_bond = ldi_result.exp_bond_component  # (n_sims, n_periods)
     bond_duration = econ_params.bond_duration  # Scalar (default 20.0)
 
     # Compute bond holdings for each strategy - shape: (n_sims, n_periods)
@@ -730,16 +725,16 @@ def run_teaching_scenario(
     rot_bond_holdings = rot_result.bond_weight * rot_result.financial_wealth
 
     # Net Fixed Income PV = Bond holdings + HC_bond - Exp_bond
-    # (using broadcasting: hc_bond[np.newaxis, :] broadcasts (n_periods,) to (1, n_periods))
-    ldi_net_fi_pv = ldi_bond_holdings + hc_bond[np.newaxis, :] - exp_bond[np.newaxis, :]
-    rot_net_fi_pv = rot_bond_holdings + hc_bond[np.newaxis, :] - exp_bond[np.newaxis, :]
+    # All arrays are (n_sims, n_periods) — no broadcasting needed
+    ldi_net_fi_pv = ldi_bond_holdings + hc_bond - exp_bond
+    rot_net_fi_pv = rot_bond_holdings + hc_bond - exp_bond
 
     # DV01 = Dollar_Duration × 0.01 ($ gain per 1pp rate DROP)
     # hc_bond and exp_bond are already bond-equivalent amounts (scaled by dur_X / bond_duration),
     # so we use bond_duration uniformly for all components:
     # DV01 = bond_duration × (hc_bond + bond_holdings - exp_bond) × 0.01
-    ldi_dv01 = bond_duration * (hc_bond[np.newaxis, :] + ldi_bond_holdings - exp_bond[np.newaxis, :]) * 0.01
-    rot_dv01 = bond_duration * (hc_bond[np.newaxis, :] + rot_bond_holdings - exp_bond[np.newaxis, :]) * 0.01
+    ldi_dv01 = bond_duration * (hc_bond + ldi_bond_holdings - exp_bond) * 0.01
+    rot_dv01 = bond_duration * (hc_bond + rot_bond_holdings - exp_bond) * 0.01
 
     return ScenarioResult(
         scenario=scenario,
