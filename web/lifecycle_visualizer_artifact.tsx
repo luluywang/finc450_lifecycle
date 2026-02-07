@@ -90,7 +90,7 @@ interface LifecycleParams {
   targetBondAllocation: number;     // Target bond allocation (used if gamma=0)
 
   // Portfolio constraint parameters
-  allowLeverage: boolean;       // Allow shorting and leverage in portfolio
+  maxLeverage: number;          // Maximum leverage ratio (1.0 = no borrowing, Infinity = unconstrained)
 
   // Economic parameters (consistent with EconomicParams for DGP)
   riskFreeRate: number;         // Long-run real risk-free rate
@@ -136,7 +136,7 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
   targetBondAllocation: 0.30,   // 30% bonds if gamma=0
 
   // Portfolio constraint parameters
-  allowLeverage: false,         // No leverage allowed
+  maxLeverage: 1.0,             // No leverage allowed
 
   // Economic parameters
   riskFreeRate: 0.02,           // 2% real risk-free rate
@@ -200,7 +200,7 @@ const CONSERVATIVE_LIFECYCLE_PARAMS: LifecycleParams = {
   targetBondAllocation: 0.50,   // Higher bond target (50% vs 30%)
 
   // Portfolio constraint parameters
-  allowLeverage: false,
+  maxLeverage: 1.0,
 
   // Economic parameters
   riskFreeRate: 0.02,
@@ -218,7 +218,7 @@ const HIGH_BETA_LIFECYCLE_PARAMS: LifecycleParams = {
   ...DEFAULT_LIFECYCLE_PARAMS,
   stockBetaHumanCapital: 0.6,   // Stock-like human capital (beta = 0.6)
   gamma: 3.0,                   // Moderately risk averse
-  allowLeverage: true,          // Allow leverage for aggressive hedging
+  maxLeverage: Infinity,        // Unconstrained leverage for aggressive hedging
 };
 
 /**
@@ -467,6 +467,10 @@ interface LifecycleResult {
   targetStock: number;
   targetBond: number;
   targetCash: number;
+  // Target financial positions ($k) - dollar amounts before normalization
+  targetFinStock: number[];
+  targetFinBond: number[];
+  targetFinCash: number[];
   // Market conditions tracking
   cumulativeStockReturn: number[];  // Cumulative stock return (1 = starting value)
   interestRate: number[];           // Interest rate path per year
@@ -928,7 +932,7 @@ function computeFullMertonAllocationConstrained(
  * @param targetStock - Baseline target stock weight (from MV optimization)
  * @param targetBond - Baseline target bond weight
  * @param targetCash - Baseline target cash weight
- * @param allowLeverage - If true, allow negative/leveraged weights
+ * @param maxLeverage - Maximum leverage ratio (1.0 = no borrowing, 2.0 = 1x borrow, Infinity = unconstrained)
  * @returns [stockWeight, bondWeight, cashWeight] normalized to sum to 1
  */
 function normalizePortfolioWeights(
@@ -939,45 +943,38 @@ function normalizePortfolioWeights(
   targetStock: number,
   targetBond: number,
   targetCash: number,
-  allowLeverage: boolean = false
+  maxLeverage: number = 1.0
 ): [number, number, number] {
-  // Edge case: no financial wealth — clip MV targets (may be negative)
   if (fw <= 1e-6) {
-    const ws = Math.max(0, targetStock);
-    const wb = Math.max(0, targetBond);
-    const wc = Math.max(0, targetCash);
-    const t = ws + wb + wc;
-    if (t > 0) return [ws / t, wb / t, wc / t];
+    // Clip MV targets (may be negative with unconstrained optimization)
+    let ws = Math.max(0, targetStock);
+    let wb = Math.max(0, targetBond);
+    let total = ws + wb;
+    if (total > maxLeverage) {
+      const scale = maxLeverage / total;
+      ws *= scale;
+      wb *= scale;
+    }
+    const wc = 1.0 - ws - wb;
+    if (ws + wb > 0 || wc > 0) return [ws, wb, wc];
     return [0, 0, 1];
   }
 
-  // Compute raw weights
-  let wStock = targetFinStock / fw;
-  let wBond = targetFinBond / fw;
-  let wCash = targetFinCash / fw;
+  // Clip stocks and bonds at 0 (no shorting risky assets)
+  let finStock = Math.max(0, targetFinStock);
+  let finBond = Math.max(0, targetFinBond);
 
-  // If leverage is allowed, return raw (unconstrained) weights
-  if (allowLeverage) {
-    return [wStock, wBond, wCash];
+  // Cap total long exposure at maxLeverage * FW
+  const totalLong = finStock + finBond;
+  const maxLong = maxLeverage * fw;
+  if (totalLong > maxLong) {
+    const scale = maxLong / totalLong;
+    finStock *= scale;
+    finBond *= scale;
   }
 
-  // Clip each component independently at 0
-  const wS = Math.max(0, targetFinStock);
-  const wB = Math.max(0, targetFinBond);
-  const wC = Math.max(0, targetFinCash);
-
-  const total = wS + wB + wC;
-  if (total > 0) {
-    return [wS / total, wB / total, wC / total];
-  } else {
-    // All targets non-positive: clip MV targets and normalize
-    const ws = Math.max(0, targetStock);
-    const wb = Math.max(0, targetBond);
-    const wc = Math.max(0, targetCash);
-    const t = ws + wb + wc;
-    if (t > 0) return [ws / t, wb / t, wc / t];
-    return [0, 0, 1];
-  }
+  // Cash is residual: can be negative (= borrowing)
+  return [finStock / fw, finBond / fw, (fw - finStock - finBond) / fw];
 }
 
 // =============================================================================
@@ -1334,8 +1331,8 @@ function simulateWithStrategy(
 interface LDIStrategyOptions {
   /** Share of net worth consumed above subsistence (null = derive from expected return) */
   consumptionRate?: number | null;
-  /** Allow shorting and leverage in portfolio */
-  allowLeverage?: boolean;
+  /** Maximum leverage ratio (1.0 = no borrowing, Infinity = unconstrained) */
+  maxLeverage?: number;
 }
 
 /**
@@ -1352,14 +1349,40 @@ interface LDIStrategyOptions {
  * @returns Strategy object implementing the Strategy interface
  *
  * @example
- * const ldi = createLDIStrategy({ allowLeverage: false });
+ * const ldi = createLDIStrategy({ maxLeverage: 1.0 });
  * const result = simulateWithStrategy(ldi, params, econ, rateShocks, stockShocks);
  */
 function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
-  const { consumptionRate = null, allowLeverage = false } = options;
+  const { consumptionRate = null, maxLeverage = 1.0 } = options;
 
   const strategy = function ldiStrategy(state: SimulationState): StrategyActions {
-    // Compute consumption rate if not specified
+    const fw = state.financialWealth;
+
+    // Step 1: Compute LDI allocation (portfolio weights FIRST)
+    const surplus = Math.max(0, state.netWorth);
+    const targetFinStock = state.targetStock * surplus - state.hcStockComponent;
+    const targetFinBond = state.targetBond * surplus - state.hcBondComponent + state.expBondComponent;
+    const targetFinCash = state.targetCash * surplus - state.hcCashComponent + state.expCashComponent;
+
+    // Step 2: Handle fw <= 0 edge case
+    if (fw <= 0) {
+      return {
+        consumption: 0.0,
+        stockWeight: state.targetStock,
+        bondWeight: state.targetBond,
+        cashWeight: state.targetCash,
+      };
+    }
+
+    // Normalize to weights with leverage cap
+    const [wS, wB, wC] = normalizePortfolioWeights(
+      targetFinStock, targetFinBond, targetFinCash,
+      fw,
+      state.targetStock, state.targetBond, state.targetCash,
+      maxLeverage
+    );
+
+    // Step 3: Compute consumption rate using REALIZED weights (after normalization)
     let effectiveConsumptionRate: number;
     if (consumptionRate === null) {
       const r = state.currentRate;
@@ -1369,66 +1392,32 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
       const D = state.econParams.bondDuration;
       const muBond = computeMuBondFromEcon(state.econParams);
 
-      const wS = state.targetStock;
-      const wB = state.targetBond;
-
-      // Expected (arithmetic mean) portfolio return - includes bond excess return
       const expectedReturn =
         wS * (r + state.econParams.muExcess) +
         wB * (r + muBond) +
-        state.targetCash * r;
+        wC * r;
 
-      // Jensen's correction: median return = E[r] - 0.5 * Var(r_portfolio)
       const portfolioVar = computePortfolioVariance(wS, wB, sigmaS, sigmaR, D, rho);
-      const medianReturn = expectedReturn - 0.5 * portfolioVar;
-      effectiveConsumptionRate = medianReturn + state.params.consumptionBoost;
+      effectiveConsumptionRate = expectedReturn - 0.5 * portfolioVar + state.params.consumptionBoost;
     } else {
       effectiveConsumptionRate = consumptionRate;
     }
 
-    // Consumption: subsistence + rate * max(0, net_worth)
+    // Step 4: Compute consumption amounts
     let subsistence = state.expenses;
     let variable = Math.max(0, effectiveConsumptionRate * state.netWorth);
     let totalCons = subsistence + variable;
 
-    // Apply constraints: can't consume more than financial wealth
-    // (you can spend more than income, but you can't borrow)
-    const fw = state.financialWealth;
-    if (fw <= 0) {
-      return {
-        consumption: 0.0,
-        stockWeight: state.targetStock,
-        bondWeight: state.targetBond,
-        cashWeight: state.targetCash,
-      };
-    }
-    if (totalCons > fw) {
-      totalCons = fw;
-      variable = Math.max(0, fw - subsistence);
+    // Step 5: Apply budget constraint: cap at fw + earnings
+    const available = fw + state.earnings;
+    if (totalCons > available) {
+      totalCons = available;
+      variable = Math.max(0, available - subsistence);
       if (variable < 0) {
-        subsistence = fw;
+        subsistence = available;
         variable = 0.0;
       }
     }
-
-    // LDI allocation: surplus optimization
-    // Surplus = max(0, net_worth), targets sum to FW (no leverage needed)
-    const surplus = Math.max(0, state.netWorth);
-    const targetFinStock = state.targetStock * surplus - state.hcStockComponent;
-    const targetFinBond = state.targetBond * surplus - state.hcBondComponent + state.expBondComponent;
-    const targetFinCash = state.targetCash * surplus - state.hcCashComponent + state.expCashComponent;
-
-    // Normalize to weights
-    const [wS, wB, wC] = normalizePortfolioWeights(
-      targetFinStock,
-      targetFinBond,
-      targetFinCash,
-      state.financialWealth,
-      state.targetStock,
-      state.targetBond,
-      state.targetCash,
-      allowLeverage
-    );
 
     return {
       consumption: totalCons,
@@ -1659,7 +1648,7 @@ function computeMedianPathComparison(
   const zeroStockShocks = [Array(nPeriods).fill(0)];   // [1][nPeriods]
 
   // Strategy 1: LDI (Liability-Driven Investment)
-  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const ldiStrategy = createLDIStrategy({ maxLeverage: 1.0 });
   const ldiResult = simulateWithStrategy(
     ldiStrategy, params, econParams,
     zeroRateShocks, zeroStockShocks,
@@ -1683,7 +1672,7 @@ function computeMedianPathComparison(
   return {
     resultA: ldiResult,
     resultB: rotResult,
-    strategyAParams: { allowLeverage: false },
+    strategyAParams: { maxLeverage: 1.0 },
     strategyBParams: {
       savingsRate: rotSavingsRate,
       withdrawalRate: rotWithdrawalRate,
@@ -1963,7 +1952,7 @@ function computeWealthDecompositionPaths(
  * @returns MonteCarloSimulationResult with raw result and percentile statistics
  *
  * @example
- * const ldi = createLDIStrategy({ allowLeverage: false });
+ * const ldi = createLDIStrategy({ maxLeverage: 1.0 });
  * const mcResult = runMonteCarloSimulation(ldi, params, econParams, 50, 42);
  *
  * // Access percentile statistics
@@ -2168,7 +2157,7 @@ function runMonteCarloStrategyComparison(
   }
 
   // Strategy 1: LDI
-  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const ldiStrategy = createLDIStrategy({ maxLeverage: 1.0 });
   const ldiResult = simulateWithStrategy(
     ldiStrategy, params, econParams,
     rateShocks, stockShocks,
@@ -2285,7 +2274,7 @@ function runMonteCarloStrategyComparison(
       medianPvConsumption: computePercentile(rotPvConsumptionValues, 50),
       pvConsumption: rotPvConsumptionValues,
     },
-    strategyAParams: { allowLeverage: false },
+    strategyAParams: { maxLeverage: 1.0 },
     strategyBParams: {
       savingsRate: rotSavingsRate,
       withdrawalRate: rotWithdrawalRate,
@@ -2502,7 +2491,7 @@ function runTeachingScenarios(
   const rho = econParams.rho;
 
   // Create strategies
-  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const ldiStrategy = createLDIStrategy({ maxLeverage: 1.0 });
   const rotStrategy = createRuleOfThumbStrategy({
     savingsRate: rotSavingsRate,
     withdrawalRate: rotWithdrawalRate,
@@ -2845,6 +2834,11 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const bondWeight = Array(totalYears).fill(0);
   const cashWeight = Array(totalYears).fill(0);
 
+  // Target financial positions ($k) - before normalization
+  const targetFinStockArr = Array(totalYears).fill(0);
+  const targetFinBondArr = Array(totalYears).fill(0);
+  const targetFinCashArr = Array(totalYears).fill(0);
+
   // Simulate wealth accumulation with step-by-step portfolio weight calculation
   // This matches Python's simulate_paths which computes weights at each time step
   for (let i = 0; i < totalYears; i++) {
@@ -2855,14 +2849,18 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
 
     // Surplus optimization: target = target_pct * surplus - HC + expenses
     const surplus = Math.max(0, netWorth[i]);
-    const targetFinStock = targetStock * surplus - hcStock[i];
-    const targetFinBond = targetBond * surplus - hcBond[i] + expBond[i];
-    const targetFinCash = targetCash * surplus - hcCash[i] + expCash[i];
+    const targetFinStockI = targetStock * surplus - hcStock[i];
+    const targetFinBondI = targetBond * surplus - hcBond[i] + expBond[i];
+    const targetFinCashI = targetCash * surplus - hcCash[i] + expCash[i];
+
+    targetFinStockArr[i] = targetFinStockI;
+    targetFinBondArr[i] = targetFinBondI;
+    targetFinCashArr[i] = targetFinCashI;
 
     const [wS, wB, wC] = normalizePortfolioWeights(
-      targetFinStock, targetFinBond, targetFinCash,
+      targetFinStockI, targetFinBondI, targetFinCashI,
       fw, targetStock, targetBond, targetCash,
-      false  // no leverage for median path
+      1.0  // no leverage for median path
     );
 
     stockWeight[i] = wS;
@@ -2884,14 +2882,15 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap consumption at financial wealth (can spend more than income, but can't borrow)
-    if (subsistenceConsumption[i] > fw) {
-      totalConsumption[i] = fw;
-      subsistenceConsumption[i] = fw;
+    // Cap consumption at available resources (fw + earnings)
+    const availableI = fw + earnings[i];
+    if (subsistenceConsumption[i] > availableI) {
+      totalConsumption[i] = availableI;
+      subsistenceConsumption[i] = availableI;
       variableConsumption[i] = 0;
-    } else if (totalConsumption[i] > fw) {
-      totalConsumption[i] = fw;
-      variableConsumption[i] = fw - subsistenceConsumption[i];
+    } else if (totalConsumption[i] > availableI) {
+      totalConsumption[i] = availableI;
+      variableConsumption[i] = availableI - subsistenceConsumption[i];
     }
 
     // Use geometric (median) return for wealth evolution: E[R_p] - 0.5*Var(R_p)
@@ -2954,6 +2953,9 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     targetStock,
     targetBond,
     targetCash,
+    targetFinStock: targetFinStockArr,
+    targetFinBond: targetFinBondArr,
+    targetFinCash: targetFinCashArr,
     cumulativeStockReturn,
     interestRate,
     netFiPv,
@@ -3100,7 +3102,7 @@ function generateVerificationData(params: Params): Record<string, unknown> {
     gamma: params.gamma,
     targetStockAllocation: 0.6,
     targetBondAllocation: 0.3,
-    allowLeverage: false,
+    maxLeverage: 1.0,
     riskFreeRate: params.rBar,
     equityPremium: params.muStock,
     initialWealth: params.initialWealth,
@@ -3117,7 +3119,7 @@ function generateVerificationData(params: Params): Record<string, unknown> {
     maxDuration: params.maxDuration,
   };
 
-  const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+  const ldiStrategy = createLDIStrategy({ maxLeverage: 1.0 });
   const simResult = simulateWithStrategy(ldiStrategy, lp, ep, zeroShocks, zeroShocks);
 
   const simulationTest = {
@@ -3297,7 +3299,7 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     const [wS, wB, wC] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
       financialWealth[i], targetStock, targetBond, targetCash,
-      false  // no leverage
+      1.0  // no leverage
     );
     stockWeight[i] = wS;
     bondWeight[i] = wB;
@@ -3317,16 +3319,17 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap consumption at financial wealth (can spend more than income, but can't borrow)
+    // Cap consumption at available resources (fw + earnings)
     {
       const fw = financialWealth[i];
-      if (subsistenceConsumption[i] > fw) {
-        totalConsumption[i] = fw;
-        subsistenceConsumption[i] = fw;
+      const availableI = fw + earnings[i];
+      if (subsistenceConsumption[i] > availableI) {
+        totalConsumption[i] = availableI;
+        subsistenceConsumption[i] = availableI;
         variableConsumption[i] = 0;
-      } else if (totalConsumption[i] > fw) {
-        totalConsumption[i] = fw;
-        variableConsumption[i] = fw - subsistenceConsumption[i];
+      } else if (totalConsumption[i] > availableI) {
+        totalConsumption[i] = availableI;
+        variableConsumption[i] = availableI - subsistenceConsumption[i];
       }
     }
 
@@ -3383,6 +3386,9 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     targetStock,
     targetBond,
     targetCash,
+    targetFinStock: Array(totalYears).fill(0),
+    targetFinBond: Array(totalYears).fill(0),
+    targetFinCash: Array(totalYears).fill(0),
     cumulativeStockReturn: cumulativeStockReturnArr,
     interestRate: interestRateArr,
     // These are computed separately by computeNetFiPvAndDv01Paths, not in single-path simulation
@@ -3590,7 +3596,7 @@ function computeScenarioPath(
     const [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
       financialWealth[i], targetStockAlloc, targetBondAlloc, targetCashAlloc,
-      false  // no leverage
+      1.0  // no leverage
     );
 
     // Consumption decision based on rule
@@ -3608,20 +3614,21 @@ function computeScenarioPath(
       variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-      // Cap consumption at financial wealth (can spend more than income, but can't borrow)
+      // Cap consumption at available resources (fw + earnings)
       {
         const fw = financialWealth[i];
-        if (subsistenceConsumption[i] > fw) {
+        const availableI = fw + earnings[i];
+        if (subsistenceConsumption[i] > availableI) {
           if (!defaulted) {
             defaulted = true;
             defaultAge = params.startAge + i;
           }
-          totalConsumption[i] = fw;
-          subsistenceConsumption[i] = fw;
+          totalConsumption[i] = availableI;
+          subsistenceConsumption[i] = availableI;
           variableConsumption[i] = 0;
-        } else if (totalConsumption[i] > fw) {
-          totalConsumption[i] = fw;
-          variableConsumption[i] = fw - subsistenceConsumption[i];
+        } else if (totalConsumption[i] > availableI) {
+          totalConsumption[i] = availableI;
+          variableConsumption[i] = availableI - subsistenceConsumption[i];
         }
       }
     } else {
@@ -3892,6 +3899,37 @@ const dollarTooltipFormatter = tooltipFmt((v) => `$${formatDollar(v)}k`);
 const percentTooltipFormatter = tooltipFmt((v) => `${Math.round(v)}%`);
 const yearsTooltipFormatter = tooltipFmt((v) => `${formatYears(v)} yrs`);
 
+// Symmetric log scale — matches Python's symlog(linthresh=50, linscale=0.5)
+// Linear within ±linthresh, log outside. Used for wealth charts that cross zero.
+const SYMLOG_THRESH = 50;
+const SYMLOG_LINSCALE = 0.5;
+const SYMLOG_LOG_THRESH = Math.log10(SYMLOG_THRESH);
+
+function symlog(v: number): number {
+  if (Math.abs(v) <= SYMLOG_THRESH) return v * SYMLOG_LINSCALE / SYMLOG_THRESH;
+  const sign = v > 0 ? 1 : -1;
+  return sign * (SYMLOG_LINSCALE + Math.log10(Math.abs(v)) - SYMLOG_LOG_THRESH);
+}
+
+function symlogInv(t: number): number {
+  if (Math.abs(t) <= SYMLOG_LINSCALE) return t * SYMLOG_THRESH / SYMLOG_LINSCALE;
+  const sign = t > 0 ? 1 : -1;
+  return sign * Math.pow(10, Math.abs(t) - SYMLOG_LINSCALE + SYMLOG_LOG_THRESH);
+}
+
+const symlogTickFormatter = (t: number) => {
+  const v = symlogInv(t);
+  const absV = Math.abs(v);
+  if (absV < 1) return '$0k';
+  if (absV < 1000) return `$${Math.round(v)}k`;
+  return `$${(v / 1000).toFixed(1)}M`;
+};
+
+const symlogTooltipFormatter = tooltipFmt((t) => {
+  const v = symlogInv(t);
+  return `$${Math.round(v)}k`;
+});
+
 function ChartSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: '24px' }}>
@@ -4015,7 +4053,7 @@ export default function LifecycleVisualizer() {
     stockBetaHumanCapital: params.stockBetaHC,  // Use selected beta from params
     targetStockAllocation: 0.6,
     targetBondAllocation: 0.3,
-    allowLeverage: false,
+    maxLeverage: 1.0,
     riskFreeRate: params.rBar,
     equityPremium: params.muStock,
     initialWealth: params.initialWealth,
@@ -4113,7 +4151,7 @@ export default function LifecycleVisualizer() {
     }
 
     // Run LDI strategy with these shocks
-    const ldiStrategy = createLDIStrategy({ allowLeverage: false });
+    const ldiStrategy = createLDIStrategy({ maxLeverage: 1.0 });
     const ldiResult = simulateWithStrategy(
       ldiStrategy, lp, ep,
       [rateShocks], [stockShocks],
@@ -4277,13 +4315,25 @@ export default function LifecycleVisualizer() {
       totalConsumption: result.totalConsumption[i],
       // Market assumptions
       cumulativeStockReturn: result.cumulativeStockReturn[i],
+      cumulativeStockReturnArithmetic: Math.pow(1 + params.rBar + params.muStock, i),
       interestRate: result.interestRate[i] * 100,  // Convert to percentage
       // Total Assets (HC + FW)
       totalAssets: result.humanCapital[i] + result.financialWealth[i],
       // Net Worth (HC + FW - PV Expenses)
       netWorth: result.netWorth[i],
+      // Risk Management
+      netFiPv: result.netFiPv[i],
+      dv01: result.dv01[i],
+      // Target Financial Positions ($k)
+      targetFinStock: result.targetFinStock[i],
+      targetFinBond: result.targetFinBond[i],
+      targetFinCash: result.targetFinCash[i],
+      // Savings = earnings - consumption
+      savings: result.earnings[i] - result.totalConsumption[i],
+      savingsPositive: Math.max(0, result.earnings[i] - result.totalConsumption[i]),
+      savingsNegative: Math.min(0, result.earnings[i] - result.totalConsumption[i]),
     }));
-  }, [result]);
+  }, [result, params.rBar, params.muStock]);
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
@@ -4568,18 +4618,24 @@ export default function LifecycleVisualizer() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Expected Cumulative Stock Returns">
+          <ChartCard title="Cumulative Stock Returns (Arithmetic vs Geometric)">
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={11} />
-                <YAxis fontSize={11} tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
+                <YAxis fontSize={11} scale="log" domain={['auto', 'auto']} tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
                 <Tooltip formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(2)}x` : ''} />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <ReferenceLine y={1} stroke="#999" strokeDasharray="3 3" />
-                <Line type="monotone" dataKey="cumulativeStockReturn" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Expected Cumulative Return" />
+                <Line type="monotone" dataKey="cumulativeStockReturnArithmetic" stroke={COLORS.stock} strokeWidth={2} strokeDasharray="5 5" dot={false}
+                  name={`Arithmetic: r+μ = ${((params.rBar + params.muStock) * 100).toFixed(1)}%`} />
+                <Line type="monotone" dataKey="cumulativeStockReturn" stroke={COLORS.stock} strokeWidth={2} dot={false}
+                  name={`Geometric: r+μ−½σ² = ${((params.rBar + params.muStock - 0.5 * params.sigmaS * params.sigmaS) * 100).toFixed(1)}%`} />
               </LineChart>
             </ResponsiveContainer>
+            <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px', color: '#666' }}>
+              Jensen's correction: −½σ² = {(-0.5 * params.sigmaS * params.sigmaS * 100).toFixed(2)}% per year (log scale).
+            </div>
           </ChartCard>
 
           <ChartCard title="Interest Rate (%)">
@@ -4737,6 +4793,87 @@ export default function LifecycleVisualizer() {
                 <Area type="monotone" dataKey="stockWeight" stackId="1" stroke={COLORS.stock} fill={COLORS.stock} name="Stocks" />
               </AreaChart>
             </ResponsiveContainer>
+          </ChartCard>
+
+          <ChartCard title="Earnings vs Consumption ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <ReferenceLine y={0} stroke="#333" strokeWidth={1} />
+                <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
+                <Area type="monotone" dataKey="savingsPositive" stroke="transparent" fill={COLORS.cash} fillOpacity={0.4} name="Savings" />
+                <Area type="monotone" dataKey="savingsNegative" stroke="transparent" fill={COLORS.expenses} fillOpacity={0.4} name="Drawdown" />
+                <Line type="monotone" dataKey="earnings" stroke={COLORS.earnings} strokeWidth={2} dot={false} name="Earnings" />
+                <Line type="monotone" dataKey="totalConsumption" stroke={COLORS.expenses} strokeWidth={2} dot={false} name="Total Consumption" />
+              </AreaChart>
+            </ResponsiveContainer>
+            <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px', color: '#666' }}>
+              Green fill = savings (earnings {'>'} consumption). Orange fill = drawdown (consumption {'>'} earnings).
+            </div>
+          </ChartCard>
+        </ChartSection>
+
+        {/* Section 5: Risk Management */}
+        <ChartSection title="Section 5: Risk Management">
+          <ChartCard title="Net Fixed Income PV ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <ReferenceLine y={0} stroke="#333" strokeWidth={1.5} />
+                <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
+                <Line type="monotone" dataKey="netFiPv" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Net FI PV" />
+              </LineChart>
+            </ResponsiveContainer>
+            <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px', color: '#666' }}>
+              Net FI PV = Bond Holdings + HC Bond - Expense Bond. Zero = perfectly hedged.
+            </div>
+          </ChartCard>
+
+          <ChartCard title="Interest Rate Sensitivity (DV01)">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={(v: number) => `$${Math.round(v)}`} />
+                <Tooltip formatter={(v: number | undefined) => v !== undefined ? `$${Math.round(v)}k` : ''} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <ReferenceLine y={0} stroke="#333" strokeWidth={1.5} />
+                <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
+                <Line type="monotone" dataKey="dv01" stroke={COLORS.bond} strokeWidth={2} dot={false} name="DV01" />
+              </LineChart>
+            </ResponsiveContainer>
+            <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px', color: '#666' }}>
+              Dollar value change per 1pp rate move. Zero = duration matched.
+            </div>
+          </ChartCard>
+
+          <ChartCard title="Target Financial Portfolio ($k)">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="age" fontSize={11} />
+                <YAxis fontSize={11} tickFormatter={formatDollar} />
+                <Tooltip formatter={dollarTooltipFormatter} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <ReferenceLine y={0} stroke="#333" strokeWidth={1} />
+                <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
+                <Line type="monotone" dataKey="targetFinStock" stroke={COLORS.stock} strokeWidth={2} dot={false} name="Target Stocks ($)" />
+                <Line type="monotone" dataKey="targetFinBond" stroke={COLORS.bond} strokeWidth={2} dot={false} name="Target Bonds ($)" />
+                <Line type="monotone" dataKey="targetFinCash" stroke={COLORS.cash} strokeWidth={2} dot={false} name="Target Cash ($)" />
+                <Line type="monotone" dataKey="financialWealth" stroke="#333" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Financial Wealth" />
+              </LineChart>
+            </ResponsiveContainer>
+            <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px', color: '#666' }}>
+              Target = MV weight * surplus - HC component + expense component. Sum = FW (no leverage).
+            </div>
           </ChartCard>
         </ChartSection>
           </>
@@ -5739,18 +5876,18 @@ export default function LifecycleVisualizer() {
               // Panel 3, 5, 6 data: Overlaid LDI vs RoT
               const wealthAllocationData = ages.map((age, i) => ({
                 age,
-                // Financial wealth - LDI
-                ldi_fw_p5: scenario.ldi.percentiles.financialWealth.p5[i],
-                ldi_fw_p25: scenario.ldi.percentiles.financialWealth.p25[i],
-                ldi_fw_p50: scenario.ldi.percentiles.financialWealth.p50[i],
-                ldi_fw_p75: scenario.ldi.percentiles.financialWealth.p75[i],
-                ldi_fw_p95: scenario.ldi.percentiles.financialWealth.p95[i],
-                // Financial wealth - RoT
-                rot_fw_p5: scenario.rot.percentiles.financialWealth.p5[i],
-                rot_fw_p25: scenario.rot.percentiles.financialWealth.p25[i],
-                rot_fw_p50: scenario.rot.percentiles.financialWealth.p50[i],
-                rot_fw_p75: scenario.rot.percentiles.financialWealth.p75[i],
-                rot_fw_p95: scenario.rot.percentiles.financialWealth.p95[i],
+                // Financial wealth - LDI (symlog scale)
+                ldi_fw_p5: symlog(scenario.ldi.percentiles.financialWealth.p5[i]),
+                ldi_fw_p25: symlog(scenario.ldi.percentiles.financialWealth.p25[i]),
+                ldi_fw_p50: symlog(scenario.ldi.percentiles.financialWealth.p50[i]),
+                ldi_fw_p75: symlog(scenario.ldi.percentiles.financialWealth.p75[i]),
+                ldi_fw_p95: symlog(scenario.ldi.percentiles.financialWealth.p95[i]),
+                // Financial wealth - RoT (symlog scale)
+                rot_fw_p5: symlog(scenario.rot.percentiles.financialWealth.p5[i]),
+                rot_fw_p25: symlog(scenario.rot.percentiles.financialWealth.p25[i]),
+                rot_fw_p50: symlog(scenario.rot.percentiles.financialWealth.p50[i]),
+                rot_fw_p75: symlog(scenario.rot.percentiles.financialWealth.p75[i]),
+                rot_fw_p95: symlog(scenario.rot.percentiles.financialWealth.p95[i]),
                 // Stock allocation - LDI (as %)
                 ldi_stock_p5: scenario.ldi.percentiles.stockWeight.p5[i] * 100,
                 ldi_stock_p25: scenario.ldi.percentiles.stockWeight.p25[i] * 100,
@@ -5854,17 +5991,28 @@ export default function LifecycleVisualizer() {
               // Panel 11 data: Net Wealth (HC + FW - PV Expenses)
               const netWealthData = ages.map((age, i) => ({
                 age,
-                ldi_nw_p5: scenario.ldi.percentiles.netWorth.p5[i],
-                ldi_nw_p50: scenario.ldi.percentiles.netWorth.p50[i],
-                ldi_nw_p95: scenario.ldi.percentiles.netWorth.p95[i],
-                rot_nw_p5: scenario.rot.percentiles.netWorth.p5[i],
-                rot_nw_p50: scenario.rot.percentiles.netWorth.p50[i],
-                rot_nw_p95: scenario.rot.percentiles.netWorth.p95[i],
+                ldi_nw_p5: symlog(scenario.ldi.percentiles.netWorth.p5[i]),
+                ldi_nw_p50: symlog(scenario.ldi.percentiles.netWorth.p50[i]),
+                ldi_nw_p95: symlog(scenario.ldi.percentiles.netWorth.p95[i]),
+                rot_nw_p5: symlog(scenario.rot.percentiles.netWorth.p5[i]),
+                rot_nw_p50: symlog(scenario.rot.percentiles.netWorth.p50[i]),
+                rot_nw_p95: symlog(scenario.rot.percentiles.netWorth.p95[i]),
                 // Reference lines: total wealth and PV expenses (median only)
-                ldi_tw_p50: scenario.ldi.percentiles.totalAssets.p50[i],
-                rot_tw_p50: scenario.rot.percentiles.totalAssets.p50[i],
-                ldi_pvexp_p50: scenario.ldi.percentiles.pvExpenses.p50[i],
-                rot_pvexp_p50: scenario.rot.percentiles.pvExpenses.p50[i],
+                ldi_tw_p50: symlog(scenario.ldi.percentiles.totalAssets.p50[i]),
+                rot_tw_p50: symlog(scenario.rot.percentiles.totalAssets.p50[i]),
+                ldi_pvexp_p50: symlog(scenario.ldi.percentiles.pvExpenses.p50[i]),
+                rot_pvexp_p50: symlog(scenario.rot.percentiles.pvExpenses.p50[i]),
+              }));
+
+              // Panel 12 data: Annual Consumption (LDI vs RoT)
+              const consumptionData = ages.map((age, i) => ({
+                age,
+                ldi_cons_p5: symlog(scenario.ldi.percentiles.consumption.p5[i]),
+                ldi_cons_p50: symlog(scenario.ldi.percentiles.consumption.p50[i]),
+                ldi_cons_p95: symlog(scenario.ldi.percentiles.consumption.p95[i]),
+                rot_cons_p5: symlog(scenario.rot.percentiles.consumption.p5[i]),
+                rot_cons_p50: symlog(scenario.rot.percentiles.consumption.p50[i]),
+                rot_cons_p95: symlog(scenario.rot.percentiles.consumption.p95[i]),
               }));
 
               return (
@@ -5948,8 +6096,8 @@ export default function LifecycleVisualizer() {
                       <LineChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
-                        <YAxis fontSize={11} tickFormatter={formatDollarK} domain={['auto', 'auto']} />
-                        <Tooltip formatter={dollarKTooltipFormatter} />
+                        <YAxis fontSize={11} tickFormatter={symlogTickFormatter} domain={['auto', 'auto']} />
+                        <Tooltip formatter={symlogTooltipFormatter} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
                         {/* LDI lines */}
@@ -6158,8 +6306,8 @@ export default function LifecycleVisualizer() {
                       <LineChart data={netWealthData}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
-                        <YAxis fontSize={11} tickFormatter={formatDollarK} />
-                        <Tooltip formatter={dollarKTooltipFormatter} />
+                        <YAxis fontSize={11} tickFormatter={symlogTickFormatter} />
+                        <Tooltip formatter={symlogTooltipFormatter} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
                         {/* LDI Net Worth lines */}
@@ -6175,6 +6323,32 @@ export default function LifecycleVisualizer() {
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       Net Wealth = HC + FW − PV(Expenses). Zero means exactly funded.
+                    </div>
+                  </ChartCard>
+
+                  {/* Panel 12: Annual Consumption (LDI vs RoT) */}
+                  <ChartCard title="Panel 12: Annual Consumption (LDI vs RoT)">
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={consumptionData}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="age" fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={symlogTickFormatter} />
+                        <Tooltip formatter={symlogTooltipFormatter} />
+                        <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
+                        {/* LDI lines */}
+                        <Line type="monotone" dataKey="ldi_cons_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        <Line type="monotone" dataKey="ldi_cons_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
+                        <Line type="monotone" dataKey="ldi_cons_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
+                        {/* RoT lines */}
+                        <Line type="monotone" dataKey="rot_cons_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
+                        <Line type="monotone" dataKey="rot_cons_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
+                        <Line type="monotone" dataKey="rot_cons_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
+                      Annual total consumption (subsistence + variable). LDI adapts; RoT uses fixed 4% rule.
                     </div>
                   </ChartCard>
 

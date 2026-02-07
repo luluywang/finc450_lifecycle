@@ -250,43 +250,38 @@ function normalizePortfolioWeights(
   targetStock: number,
   targetBond: number,
   targetCash: number,
-  allowLeverage: boolean = false
+  maxLeverage: number = 1.0
 ): [number, number, number] {
   if (fw <= 1e-6) {
     // Clip MV targets (may be negative with unconstrained optimization)
-    const ws = Math.max(0, targetStock);
-    const wb = Math.max(0, targetBond);
-    const wc = Math.max(0, targetCash);
-    const t = ws + wb + wc;
-    if (t > 0) return [ws / t, wb / t, wc / t];
+    let ws = Math.max(0, targetStock);
+    let wb = Math.max(0, targetBond);
+    let total = ws + wb;
+    if (total > maxLeverage) {
+      const scale = maxLeverage / total;
+      ws *= scale;
+      wb *= scale;
+    }
+    const wc = 1.0 - ws - wb;
+    if (ws + wb > 0 || wc > 0) return [ws, wb, wc];
     return [0, 0, 1];
   }
 
-  let wStock = targetFinStock / fw;
-  let wBond = targetFinBond / fw;
-  let wCash = targetFinCash / fw;
+  // Clip stocks and bonds at 0 (no shorting risky assets)
+  let finStock = Math.max(0, targetFinStock);
+  let finBond = Math.max(0, targetFinBond);
 
-  if (allowLeverage) {
-    return [wStock, wBond, wCash];
+  // Cap total long exposure at maxLeverage * FW
+  const totalLong = finStock + finBond;
+  const maxLong = maxLeverage * fw;
+  if (totalLong > maxLong) {
+    const scale = maxLong / totalLong;
+    finStock *= scale;
+    finBond *= scale;
   }
 
-  // Clip each component independently at 0
-  const wS = Math.max(0, targetFinStock);
-  const wB = Math.max(0, targetFinBond);
-  const wC = Math.max(0, targetFinCash);
-
-  const total = wS + wB + wC;
-  if (total > 0) {
-    return [wS / total, wB / total, wC / total];
-  } else {
-    // All targets non-positive: clip MV targets and normalize
-    const ws = Math.max(0, targetStock);
-    const wb = Math.max(0, targetBond);
-    const wc = Math.max(0, targetCash);
-    const t = ws + wb + wc;
-    if (t > 0) return [ws / t, wb / t, wc / t];
-    return [0, 0, 1];
-  }
+  // Cash is residual: can be negative (= borrowing)
+  return [finStock / fw, finBond / fw, (fw - finStock - finBond) / fw];
 }
 
 // =============================================================================
@@ -444,7 +439,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const [wS, wB, wC] = normalizePortfolioWeights(
       targetFinStock, targetFinBond, targetFinCash,
       fw, targetStock, targetBond, targetCash,
-      false  // no leverage for median path
+      1.0  // no leverage for median path
     );
 
     stockWeight[i] = wS;
@@ -470,14 +465,15 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap consumption at financial wealth (can spend more than income, but can't borrow)
-    if (subsistenceConsumption[i] > fw) {
-      totalConsumption[i] = fw;
-      subsistenceConsumption[i] = fw;
+    // Cap consumption at available resources (fw + earnings)
+    const available = fw + earnings[i];
+    if (subsistenceConsumption[i] > available) {
+      totalConsumption[i] = available;
+      subsistenceConsumption[i] = available;
       variableConsumption[i] = 0;
-    } else if (totalConsumption[i] > fw) {
-      totalConsumption[i] = fw;
-      variableConsumption[i] = fw - subsistenceConsumption[i];
+    } else if (totalConsumption[i] > available) {
+      totalConsumption[i] = available;
+      variableConsumption[i] = available - subsistenceConsumption[i];
     }
 
     // Use geometric (median) return for wealth evolution: E[R_p] - 0.5*Var(R_p)

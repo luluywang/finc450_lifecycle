@@ -555,13 +555,9 @@ def create_monte_carlo_page(
 
     COLORS = REPORT_COLORS
 
-    # Compute percentiles
-    consumption_pctls = np.percentile(mc_result.total_consumption_paths, percentiles, axis=0)
-    fw_pctls = np.percentile(mc_result.financial_wealth_paths, percentiles, axis=0)
-
+    # Compute derived paths
     net_worth_paths = (mc_result.human_capital_paths + mc_result.financial_wealth_paths -
                        mc_result.median_result.pv_expenses[np.newaxis, :])
-    nw_pctls = np.percentile(net_worth_paths, percentiles, axis=0)
 
     stock_return_data = mc_result.stock_return_paths[:, :total_years]
     stock_cumulative = np.cumprod(1 + stock_return_data, axis=1)
@@ -570,15 +566,10 @@ def create_monte_carlo_page(
     rate_data = mc_result.interest_rate_paths[:, :total_years]
     rate_pctls = np.percentile(rate_data * 100, percentiles, axis=0)
 
-    line_styles = {0: ':', 1: '--', 2: '-', 3: '--', 4: ':'}
-    line_widths = {0: 1, 1: 1, 2: 2.5, 3: 1, 4: 1}
-
     # ===== Consumption Distribution =====
     ax = fig.add_subplot(gs[0, 0])
-    for i, p in enumerate(percentiles):
-        ax.plot(x, consumption_pctls[i], color=COLORS['consumption'],
-               linestyle=line_styles[i], linewidth=line_widths[i],
-               label=f'{p}th %ile' if p != 50 else 'Median')
+    consumption_pctls = plot_fan_chart(ax, mc_result.total_consumption_paths, x,
+                                       color=COLORS['consumption'], percentiles=percentiles)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('$ (000s)')
@@ -588,10 +579,8 @@ def create_monte_carlo_page(
 
     # ===== Financial Wealth Distribution =====
     ax = fig.add_subplot(gs[0, 1])
-    for i, p in enumerate(percentiles):
-        ax.plot(x, fw_pctls[i], color=COLORS['fw'],
-               linestyle=line_styles[i], linewidth=line_widths[i],
-               label=f'{p}th %ile' if p != 50 else 'Median')
+    fw_pctls = plot_fan_chart(ax, mc_result.financial_wealth_paths, x,
+                               color=COLORS['fw'], percentiles=percentiles)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
@@ -602,10 +591,8 @@ def create_monte_carlo_page(
 
     # ===== Net Worth Distribution =====
     ax = fig.add_subplot(gs[1, 0])
-    for i, p in enumerate(percentiles):
-        ax.plot(x, nw_pctls[i], color=COLORS['nw'],
-               linestyle=line_styles[i], linewidth=line_widths[i],
-               label=f'{p}th %ile' if p != 50 else 'Median')
+    nw_pctls = plot_fan_chart(ax, net_worth_paths, x,
+                               color=COLORS['nw'], percentiles=percentiles)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
     ax.set_xlabel(xlabel)
@@ -651,11 +638,7 @@ Default Rate: {np.mean(mc_result.default_flags)*100:.1f}%
     # ===== Savings Distribution (Earnings - Consumption) =====
     ax = fig.add_subplot(gs[2, 0])
     savings_paths = mc_result.actual_earnings_paths - mc_result.total_consumption_paths
-    savings_pctls = np.percentile(savings_paths, percentiles, axis=0)
-    for i, p in enumerate(percentiles):
-        ax.plot(x, savings_pctls[i], color=COLORS['earnings'],
-               linestyle=line_styles[i], linewidth=line_widths[i],
-               label=f'{p}th %ile' if p != 50 else 'Median')
+    plot_fan_chart(ax, savings_paths, x, color=COLORS['earnings'], percentiles=percentiles)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
     ax.set_xlabel(xlabel)
@@ -672,11 +655,7 @@ Default Rate: {np.mean(mc_result.default_flags)*100:.1f}%
             savings_paths / mc_result.actual_earnings_paths * 100,
             0.0
         )
-    savings_pct_pctls = np.percentile(savings_pct_paths, percentiles, axis=0)
-    for i, p in enumerate(percentiles):
-        ax.plot(x, savings_pct_pctls[i], color=COLORS['earnings'],
-               linestyle=line_styles[i], linewidth=line_widths[i],
-               label=f'{p}th %ile' if p != 50 else 'Median')
+    plot_fan_chart(ax, savings_pct_paths, x, color=COLORS['earnings'], percentiles=percentiles)
     ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
     ax.axhline(y=0, color='black', linestyle='-', linewidth=1, alpha=0.5)
     ax.set_xlabel(xlabel)
