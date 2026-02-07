@@ -365,31 +365,35 @@ The model uses a single simulation engine for both deterministic and stochastic 
     \item \textbf{Monte Carlo}: Pass random shocks drawn from $N(0,1)$ with correlation $\rho$. Produces stochastic paths with dynamic revaluation of HC and $L$ at each step.
 \end{itemize}
 
-\subsection{Jensen's Correction: Zero-Shock Path vs Monte Carlo}
+\subsection{Jensen's Correction: Consistent Geometric Returns}
 \label{sec:jensen}
 
-The consumption rate includes Jensen's correction (Eq.~\ref{eq:consumption_rate}):
+Both the consumption rate and wealth evolution use the \textbf{geometric (median) return}:
 \[
-c_t = \underbrace{\mathbb{E}_t[R^p_{t+1}]}_{\text{arithmetic mean}} - \tfrac{1}{2}\text{Var}_t(R^p_{t+1}) + \delta
+R^p_{\text{geom}} = \mathbb{E}_t[R^p_{t+1}] - \tfrac{1}{2}\text{Var}_t(R^p_{t+1})
 \]
-But wealth evolves at the \emph{realized} portfolio return, which differs between the two modes:
+where
+\[
+\mathbb{E}_t[R^p_{t+1}] = w_s(r + \mu_s) + w_b(r + \mu_b) + w_c \cdot r, \qquad
+\text{Var}_t(R^p_{t+1}) = w_s^2\sigma_s^2 + w_b^2(D\sigma_r)^2 + 2w_sw_b\text{Cov}(R^s,R^b)
+\]
+The Jensen's correction $\tfrac{1}{2}\text{Var}(R^p)$ varies at each time step because portfolio weights change over the lifecycle (stock-heavy when young due to HC, bond/cash-heavy when old).
 
-\textbf{Zero-shock path.} With $\varepsilon^r = \varepsilon^s = 0$:
+\textbf{Zero-shock path} (``median path''). With $\varepsilon^r = \varepsilon^s = 0$:
 \begin{itemize}
-    \item Each asset earns its \emph{arithmetic} mean: $R^s = r + \mu_s$, $R^b = r + \mu_b$, $R^{\text{cash}} = r$
-    \item The portfolio return used in wealth evolution is $R^p = \mathbb{E}[R^p]$ (arithmetic mean)
-    \item The consumption rate uses $\mathbb{E}[R^p] - \tfrac{1}{2}\text{Var}(R^p)$ (geometric mean)
-    \item The wedge $\tfrac{1}{2}\text{Var}(R^p)$ means wealth grows \emph{faster} than consumption depletes it
+    \item The consumption rate is $c_t = R^p_{\text{geom}} + \delta$ (Eq.~\ref{eq:consumption_rate})
+    \item Wealth evolves at the same geometric return: $FW_{t+1} = FW_t(1 + R^p_{\text{geom}}) + Y_t - C_t$
+    \item This produces a \textbf{true median trajectory}: the path that the median Monte Carlo simulation converges to as $N \to \infty$
 \end{itemize}
-This makes the zero-shock path an \textbf{expected-value (mean) trajectory}, not a true median. It is the path wealth would follow if every asset earned its arithmetic mean return every period.
 
 \textbf{Monte Carlo.} With random shocks:
 \begin{itemize}
     \item Each asset earns a realized return that includes shocks
-    \item The \emph{median} compound return across paths $\approx$ geometric mean $= \mathbb{E}[R^p] - \tfrac{1}{2}\text{Var}(R^p)$
-    \item The consumption rate and median wealth growth are approximately aligned
+    \item Wealth evolves at the realized (stochastic) portfolio return
+    \item The median across paths $\approx$ the zero-shock geometric path
 \end{itemize}
-The median of the Monte Carlo wealth distribution will therefore lie \emph{below} the zero-shock path. The gap is approximately $\tfrac{1}{2}\text{Var}(R^p)$ per period, compounded---reflecting the standard result that $\mathbb{E}[W] > \text{median}(W)$ for log-normally distributed wealth.
+
+The correction is largest early in life when the portfolio is stock-heavy. With default parameters and ${\sim}100\%$ stocks: correction $= \tfrac{1}{2}(0.18)^2 = 1.62$ pp/yr. At mid-career (${\sim}69\%$ stocks): correction $\approx 0.79$ pp/yr.
 
 \subsection{Time Step Sequence}
 
@@ -402,7 +406,7 @@ At each period $t$, the simulation proceeds in order:
     \item Normalize to portfolio weights $(w_s, w_b, w_c)$ with leverage constraint
     \item Compute dynamic consumption rate $c_t$ using realized weights and Jensen's correction
     \item Compute consumption $C_t$ and apply constraints
-    \item Evolve wealth: $FW_{t+1} = FW_t(1 + R^p_{t+1}) + Y_t - C_t$ using \emph{realized} $R^p_{t+1}$
+    \item Evolve wealth: $FW_{t+1} = FW_t(1 + R^p_{t+1}) + Y_t - C_t$. For zero-shock paths, $R^p_{t+1} = R^p_{\text{geom}}$; for MC, $R^p_{t+1}$ is the realized stochastic return
 \end{enumerate}
 
 The order is important: portfolio weights are determined \emph{before} consumption, so the variance correction in the consumption rate uses the actual portfolio allocation.
