@@ -148,7 +148,7 @@ def create_teaching_scenario(
             w_c = 1 - w_stock - w_b
 
             portfolio_return = w_stock * stock_ret + w_b * bond_ret + w_c * cash_ret
-            financial_wealth[t + 1] = fw * (1 + portfolio_return) + savings
+            financial_wealth[t + 1] = (fw + savings) * (1 + portfolio_return)
 
     cumulative_consumption = np.cumsum(total_consumption)
 

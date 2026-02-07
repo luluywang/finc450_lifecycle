@@ -546,7 +546,7 @@ def simulate_with_strategy(
                     )
 
                 savings = current_earnings - actions.total_consumption
-                financial_wealth_paths[sim, t + 1] = fw * (1 + portfolio_return) + savings
+                financial_wealth_paths[sim, t + 1] = (fw + savings) * (1 + portfolio_return)
 
     # Compute ages array
     ages = np.arange(params.start_age, params.end_age)

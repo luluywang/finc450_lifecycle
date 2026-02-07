@@ -483,7 +483,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const savings = earnings[i] - totalConsumption[i];
 
     if (i < totalYears - 1) {
-      financialWealth[i + 1] = Math.max(0, fw * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, (fw + savings) * (1 + portfolioReturn));
     }
   }
 
