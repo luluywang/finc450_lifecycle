@@ -674,8 +674,6 @@ def run_teaching_scenario(
     # Extract decomposition from median path - shape: (n_periods,)
     hc_bond = median_result.hc_bond_component
     exp_bond = median_result.exp_bond_component
-    dur_hc = median_result.duration_earnings
-    dur_exp = median_result.duration_expenses
     bond_duration = econ_params.bond_duration  # Scalar (default 20.0)
 
     # Compute bond holdings for each strategy - shape: (n_sims, n_periods)
@@ -688,16 +686,11 @@ def run_teaching_scenario(
     rot_net_fi_pv = rot_bond_holdings + hc_bond[np.newaxis, :] - exp_bond[np.newaxis, :]
 
     # DV01 = Dollar_Duration × 0.01 ($ gain per 1pp rate DROP)
-    # Dollar Duration = Asset $ Duration - Liability $ Duration
-    # Asset $ Dur = dur_hc * hc_bond + bond_duration * bond_holdings
-    # Liab $ Dur = dur_exp * exp_bond
-    ldi_asset_dur = dur_hc[np.newaxis, :] * hc_bond[np.newaxis, :] + bond_duration * ldi_bond_holdings
-    ldi_liab_dur = dur_exp[np.newaxis, :] * exp_bond[np.newaxis, :]
-    ldi_dv01 = (ldi_asset_dur - ldi_liab_dur) * 0.01
-
-    rot_asset_dur = dur_hc[np.newaxis, :] * hc_bond[np.newaxis, :] + bond_duration * rot_bond_holdings
-    rot_liab_dur = dur_exp[np.newaxis, :] * exp_bond[np.newaxis, :]
-    rot_dv01 = (rot_asset_dur - rot_liab_dur) * 0.01
+    # hc_bond and exp_bond are already bond-equivalent amounts (scaled by dur_X / bond_duration),
+    # so we use bond_duration uniformly for all components:
+    # DV01 = bond_duration × (hc_bond + bond_holdings - exp_bond) × 0.01
+    ldi_dv01 = bond_duration * (hc_bond[np.newaxis, :] + ldi_bond_holdings - exp_bond[np.newaxis, :]) * 0.01
+    rot_dv01 = bond_duration * (hc_bond[np.newaxis, :] + rot_bond_holdings - exp_bond[np.newaxis, :]) * 0.01
 
     return ScenarioResult(
         scenario=scenario,

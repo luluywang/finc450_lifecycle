@@ -2933,15 +2933,12 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     bondWeight[t] * fw + hcBond[t] - expBond[t]
   );
 
-  // DV01 = (Asset Dollar Duration - Liability Dollar Duration) * 0.01
-  // Asset = duration_hc * hc_bond + bond_duration * bond_holdings
-  // Liability = duration_exp * exp_bond
-  // Units: dollars per percentage point rate change
+  // DV01 = bondDuration * (hcBond + bondHoldings - expBond) * 0.01
+  // hcBond and expBond are already bond-equivalent amounts (scaled by dur_X / bondDuration),
+  // so we use bondDuration uniformly (avoids double-counting duration)
   const dv01 = financialWealth.map((fw, t) => {
     const bondHoldings = bondWeight[t] * fw;
-    const assetDur = durationEarnings[t] * hcBond[t] + params.bondDuration * bondHoldings;
-    const liabDur = durationExpenses[t] * expBond[t];
-    return (assetDur - liabDur) * 0.01;
+    return params.bondDuration * (hcBond[t] + bondHoldings - expBond[t]) * 0.01;
   });
 
   return {
