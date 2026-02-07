@@ -149,6 +149,9 @@ class LDIStrategy:
                     stock_weight=state.target_stock,
                     bond_weight=state.target_bond,
                     cash_weight=state.target_cash,
+                    target_fin_stock=0.0,
+                    target_fin_bond=0.0,
+                    target_fin_cash=0.0,
                 )
             if total_cons > state.financial_wealth:
                 total_cons = state.financial_wealth
@@ -181,6 +184,9 @@ class LDIStrategy:
             stock_weight=w_s,
             bond_weight=w_b,
             cash_weight=w_c,
+            target_fin_stock=target_fin_stock,
+            target_fin_bond=target_fin_bond,
+            target_fin_cash=target_fin_cash,
         )
 
 
@@ -354,6 +360,9 @@ class FixedConsumptionStrategy:
                     stock_weight=state.target_stock,
                     bond_weight=state.target_bond,
                     cash_weight=state.target_cash,
+                    target_fin_stock=0.0,
+                    target_fin_bond=0.0,
+                    target_fin_cash=0.0,
                 )
 
             if fw < self._retirement_consumption:
@@ -383,4 +392,7 @@ class FixedConsumptionStrategy:
             stock_weight=w_s,
             bond_weight=w_b,
             cash_weight=w_c,
+            target_fin_stock=target_fin_stock,
+            target_fin_bond=target_fin_bond,
+            target_fin_cash=target_fin_cash,
         )

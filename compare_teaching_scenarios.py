@@ -259,6 +259,48 @@ def _plot_pv_consumption(
     ax.legend(loc='upper right', fontsize=9)
 
 
+def _plot_consumption(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot consumption fan charts (LDI vs RoT overlaid)."""
+    x = np.arange(len(result.ages))
+    plot_fan_chart(ax, result.ldi_consumption_paths, x, color=COLOR_LDI, label_prefix='LDI')
+    plot_fan_chart(ax, result.rot_consumption_paths, x, color=COLOR_ROT, label_prefix='RoT')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Annual Consumption (LDI vs RoT)')
+    ax.legend(loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_dollar_positions(
+    ax: plt.Axes,
+    result: 'ScenarioResult',
+    retirement_x: int,
+) -> None:
+    """Plot unconstrained target dollar positions fan charts (LDI only)."""
+    x = np.arange(len(result.ages))
+
+    COLOR_STOCK = '#F4A261'   # Coral
+    COLOR_BOND = '#9b59b6'    # Purple
+    COLOR_CASH = '#f1c40f'    # Yellow
+
+    plot_fan_chart(ax, result.ldi_target_fin_stock_paths, x, color=COLOR_STOCK, label_prefix='Stocks')
+    plot_fan_chart(ax, result.ldi_target_fin_bond_paths, x, color=COLOR_BOND, label_prefix='Bonds')
+    plot_fan_chart(ax, result.ldi_target_fin_cash_paths, x, color=COLOR_CASH, label_prefix='Cash')
+    ax.axvline(x=retirement_x, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel('Years from Career Start')
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('LDI Target Dollar Positions ($k)')
+    ax.legend(loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
 def _plot_net_fi_pv(
     ax: plt.Axes,
     result: 'ScenarioResult',
@@ -360,6 +402,8 @@ def _save_scenario_panels(
         ('pv_consumption', lambda ax: _plot_pv_consumption(ax, result)),
         ('net_fi_pv', lambda ax: _plot_net_fi_pv(ax, result, retirement_x)),
         ('dv01', lambda ax: _plot_dv01(ax, result, retirement_x)),
+        ('consumption', lambda ax: _plot_consumption(ax, result, retirement_x)),
+        ('dollar_positions', lambda ax: _plot_dollar_positions(ax, result, retirement_x)),
     ]
 
     for name_suffix, plot_fn in panels:
@@ -575,6 +619,11 @@ class ScenarioResult:
     rot_stock_weight_paths: np.ndarray
     rot_bond_weight_paths: np.ndarray
 
+    # Unconstrained target dollar positions (LDI only)
+    ldi_target_fin_stock_paths: np.ndarray
+    ldi_target_fin_bond_paths: np.ndarray
+    ldi_target_fin_cash_paths: np.ndarray
+
     # Market conditions
     rate_paths: np.ndarray
     stock_return_paths: np.ndarray
@@ -704,6 +753,9 @@ def run_teaching_scenario(
         ldi_pv_consumption=ldi_pv_consumption,
         ldi_stock_weight_paths=ldi_result.stock_weight,
         ldi_bond_weight_paths=ldi_result.bond_weight,
+        ldi_target_fin_stock_paths=ldi_result.target_fin_stock,
+        ldi_target_fin_bond_paths=ldi_result.target_fin_bond,
+        ldi_target_fin_cash_paths=ldi_result.target_fin_cash,
         # RoT
         rot_financial_wealth_paths=rot_result.financial_wealth,
         rot_consumption_paths=rot_result.consumption,
@@ -751,7 +803,7 @@ def run_all_teaching_scenarios(
     if params is None:
         params = LifecycleParams()
     if econ_params is None:
-        econ_params = EconomicParams(max_duration=20.0)
+        econ_params = EconomicParams()
     if beta_values is None:
         beta_values = [0.0, DEFAULT_RISKY_BETA]
 
@@ -838,10 +890,10 @@ def create_scenario_figure(
     result: ScenarioResult,
     config: ScenarioConfig,
     params: LifecycleParams,
-    figsize: Tuple[int, int] = (14, 18),
+    figsize: Tuple[int, int] = (14, 22),
 ) -> Tuple[plt.Figure, np.ndarray]:
     """
-    Create a 5x2 panel figure for a single scenario.
+    Create a 6x2 panel figure for a single scenario.
 
     Panels:
     - (0,0): Cumulative Stock Returns fan chart
@@ -854,8 +906,9 @@ def create_scenario_figure(
     - (3,1): PV Consumption distribution (Realized Rates)
     - (4,0): Net Fixed Income PV (hedging analysis)
     - (4,1): Dollar Duration Gap (hedging analysis)
+    - (5,0): Consumption fan charts (LDI vs RoT overlaid)
     """
-    fig, axes = plt.subplots(5, 2, figsize=figsize)
+    fig, axes = plt.subplots(6, 2, figsize=figsize)
     beta_label = f"(β={result.stock_beta})" if result.stock_beta > 0 else "(β=0, Bond-like HC)"
     fig.suptitle(f'{config.title} {beta_label}\n{config.description}', fontsize=14, fontweight='bold')
 
@@ -872,6 +925,8 @@ def create_scenario_figure(
     _plot_pv_consumption(axes[3, 1], result)
     _plot_net_fi_pv(axes[4, 0], result, retirement_x)
     _plot_dv01(axes[4, 1], result, retirement_x)
+    _plot_consumption(axes[5, 0], result, retirement_x)
+    _plot_dollar_positions(axes[5, 1], result, retirement_x)
 
     plt.tight_layout()
     return fig, axes
@@ -1129,7 +1184,7 @@ def generate_teaching_scenarios_pdf(
 
     print("Running teaching scenario simulations...")
     params = LifecycleParams(consumption_boost=0.0)
-    econ_params = EconomicParams(max_duration=20.0)
+    econ_params = EconomicParams()
 
     results = run_all_teaching_scenarios(
         params=params,

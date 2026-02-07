@@ -239,6 +239,11 @@ class SimulationResult:
     # Earnings (after wage shocks applied, if any)
     earnings: np.ndarray = None
 
+    # Unconstrained target dollar positions (optional, populated for LDI-type strategies)
+    target_fin_stock: np.ndarray = None
+    target_fin_bond: np.ndarray = None
+    target_fin_cash: np.ndarray = None
+
     @property
     def n_sims(self) -> int:
         """Number of simulations (1 for deterministic, N for Monte Carlo)."""
@@ -421,6 +426,11 @@ class StrategyActions:
     stock_weight: float
     bond_weight: float
     cash_weight: float
+
+    # Unconstrained target dollar positions (optional, set by LDI-type strategies)
+    target_fin_stock: float = None
+    target_fin_bond: float = None
+    target_fin_cash: float = None
 
 
 @runtime_checkable

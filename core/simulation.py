@@ -404,6 +404,10 @@ def simulate_with_strategy(
     bond_weight_paths = np.zeros((n_sims, total_years))
     cash_weight_paths = np.zeros((n_sims, total_years))
 
+    target_fin_stock_paths = np.zeros((n_sims, total_years))
+    target_fin_bond_paths = np.zeros((n_sims, total_years))
+    target_fin_cash_paths = np.zeros((n_sims, total_years))
+
     default_flags = np.zeros(n_sims, dtype=bool)
     default_ages = np.full(n_sims, np.nan)
 
@@ -540,6 +544,11 @@ def simulate_with_strategy(
             bond_weight_paths[sim, t] = actions.bond_weight
             cash_weight_paths[sim, t] = actions.cash_weight
 
+            if actions.target_fin_stock is not None:
+                target_fin_stock_paths[sim, t] = actions.target_fin_stock
+                target_fin_bond_paths[sim, t] = actions.target_fin_bond
+                target_fin_cash_paths[sim, t] = actions.target_fin_cash
+
             # Evolve wealth to next period
             if t < total_years - 1 and not defaulted:
                 stock_ret = stock_return_paths[sim, t]
@@ -563,6 +572,9 @@ def simulate_with_strategy(
     # Get strategy name from class name
     strategy_name = type(strategy).__name__
 
+    # Check if any target_fin values were set (LDI-type strategies)
+    has_target_fin = np.any(target_fin_stock_paths != 0) or np.any(target_fin_bond_paths != 0)
+
     # For single simulation, squeeze arrays to 1D for cleaner API
     if n_sims == 1:
         return SimulationResult(
@@ -582,6 +594,9 @@ def simulate_with_strategy(
             default_age=default_ages[0],
             final_wealth=final_wealth[0],
             description=description,
+            target_fin_stock=target_fin_stock_paths.squeeze(0) if has_target_fin else None,
+            target_fin_bond=target_fin_bond_paths.squeeze(0) if has_target_fin else None,
+            target_fin_cash=target_fin_cash_paths.squeeze(0) if has_target_fin else None,
         )
 
     return SimulationResult(
@@ -601,6 +616,9 @@ def simulate_with_strategy(
         default_age=default_ages,
         final_wealth=final_wealth,
         description=description,
+        target_fin_stock=target_fin_stock_paths if has_target_fin else None,
+        target_fin_bond=target_fin_bond_paths if has_target_fin else None,
+        target_fin_cash=target_fin_cash_paths if has_target_fin else None,
     )
 
 
@@ -615,6 +633,7 @@ def simulate_paths(
     stock_shocks: np.ndarray,
     initial_rate: float = None,
     use_dynamic_revaluation: bool = True,
+    use_geometric_returns: bool = False,
 ) -> dict:
     """
     Unified simulation engine that takes epsilon shocks as input.
@@ -631,6 +650,11 @@ def simulate_paths(
         initial_rate: Starting interest rate (defaults to r_bar)
         use_dynamic_revaluation: If True, revalue PV(expenses) and HC using
             current simulated rate. If False, use r_bar throughout.
+        use_geometric_returns: If True, use geometric (median) returns for
+            wealth evolution: E[R_p] - 0.5*Var(R_p). For deterministic
+            zero-shock paths this makes the path a true median rather than
+            an expected-value trajectory. Has no effect on MC paths (which
+            use realized stochastic returns).
 
     Returns:
         Dictionary containing all simulation outputs:

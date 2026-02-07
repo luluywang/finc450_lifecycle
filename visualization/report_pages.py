@@ -233,6 +233,20 @@ def _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement
     ax.grid(True, alpha=0.3)
 
 
+def _plot_to_ax_target_dollar_allocations(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot target dollar allocations in the financial portfolio (unconstrained MV-optimal)."""
+    ax.plot(x, result.target_fin_stocks, color=COLORS['stock'], linewidth=2, label='Stocks')
+    ax.plot(x, result.target_fin_bonds, color=COLORS['bond'], linewidth=2, label='Bonds')
+    ax.plot(x, result.target_fin_cash, color=COLORS['cash'], linewidth=2, label='Cash')
+    ax.plot(x, result.financial_wealth, color='black', linewidth=1.5, linestyle='--', label='Financial Wealth')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('$ (000s)')
+    ax.set_title('Target Financial Portfolio ($k)', fontweight='bold')
+    ax.legend(loc='upper left', fontsize=8)
+
+
 def _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x):
     """Plot DV01 - dollar gain in net worth per 1pp rate drop.
 
@@ -303,7 +317,7 @@ def create_base_case_page(
     - Row 3: Decompositions (HC Decomposition, Expense Decomposition)
     - Row 4: Net Position & Consumption (Net HC minus Expenses, Consumption Path)
     - Row 5: Portfolio & Hedging (Portfolio Allocation, Net FI PV)
-    - Row 6: Interest Rate Sensitivity (DV01)
+    - Row 6: Interest Rate Sensitivity & Dollar Allocations (DV01, Target Dollar Portfolio)
 
     Single Code Path: This function handles both PDF grid and PNG export.
     Each panel is drawn using a dedicated _plot_to_ax_* function.
@@ -383,9 +397,11 @@ def create_base_case_page(
         (5, 1, lambda ax: _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
          "net_fi_pv", False, True),
 
-        # Row 6: Interest Rate Sensitivity
+        # Row 6: Interest Rate Sensitivity & Dollar Allocations
         (6, 0, lambda ax: _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
          "dv01", False, True),
+        (6, 1, lambda ax: _plot_to_ax_target_dollar_allocations(ax, x, result, COLORS, xlabel, retirement_x),
+         "target_dollar_allocations", False, False),
     ]
 
     # =========================================================================
