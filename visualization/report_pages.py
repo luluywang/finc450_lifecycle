@@ -277,6 +277,69 @@ def _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x):
     ax.grid(True, alpha=0.3)
 
 
+def _plot_to_ax_cumulative_stock_returns(ax, x, result, econ_params, COLORS, xlabel, retirement_x):
+    """Plot cumulative stock returns: geometric (median) vs arithmetic (expected).
+
+    With zero shocks, stored stock_returns = r + mu_excess (arithmetic).
+    Geometric (median) return = r + mu_excess - 0.5*sigma_s^2.
+    Showing both makes the Jensen's correction visible.
+    """
+    if result.stock_returns is None:
+        ax.text(0.5, 0.5, 'No stock return data', ha='center', va='center',
+                transform=ax.transAxes)
+        return
+
+    # interest_rates has n_periods+1 entries (includes initial rate);
+    # use first n_periods to align with x-axis and stock_returns
+    n = len(x)
+    rates = result.interest_rates[:n]
+    sigma_s = econ_params.sigma_s
+    mu_excess = econ_params.mu_excess
+
+    # Arithmetic (expected) cumulative return
+    arithmetic_returns = rates + mu_excess
+    cum_arithmetic = np.cumprod(1 + arithmetic_returns)
+
+    # Geometric (median) cumulative return
+    geometric_returns = rates + mu_excess - 0.5 * sigma_s**2
+    cum_geometric = np.cumprod(1 + geometric_returns)
+
+    correction_bps = 0.5 * sigma_s**2 * 100
+    ax.plot(x, cum_arithmetic, color=COLORS['stock'], linewidth=2,
+            label=f'Expected (arithmetic): r+\u03bc = {arithmetic_returns[0]*100:.2f}%/yr')
+    ax.plot(x, cum_geometric, color=COLORS['bond'], linewidth=2, linestyle='--',
+            label=f'Median (geometric): r+\u03bc\u2212\u00bd\u03c3\u00b2 = {geometric_returns[0]*100:.2f}%/yr')
+
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Cumulative Return (starting at 1.0)')
+    ax.set_title(f'Cumulative Stock Returns (Jensen\'s correction = {correction_bps:.1f}pp/yr)',
+                 fontweight='bold')
+    ax.set_yscale('log')
+    ax.legend(loc='upper left', fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+
+def _plot_to_ax_interest_rate_path(ax, x, result, COLORS, xlabel, retirement_x):
+    """Plot the interest rate path used in the median path simulation."""
+    if result.interest_rates is None:
+        ax.text(0.5, 0.5, 'No rate data', ha='center', va='center',
+                transform=ax.transAxes)
+        return
+
+    # interest_rates has n_periods+1 entries; use first n_periods for x alignment
+    n = len(x)
+    rates_pct = result.interest_rates[:n] * 100
+    ax.plot(x, rates_pct, color='#3498db', linewidth=2,
+            label=f'r = {rates_pct[0]:.2f}%')
+    ax.axvline(x=retirement_x, color='gray', linestyle=':', alpha=0.5)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Interest Rate (%)')
+    ax.set_title('Interest Rate Path (Median/Zero-Shock)', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+
 def _export_panel_as_png(plot_fn, panel_name, output_dir, figsize=(10, 6)):
     """Create a standalone figure, call plot function, save as PNG, close figure.
 
@@ -310,7 +373,7 @@ def create_base_case_page(
     """
     Create Page 1: BASE CASE (Deterministic Median Path).
 
-    Layout with 7 sections, 13 charts total (7x2 grid):
+    Layout with 8 sections, 16 charts total (8x2 grid):
     - Row 0: Assumptions (Income & Expenses, Earnings vs Consumption)
     - Row 1: Forward-Looking Values (Present Values, Durations)
     - Row 2: Wealth Overview (HC vs FW, Net Wealth)
@@ -318,6 +381,7 @@ def create_base_case_page(
     - Row 4: Net Position & Consumption (Net HC minus Expenses, Consumption Path)
     - Row 5: Portfolio & Hedging (Portfolio Allocation, Net FI PV)
     - Row 6: Interest Rate Sensitivity & Dollar Allocations (DV01, Target Dollar Portfolio)
+    - Row 7: Market Conditions (Cumulative Stock Returns, Interest Rate Path)
 
     Single Code Path: This function handles both PDF grid and PNG export.
     Each panel is drawn using a dedicated _plot_to_ax_* function.
@@ -336,9 +400,9 @@ def create_base_case_page(
     Returns:
         matplotlib Figure
     """
-    # Create the multi-panel figure with 7x2 grid
+    # Create the multi-panel figure with 8x2 grid
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(7, 2, hspace=0.35, wspace=0.25)
+    gs = fig.add_gridspec(8, 2, hspace=0.35, wspace=0.25)
 
     # Compute x-axis values
     if use_years:
@@ -402,6 +466,12 @@ def create_base_case_page(
          "dv01", False, True),
         (6, 1, lambda ax: _plot_to_ax_target_dollar_allocations(ax, x, result, COLORS, xlabel, retirement_x),
          "target_dollar_allocations", False, False),
+
+        # Row 7: Market Conditions (Jensen's correction verification)
+        (7, 0, lambda ax: _plot_to_ax_cumulative_stock_returns(ax, x, result, econ_params, COLORS, xlabel, retirement_x),
+         "cumulative_stock_returns", True, True),
+        (7, 1, lambda ax: _plot_to_ax_interest_rate_path(ax, x, result, COLORS, xlabel, retirement_x),
+         "interest_rate_path", True, False),
     ]
 
     # =========================================================================

@@ -153,6 +153,10 @@ class LifecycleResult:
     total_consumption: np.ndarray       # Subsistence + variable
     consumption_share_of_fw: np.ndarray # Total consumption / financial wealth
 
+    # Market conditions (optional, from simulation)
+    interest_rates: np.ndarray = None   # Rate path used in simulation
+    stock_returns: np.ndarray = None    # Stock returns (arithmetic, before Jensen correction)
+
 
 @dataclass
 class MonteCarloResult:

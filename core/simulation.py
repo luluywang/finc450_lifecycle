@@ -908,6 +908,8 @@ def _sim_result_to_lifecycle_result(
         variable_consumption=result.variable_consumption,
         total_consumption=result.consumption,
         consumption_share_of_fw=consumption_share_of_fw,
+        interest_rates=result.interest_rates,
+        stock_returns=result.stock_returns,
     )
 
 

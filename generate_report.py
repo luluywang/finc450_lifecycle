@@ -342,7 +342,7 @@ def generate_lifecycle_pdf(
                 result=result,
                 params=beta_params,
                 econ_params=econ_params,
-                figsize=(20, 28),  # Taller for 6x2 grid
+                figsize=(20, 32),  # Taller for 8x2 grid
                 use_years=use_years,
                 export_png=export_png,
                 png_output_dir=png_output_dir,

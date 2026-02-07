@@ -118,12 +118,15 @@ class LDIStrategy:
         variable = max(0, consumption_rate * state.net_worth)
         total_cons = subsistence + variable
 
-        # Apply constraints: can't consume more than financial wealth
-        if total_cons > fw:
-            total_cons = fw
-            variable = max(0, fw - subsistence)
+        # Apply constraints: can't consume more than available resources
+        # Budget: fw[t+1] = fw*(1+r) + earnings - consumption, so solvency
+        # requires consumption <= fw + earnings (ignoring investment return)
+        available = fw + state.earnings
+        if total_cons > available:
+            total_cons = available
+            variable = max(0, available - subsistence)
             if variable < 0:
-                subsistence = fw
+                subsistence = available
                 variable = 0.0
 
         return StrategyActions(
