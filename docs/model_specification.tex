@@ -17,6 +17,8 @@
 
 This document describes the lifecycle investment model with \textbf{random walk interest rates} ($\phi = 1$). Under this specification, rates follow a pure random walk with no mean reversion.
 
+\textbf{Notation.} The model uses continuous compounding throughout. Zero-coupon bond prices, present values, and durations are computed using exponential discounting $e^{-\tau r}$ rather than discrete discounting $(1+r)^{-\tau}$.
+
 \subsection{Interest Rate Process (Random Walk)}
 
 The short-term interest rate evolves as:
@@ -28,10 +30,12 @@ where:
     \item $\sigma_r$ = interest rate volatility
     \item No drift term (expected change is zero)
     \item No mean reversion ($\phi = 1$ implies persistence = 1)
-    \item Floor at $r_{\text{floor}}$ to prevent negative rates
+    \item Rates are unconstrained (no floor or ceiling)
 \end{itemize}
 
-\textbf{Key implication:} With $\phi = 1$, the effective Macaulay duration equals maturity, and bond pricing simplifies to standard discounting. Modified duration is then maturity divided by $(1+r)$.
+\textbf{General AR(1) case.} The code supports mean-reverting rates $r_{t+1} = \bar{r} + \phi(r_t - \bar{r}) + \sigma_r \varepsilon^r_{t+1}$ with $0 < \phi < 1$, but the default is $\phi = 1$.
+
+\textbf{Key implication:} With $\phi = 1$, the effective duration of a $\tau$-year zero-coupon bond equals $\tau$ (maturity), and the zero-coupon price simplifies to $P(\tau) = e^{-\tau r}$.
 
 \subsection{Stock Returns}
 
@@ -43,53 +47,104 @@ where:
 \begin{itemize}
     \item $\mu_s$ = equity risk premium (excess return over short rate)
     \item $\sigma_s$ = stock volatility
-    \item $\text{Corr}(\varepsilon^r_{t+1}, \varepsilon^s_{t+1}) = \rho$ (typically small or zero)
+    \item $\text{Corr}(\varepsilon^r_{t+1}, \varepsilon^s_{t+1}) = \rho$ (default 0)
 \end{itemize}
 
-\subsection{Bond Returns (Modified Duration Approximation)}
+\subsection{Bond Returns (Duration Approximation)}
 
-For a bond with modified duration $D^{\text{mod}}$, the return from $t$ to $t+1$ is:
+For a bond portfolio with duration $D$, the return from $t$ to $t+1$ is:
 \begin{equation}
-R^b_{t+1} \approx r_t + \mu_b - D^{\text{mod}} \cdot \Delta r_{t+1}
+R^b_{t+1} \approx r_t + \mu_b - D \cdot \Delta r_{t+1}
 \end{equation}
 where:
 \begin{itemize}
-    \item $D^{\text{mod}}$ = modified duration (not Macaulay duration)
+    \item $D$ = duration of the bond portfolio (a fixed parameter)
     \item $\mu_b$ = bond risk premium (term spread over short rate)
     \item $\Delta r_{t+1} = r_{t+1} - r_t = \sigma_r \varepsilon^r_{t+1}$
 \end{itemize}
 
 Substituting the rate change:
 \begin{equation}
-R^b_{t+1} \approx r_t + \mu_b - D^{\text{mod}} \cdot \sigma_r \varepsilon^r_{t+1}
+R^b_{t+1} \approx r_t + \mu_b - D \cdot \sigma_r \varepsilon^r_{t+1}
 \end{equation}
 
-\textbf{Note:} Modified duration $D^{\text{mod}} = D^{\text{Mac}}/(1+r)$ gives the percentage price change per unit change in yield. Using modified duration directly in the return equation is correct; using Macaulay duration would overstate interest rate sensitivity.
-
-\textbf{Intuition:} When rates rise ($\varepsilon^r_{t+1} > 0$), bond prices fall, generating a negative capital gain proportional to modified duration.
+\textbf{Intuition:} When rates rise ($\varepsilon^r_{t+1} > 0$), bond prices fall, generating a negative capital gain proportional to duration.
 
 \textbf{Bond risk premium.} The bond excess return is parameterized via the Bond Sharpe ratio $\text{SR}_b$:
 \begin{equation}
-\mu_b = \text{SR}_b \cdot D^{\text{mod}} \cdot \sigma_r
+\mu_b = \text{SR}_b \cdot D \cdot \sigma_r
 \end{equation}
-The bond return volatility is $\sigma_b = D^{\text{mod}} \cdot \sigma_r$, so $\mu_b = \text{SR}_b \cdot \sigma_b$. The default is $\text{SR}_b = 0$ (expectations hypothesis: no term premium).
+The bond return volatility is $\sigma_b = D \cdot \sigma_r$, so $\mu_b = \text{SR}_b \cdot \sigma_b$. The default is $\text{SR}_b = 0$ (expectations hypothesis: no term premium).
 
 %----------------------------------------------------------------------
-\section{Portfolio Allocation Rule}
+\section{Earnings and Expense Profiles}
 %----------------------------------------------------------------------
 
-\subsection{Human Capital}
+\subsection{Earnings Profile}
 
-Human Capital (HC) is the present value of future labor earnings, discounted at the current rate:
+Earnings follow a hump-shaped profile over the working life ($t_0 \leq t < T_R$):
 \begin{equation}
-HC_t = \sum_{s=t}^{T_R-1} \frac{Y_s}{(1+r_t)^{s-t}}
+Y_t = \begin{cases}
+Y_0 (1 + g_Y)^{t - t_0} & \text{if } t \leq t_{\text{peak}} \\
+Y_{\text{peak}} (1 - d_Y)^{t - t_{\text{peak}}} & \text{if } t > t_{\text{peak}}
+\end{cases}
 \end{equation}
 where:
 \begin{itemize}
-    \item $Y_s$ = earnings at age $s$
-    \item $T_R$ = retirement age
-    \item $r_t$ = current interest rate
+    \item $Y_0$ = initial annual earnings
+    \item $g_Y$ = real earnings growth rate (default 0, flat)
+    \item $t_{\text{peak}}$ = age at peak earnings (default = $T_R$, so earnings are flat)
+    \item $d_Y$ = decline rate after peak (default 0)
 \end{itemize}
+
+After retirement ($t \geq T_R$): $Y_t = 0$.
+
+\subsection{Risky Human Capital (Wage Shocks)}
+\label{sec:wage_shocks}
+
+When $\beta_{HC} > 0$, earnings are subject to permanent shocks correlated with stock returns. The log wage level follows:
+\begin{equation}
+\ln W_t = \ln W_{t-1} + \beta_{HC} \cdot \sigma_s \cdot \varepsilon^s_{t-1}
+\end{equation}
+where $W_0 = 1$ (no initial shock). Actual earnings are:
+\begin{equation}
+\tilde{Y}_t = Y_t \cdot W_t = Y_t \cdot \exp\!\left(\sum_{k=0}^{t-1} \beta_{HC} \cdot \sigma_s \cdot \varepsilon^s_k\right)
+\end{equation}
+
+This captures the idea that human capital has systematic risk: when stock markets do well, wages tend to rise, and vice versa. The shock is permanent (a random walk in log wages), creating path dependence in lifetime earnings.
+
+\subsection{Expense Profile}
+
+Subsistence expenses are:
+\begin{equation}
+E_t = \begin{cases}
+E_0 (1 + g_E)^{t - t_0} & \text{if } t < T_R \\
+E_R & \text{if } t \geq T_R
+\end{cases}
+\end{equation}
+where $E_0$ = base working expenses, $g_E$ = real expense growth (default 0), and $E_R$ = fixed retirement expenses.
+
+%----------------------------------------------------------------------
+\section{Present Values and Durations}
+%----------------------------------------------------------------------
+
+\subsection{Zero-Coupon Bond Pricing}
+
+Under the term structure model with $\phi = 1$, the price of a $\tau$-year zero-coupon bond is:
+\begin{equation}
+P(\tau, r_t) = e^{-\tau r_t}
+\end{equation}
+This is standard continuous-time discounting at the current short rate.
+
+\subsection{Human Capital}
+
+Human Capital (HC) is the present value of future labor earnings, discounted at the CAPM-adjusted rate:
+\begin{equation}
+HC_t = \sum_{s=t}^{T_R-1} \tilde{Y}_s \cdot e^{-(s-t)(r_t + \beta_{HC} \mu_s)}
+\end{equation}
+where $\beta_{HC} \mu_s$ is the CAPM spread: human capital with stock-market exposure commands a higher discount rate, reducing its present value.
+
+When $\beta_{HC} = 0$ (riskless HC), this simplifies to $HC_t = \sum_{s=t}^{T_R-1} Y_s \, e^{-(s-t) r_t}$.
 
 After retirement ($t \geq T_R$): $HC_t = 0$.
 
@@ -97,29 +152,39 @@ After retirement ($t \geq T_R$): $HC_t = 0$.
 
 The present value of future subsistence expenses:
 \begin{equation}
-L_t = PV_t(\text{expenses}) = \sum_{s=t}^{T-1} \frac{E_s}{(1+r_t)^{s-t}}
+L_t = \sum_{s=t}^{T-1} E_s \cdot e^{-(s-t) r_t}
 \end{equation}
-where:
-\begin{itemize}
-    \item $E_s$ = subsistence expenses at age $s$
-    \item $T$ = end age (death)
-    \item $r_t$ = current interest rate
-\end{itemize}
 
-\subsection{Total Wealth (Net Worth)}
+\subsection{Duration of HC and Expenses}
 
-Total wealth is defined as assets minus liabilities:
+Duration measures the sensitivity of present value to changes in the short rate. With $\phi = 1$, the duration of a cashflow stream is the present-value-weighted average maturity:
 \begin{equation}
-TW_t = FW_t + HC_t - L_t
+D^{HC}_t = \frac{\sum_{s=t}^{T_R-1} (s-t) \cdot \tilde{Y}_s \cdot e^{-(s-t)(r_t + \beta_{HC} \mu_s)}}{HC_t}
+\end{equation}
+\begin{equation}
+D^{L}_t = \frac{\sum_{s=t}^{T-1} (s-t) \cdot E_s \cdot e^{-(s-t) r_t}}{L_t}
+\end{equation}
+
+\textbf{Duration cap.} An optional parameter $D_{\max}$ caps computed durations: $D \leftarrow \min(D, D_{\max})$. This prevents bond-equivalent fractions from exceeding 1 when HC or expense duration exceeds bond duration.
+
+%----------------------------------------------------------------------
+\section{Portfolio Allocation Rule}
+%----------------------------------------------------------------------
+
+\subsection{Net Worth}
+
+Net worth is defined as assets minus liabilities:
+\begin{equation}
+NW_t = FW_t + HC_t - L_t
 \end{equation}
 where:
 \begin{itemize}
     \item $FW_t$ = Financial Wealth (liquid portfolio)
-    \item $HC_t$ = Human Capital (implicit bond-like asset)
+    \item $HC_t$ = Human Capital (implicit asset)
     \item $L_t$ = Present value of future expenses (liability)
 \end{itemize}
 
-This is equivalent to \textbf{net worth}---the amount available for discretionary consumption beyond subsistence.
+This is the amount available for discretionary consumption beyond subsistence.
 
 \subsection{Target Total Allocation (Mean-Variance Optimization)}
 
@@ -133,15 +198,15 @@ The optimal portfolio weights from mean-variance optimization:
 \boldsymbol{\mu} = \begin{pmatrix} \mu_s \\ \mu_b \end{pmatrix}
 \end{equation}
 
-The covariance matrix of risky asset returns uses $\sigma_b = D^{\text{mod}} \cdot \sigma_r$ for bond volatility:
+The covariance matrix of risky asset returns uses $\sigma_b = D \cdot \sigma_r$ for bond volatility:
 \begin{equation}
 \Sigma = \begin{pmatrix}
-\sigma_s^2 & -D^{\text{mod}} \sigma_s \sigma_r \rho \\
--D^{\text{mod}} \sigma_s \sigma_r \rho & (D^{\text{mod}} \sigma_r)^2
+\sigma_s^2 & -D \, \sigma_s \, \sigma_r \, \rho \\
+-D \, \sigma_s \, \sigma_r \, \rho & (D \, \sigma_r)^2
 \end{pmatrix}
 \end{equation}
 
-The off-diagonal term reflects $\text{Cov}(R^s_{t+1}, R^b_{t+1}) = -D^{\text{mod}} \sigma_s \sigma_r \rho$: the negative sign arises because rising rates ($\varepsilon^r_{t+1} > 0$) hurt bond returns.
+The off-diagonal term reflects $\text{Cov}(R^s, R^b) = -D \, \sigma_s \, \sigma_r \, \rho$: the negative sign arises because rising rates hurt bond returns.
 
 Solving $\mathbf{w}^* = \frac{1}{\gamma} \Sigma^{-1} \boldsymbol{\mu}$ gives the optimal stock and bond weights $(w^*_s, w^*_b)$, with cash as the residual:
 \begin{equation}
@@ -150,53 +215,37 @@ w^*_c = 1 - w^*_s - w^*_b
 
 These MV weights are used \emph{unconstrained} as target allocations. Constraints are applied only to the final dollar-level portfolio holdings (see Section~\ref{sec:weight_truncation}).
 
-\subsection{Modified Duration of Human Capital and Expenses}
-
-HC and expenses have interest rate sensitivity (duration). We use \textbf{modified duration} throughout for consistency with the bond return approximation.
-
-\textbf{Modified Duration of Human Capital:}
-\begin{equation}
-D^{HC,\text{mod}}_t = \frac{1}{1+r_t} \cdot \frac{\sum_{s=t}^{T_R-1} (s-t) \cdot \frac{Y_s}{(1+r_t)^{s-t}}}{HC_t}
-\end{equation}
-
-\textbf{Modified Duration of Expenses:}
-\begin{equation}
-D^{L,\text{mod}}_t = \frac{1}{1+r_t} \cdot \frac{\sum_{s=t}^{T-1} (s-t) \cdot \frac{E_s}{(1+r_t)^{s-t}}}{L_t}
-\end{equation}
-
-\textbf{Note:} The summation term is the Macaulay duration (weighted average time to cash flows). Dividing by $(1+r_t)$ converts to modified duration, which measures the percentage change in present value for a unit change in yield.
-
 \subsection{Human Capital Decomposition}
 
-Assuming HC is $\beta_{HC}$ stock-like (correlated with market) and the rest is bond-like:
+Assuming HC has stock exposure $\beta_{HC}$ and the rest is bond-like:
 \begin{align}
 HC^{\text{stock}} &= \beta_{HC} \cdot HC_t \\
-HC^{\text{bond}} &= (1-\beta_{HC}) \cdot HC_t \cdot \frac{D^{HC,\text{mod}}_t}{D^{\text{mod}}} \\
-HC^{\text{cash}} &= (1-\beta_{HC}) \cdot HC_t \cdot \left(1 - \frac{D^{HC,\text{mod}}_t}{D^{\text{mod}}}\right)
+HC^{\text{bond}} &= (1-\beta_{HC}) \cdot HC_t \cdot \frac{D^{HC}_t}{D} \\
+HC^{\text{cash}} &= (1-\beta_{HC}) \cdot HC_t \cdot \left(1 - \frac{D^{HC}_t}{D}\right)
 \end{align}
-where $D^{\text{mod}}$ = modified duration of bonds in the financial portfolio.
+where $D$ = duration of bonds in the financial portfolio. The ratio $D^{HC}_t / D$ determines how much of the non-stock HC is ``bond-equivalent'' vs ``cash-equivalent'' based on relative durations.
 
 \subsection{Expense Liability Decomposition}
 
-The expense liability is decomposed by modified duration:
+The expense liability is decomposed by duration matching:
 \begin{align}
-L^{\text{bond}} &= L_t \cdot \frac{D^{L,\text{mod}}_t}{D^{\text{mod}}} \\
-L^{\text{cash}} &= L_t \cdot \left(1 - \frac{D^{L,\text{mod}}_t}{D^{\text{mod}}}\right)
+L^{\text{bond}} &= L_t \cdot \frac{D^{L}_t}{D} \\
+L^{\text{cash}} &= L_t \cdot \left(1 - \frac{D^{L}_t}{D}\right)
 \end{align}
 
 \subsection{Target Financial Holdings (Surplus Optimization)}
 
 We define \textbf{surplus} as the positive part of net worth:
 \begin{equation}
-S_t = \max(0,\; TW_t) = \max(0,\; FW_t + HC_t - L_t)
+S_t = \max(0,\; NW_t) = \max(0,\; FW_t + HC_t - L_t)
 \end{equation}
 
-The target allocation is applied to surplus rather than raw net worth. This prevents the optimizer from taking leveraged bets when the agent is ``underwater'' ($TW < 0$).
+The target allocation is applied to surplus rather than raw net worth. This prevents the optimizer from taking leveraged bets when the agent is ``underwater'' ($NW < 0$).
 
 \begin{align}
-\text{target\_fin\_stock} &= w^*_{\text{stock}} \cdot S_t - HC^{\text{stock}} \\
-\text{target\_fin\_bond} &= w^*_{\text{bond}} \cdot S_t - HC^{\text{bond}} + L^{\text{bond}} \\
-\text{target\_fin\_cash} &= w^*_{\text{cash}} \cdot S_t - HC^{\text{cash}} + L^{\text{cash}}
+\text{target\_fin\_stock} &= w^*_s \cdot S_t - HC^{\text{stock}} \\
+\text{target\_fin\_bond} &= w^*_b \cdot S_t - HC^{\text{bond}} + L^{\text{bond}} \\
+\text{target\_fin\_cash} &= w^*_c \cdot S_t - HC^{\text{cash}} + L^{\text{cash}}
 \end{align}
 
 \textbf{Derivation:} The right-hand side represents the target dollar position in each asset class:
@@ -206,31 +255,41 @@ The target allocation is applied to surplus rather than raw net worth. This prev
     \item $+L^{\text{bond/cash}}$: add positions needed to hedge the expense liability
 \end{itemize}
 
-\textbf{When $TW_t < 0$} (net worth is negative): surplus $S_t = 0$, so the stock target is $-HC^{\text{stock}} \leq 0$. After clipping negatives to zero (Section~\ref{sec:weight_truncation}), the financial portfolio holds zero stocks and allocates entirely to bonds and cash to hedge the expense liability. This is the conservative ``underwater'' behavior: the agent cannot take equity risk until net worth recovers.
+\textbf{When $NW_t < 0$} (net worth is negative): surplus $S_t = 0$, so the stock target is $-HC^{\text{stock}} \leq 0$. After clipping negatives to zero (Section~\ref{sec:weight_truncation}), the financial portfolio holds zero stocks and allocates entirely to bonds and cash to hedge the expense liability. This is the conservative ``underwater'' behavior: the agent cannot take equity risk until net worth recovers.
 
-\subsection{Weight Truncation (No Leverage Constraint)}
+\subsection{Weight Truncation (Leverage Constraint)}
 \label{sec:weight_truncation}
 
-The target financial holdings can be negative (e.g., when human capital already provides more stock exposure than the optimum requires). We impose a \textbf{no-leverage, no-short-selling constraint}:
+The target financial holdings can be negative (e.g., when human capital already provides more stock exposure than the optimum requires). We impose a \textbf{leverage cap} governed by the parameter $\lambda_{\max}$ (default 1.0):
 
-\textbf{Step 1: Clip negative dollar targets to zero}
+\textbf{Step 1: Clip negative risky-asset targets to zero} (no short selling of stocks or bonds):
+\begin{align}
+\hat{d}_{\text{stock}} &= \max(0,\; \text{target\_fin\_stock}) \\
+\hat{d}_{\text{bond}} &= \max(0,\; \text{target\_fin\_bond})
+\end{align}
+
+\textbf{Step 2: Cap total long exposure}
 \begin{equation}
-\hat{d}_i = \max(0,\; \text{target\_fin}_i), \quad i \in \{\text{stock}, \text{bond}, \text{cash}\}
+\text{If } \hat{d}_{\text{stock}} + \hat{d}_{\text{bond}} > \lambda_{\max} \cdot FW_t, \quad \text{scale both down proportionally}
 \end{equation}
 
-\textbf{Step 2: Normalize to portfolio weights}
+\textbf{Step 3: Cash is the residual}
 \begin{equation}
-w^{\text{final}}_i = \frac{\hat{d}_i}{\sum_j \hat{d}_j}
+\hat{d}_{\text{cash}} = FW_t - \hat{d}_{\text{stock}} - \hat{d}_{\text{bond}}
 \end{equation}
 
-There is no separate $\min(1, \cdot)$ step---the upper bound is enforced automatically by normalization. The clipping operates on \emph{dollar amounts} (not weights), preserving the relative sizing of positive positions.
+Cash can be negative when $\lambda_{\max} > 1$, representing borrowing at the short rate.
 
-\textbf{Implications:}
+\textbf{Portfolio weights:}
+\begin{equation}
+w^{\text{final}}_i = \hat{d}_i / FW_t
+\end{equation}
+
+\textbf{Key values of $\lambda_{\max}$:}
 \begin{itemize}
-    \item Early career: Stock weight is capped at 100\%, forgoing the theoretically optimal leveraged position
-    \item The constraint binds most when $HC/FW$ is high (young workers with little savings)
-    \item As financial wealth grows and human capital depletes, the constraint relaxes
-    \item This is a practical constraint reflecting real-world borrowing limitations
+    \item $\lambda_{\max} = 1$: No borrowing. Cash is always non-negative. This is the default.
+    \item $\lambda_{\max} = 2$: Can borrow up to $1\times FW$ (total risky exposure up to $2 \times FW$).
+    \item $\lambda_{\max} = \infty$: Unconstrained (no leverage limit).
 \end{itemize}
 
 %----------------------------------------------------------------------
@@ -241,7 +300,7 @@ There is no separate $\min(1, \cdot)$ step---the upper bound is enforced automat
 
 Consumption depends on net worth:
 \begin{equation}
-C_t = \underbrace{E_t}_{\text{subsistence}} + \underbrace{c_t \cdot \max(0, TW_t)}_{\text{variable}}
+C_t = \underbrace{E_t}_{\text{subsistence}} + \underbrace{c_t \cdot \max(0, NW_t)}_{\text{variable}}
 \end{equation}
 
 The consumption rate $c_t$ is computed dynamically at each time step from the current portfolio and market state.
@@ -253,7 +312,7 @@ The consumption rate $c_t$ is computed dynamically at each time step from the cu
 
 \textbf{Portfolio variance} (using realized post-constraint weights $w_s, w_b, w_c$):
 \begin{equation}
-\text{Var}_t(R^p_{t+1}) = w_s^2 \sigma_s^2 + w_b^2 (D^{\text{mod}} \sigma_r)^2 + 2 w_s w_b (-D^{\text{mod}} \sigma_s \sigma_r \rho)
+\text{Var}_t(R^p_{t+1}) = w_s^2 \sigma_s^2 + w_b^2 (D \, \sigma_r)^2 + 2 w_s w_b (-D \, \sigma_s \, \sigma_r \, \rho)
 \end{equation}
 
 \textbf{Consumption rate} (certainty-equivalent return):
@@ -280,7 +339,7 @@ where $\delta$ is an optional consumption boost parameter (default 0).
 \textbf{Retirement ($t \geq T_R$):}
 \begin{itemize}
     \item Cannot consume more than financial wealth: $C_t \leq FW_t$
-    \item If $FW_t \leq 0$: default (set $C_t = 0$)
+    \item If $FW_t \leq 0$: default (set $C_t = 0$ for all future periods)
 \end{itemize}
 
 \subsection{Wealth Evolution}
@@ -290,9 +349,37 @@ FW_{t+1} = FW_t \cdot (1 + R^p_{t+1}) + S_t
 \end{equation}
 where:
 \begin{itemize}
-    \item $R^p_{t+1} = w_s R^s_{t+1} + w_b R^b_{t+1} + w_c \, r_t$ (portfolio return)
-    \item $S_t = Y_t - C_t$ (savings; can be negative in retirement)
+    \item $R^p_{t+1} = w_s R^s_{t+1} + w_b R^b_{t+1} + w_c \, r_t$ (portfolio return using realized asset returns)
+    \item $S_t = Y_t - C_t$ (savings; negative in retirement when consuming from wealth)
 \end{itemize}
+
+%----------------------------------------------------------------------
+\section{Simulation Architecture}
+%----------------------------------------------------------------------
+
+\subsection{Unified Engine}
+
+The model uses a single simulation engine for both deterministic and stochastic analysis:
+\begin{itemize}
+    \item \textbf{Median path}: Pass zero shocks ($\varepsilon^r = \varepsilon^s = 0$ for all $t$). Produces the expected-value trajectory.
+    \item \textbf{Monte Carlo}: Pass random shocks drawn from $N(0,1)$ with correlation $\rho$. Produces stochastic paths with dynamic revaluation of HC and $L$ at each step.
+\end{itemize}
+
+\subsection{Time Step Sequence}
+
+At each period $t$, the simulation proceeds in order:
+\begin{enumerate}
+    \item Observe current state: $FW_t$, $r_t$, wage multiplier $W_t$
+    \item Compute $HC_t$, $L_t$, $NW_t$ using current rate $r_t$
+    \item Decompose HC and $L$ into stock/bond/cash components
+    \item Compute target financial holdings via surplus optimization
+    \item Normalize to portfolio weights $(w_s, w_b, w_c)$ with leverage constraint
+    \item Compute dynamic consumption rate $c_t$ using realized weights
+    \item Compute consumption $C_t$ and apply constraints
+    \item Evolve wealth: $FW_{t+1} = FW_t(1 + R^p_{t+1}) + Y_t - C_t$
+\end{enumerate}
+
+The order is important: portfolio weights are determined \emph{before} consumption, so the variance correction in the consumption rate uses the actual portfolio allocation.
 
 %----------------------------------------------------------------------
 \section{Parameter Summary}
@@ -300,31 +387,51 @@ where:
 
 \begin{table}[h]
 \centering
-\begin{tabular}{lll}
+\caption{Economic Parameters (\texttt{EconomicParams})}
+\begin{tabular}{llll}
 \toprule
-\textbf{Parameter} & \textbf{Symbol} & \textbf{Description} \\
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Default} & \textbf{Description} \\
 \midrule
-\multicolumn{3}{l}{\textit{Economic Parameters}} \\
-$r_0$ & & Initial interest rate \\
-$\sigma_r$ & & Interest rate volatility \\
-$\phi$ & & Rate persistence (= 1 for random walk) \\
-$\mu_s$ & & Equity risk premium \\
-$\sigma_s$ & & Stock volatility \\
-$\text{SR}_b$ & & Bond Sharpe ratio (default 0; $\mu_b = \text{SR}_b \cdot D^{\text{mod}} \cdot \sigma_r$) \\
-$D^{\text{mod}}$ & & Bond modified duration \\
-$\rho$ & & Stock-rate correlation \\
-\midrule
-\multicolumn{3}{l}{\textit{Lifecycle Parameters}} \\
-$T_R$ & & Retirement age \\
-$T$ & & End age \\
-$Y_t$ & & Earnings profile \\
-$E_t$ & & Expense profile \\
-$\beta_{HC}$ & & Stock beta of human capital \\
-$\gamma$ & & Risk aversion \\
-$\delta$ & & Consumption boost (default 0) \\
-\multicolumn{3}{l}{\quad\textit{Note: consumption rate $c_t$ is derived dynamically (Eq.~\ref{eq:consumption_rate})}} \\
+\texttt{r\_bar} & $\bar{r}$ & 0.02 & Long-run mean interest rate (= initial rate $r_0$) \\
+\texttt{phi} & $\phi$ & 1.0 & Rate persistence (1.0 = random walk) \\
+\texttt{sigma\_r} & $\sigma_r$ & 0.003 & Interest rate volatility (0.3 pp) \\
+\texttt{mu\_excess} & $\mu_s$ & 0.045 & Equity risk premium (4.5 pp) \\
+\texttt{sigma\_s} & $\sigma_s$ & 0.18 & Stock return volatility \\
+\texttt{bond\_sharpe} & $\text{SR}_b$ & 0.0 & Bond Sharpe ratio ($\mu_b = \text{SR}_b \cdot D \cdot \sigma_r$) \\
+\texttt{bond\_duration} & $D$ & 20.0 & Duration of bond portfolio \\
+\texttt{rho} & $\rho$ & 0.0 & Correlation between rate and stock shocks \\
+\texttt{max\_duration} & $D_{\max}$ & None & Optional cap on computed durations \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{table}[h]
+\centering
+\caption{Lifecycle Parameters (\texttt{LifecycleParams})}
+\begin{tabular}{llll}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{start\_age} & $t_0$ & 25 & Career start age \\
+\texttt{retirement\_age} & $T_R$ & 65 & Retirement age \\
+\texttt{end\_age} & $T$ & 95 & Planning horizon / end of life \\
+\texttt{initial\_earnings} & $Y_0$ & 200 & Initial annual earnings (\$K) \\
+\texttt{base\_expenses} & $E_0$ & 100 & Base annual expenses (\$K) \\
+\texttt{retirement\_expenses} & $E_R$ & 100 & Retirement subsistence expenses (\$K) \\
+\texttt{initial\_wealth} & $FW_0$ & 100 & Initial financial wealth (\$K) \\
+\texttt{gamma} & $\gamma$ & 2.0 & Risk aversion coefficient \\
+\texttt{stock\_beta\_human\_capital} & $\beta_{HC}$ & 0.0 & Stock beta of human capital \\
+\texttt{max\_leverage} & $\lambda_{\max}$ & 1.0 & Max risky-asset exposure / $FW$ \\
+\texttt{consumption\_boost} & $\delta$ & 0.0 & Consumption rate boost \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Notes:}
+\begin{itemize}
+    \item The consumption rate $c_t$ is derived dynamically (Eq.~\ref{eq:consumption_rate}), not set as a parameter.
+    \item With default parameters ($g_Y = d_Y = g_E = 0$), earnings are flat at \$200K and expenses are flat at \$100K.
+    \item The bond risk premium is derived: $\mu_b = \text{SR}_b \cdot D \cdot \sigma_r$. With default $\text{SR}_b = 0$, bonds earn no excess return.
+\end{itemize}
 
 \end{document}
