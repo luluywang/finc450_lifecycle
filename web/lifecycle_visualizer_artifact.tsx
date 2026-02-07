@@ -1251,7 +1251,7 @@ function simulateWithStrategy(
           actions.cashWeight * cashRet;
 
         const savings = currentEarnings - actions.consumption;
-        financialWealth[t + 1] = fw * (1 + portfolioReturn) + savings;
+        financialWealth[t + 1] = (fw + savings) * (1 + portfolioReturn);
       }
     }
 
@@ -2900,7 +2900,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const savings = earnings[i] - totalConsumption[i];
 
     if (i < totalYears - 1) {
-      financialWealth[i + 1] = Math.max(0, fw * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, (fw + savings) * (1 + portfolioReturn));
     }
   }
 
@@ -3357,7 +3357,7 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
                              bondWeight[i] * bondReturn +
                              cashWeight[i] * cashReturn;
 
-      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, (financialWealth[i] + savings) * (1 + portfolioReturn));
     }
   }
 
@@ -3698,7 +3698,7 @@ function computeScenarioPath(
                              bondWeight * bondReturn +
                              cashWeight * cashReturn;
 
-      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, (financialWealth[i] + savings) * (1 + portfolioReturn));
     }
   }
 
