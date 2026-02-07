@@ -4022,7 +4022,6 @@ export default function LifecycleVisualizer() {
 
   // Scenario state
   const [scenarioType, setScenarioType] = useState<'summary' | 'baseline' | 'sequenceRisk' | 'rateShock'>('summary');
-  const [rateShockAge, setRateShockAge] = useState(50);
   const [rateShockMagnitude, setRateShockMagnitude] = useState(-0.02);
   const [scenarioRetirementAge, setScenarioRetirementAge] = useState(params.retirementAge);
   const [scenarioEndAge, setScenarioEndAge] = useState(params.endAge);
@@ -5355,28 +5354,8 @@ export default function LifecycleVisualizer() {
               </div>
 
               {scenarioType === 'rateShock' && (
-                <div style={{ display: 'flex', gap: '24px', padding: '12px', background: '#fff3cd', borderRadius: '6px' }}>
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Rate shock at age:</div>
-                    <input
-                      type="number"
-                      value={rateShockAge}
-                      onChange={(e) => setRateShockAge(parseInt(e.target.value) || 50)}
-                      min={params.startAge}
-                      max={scenarioEndAge - 1}
-                      style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>Rate change (%):</div>
-                    <input
-                      type="number"
-                      value={rateShockMagnitude * 100}
-                      onChange={(e) => setRateShockMagnitude((parseFloat(e.target.value) || 0) / 100)}
-                      step={0.5}
-                      style={{ width: '60px', padding: '4px 8px', border: '1px solid #ccc', borderRadius: '4px' }}
-                    />
-                  </div>
+                <div style={{ fontSize: '12px', color: '#856404', fontStyle: 'italic', padding: '8px 12px', background: '#fff3cd', borderRadius: '6px' }}>
+                  Rate drop (~2pp cumulative) occurs in 5 years before retirement.
                 </div>
               )}
 
@@ -5599,7 +5578,7 @@ export default function LifecycleVisualizer() {
                       <strong>Sequence Risk:</strong> Forces bad stock returns (~-12%/yr) in first 5 years of retirement - tests vulnerability to early losses
                     </p>
                     <p style={{ margin: 0 }}>
-                      <strong>Rate Shock:</strong> Interest rate drop (~4% cumulative) in 5 years before retirement - tests duration matching effectiveness
+                      <strong>Rate Shock:</strong> Interest rate drop (~2pp cumulative) in 5 years before retirement - tests duration matching effectiveness
                     </p>
                   </div>
                 </div>
