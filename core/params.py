@@ -244,6 +244,19 @@ class SimulationResult:
     target_fin_bond: np.ndarray = None
     target_fin_cash: np.ndarray = None
 
+    # Optional enriched output (populated by simulate_with_strategy)
+    human_capital: np.ndarray = None
+    pv_expenses: np.ndarray = None
+    net_worth: np.ndarray = None
+    savings: np.ndarray = None
+    hc_stock_component: np.ndarray = None
+    hc_bond_component: np.ndarray = None
+    hc_cash_component: np.ndarray = None
+    exp_bond_component: np.ndarray = None
+    exp_cash_component: np.ndarray = None
+    duration_hc: np.ndarray = None
+    duration_expenses: np.ndarray = None
+
     @property
     def n_sims(self) -> int:
         """Number of simulations (1 for deterministic, N for Monte Carlo)."""

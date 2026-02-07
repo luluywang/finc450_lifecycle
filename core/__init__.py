@@ -76,11 +76,9 @@ from .simulation import (
     # Helper functions
     compute_target_allocations,
     normalize_portfolio_weights,
-    apply_consumption_constraints,
-    compute_dynamic_pv,
     # Generic strategy simulation engine
     simulate_with_strategy,
-    # Unified simulation engine (legacy)
+    # Unified simulation engine (deprecated, delegates to simulate_with_strategy)
     simulate_paths,
     # Profile generators
     compute_earnings_profile,
@@ -143,8 +141,6 @@ __all__ = [
     # Simulation helpers
     'compute_target_allocations',
     'normalize_portfolio_weights',
-    'apply_consumption_constraints',
-    'compute_dynamic_pv',
     'simulate_with_strategy',
     'simulate_paths',
     # Simulation

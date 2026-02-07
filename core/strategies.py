@@ -31,46 +31,12 @@ def _normalize_weights(
     target_cash: float,
     max_leverage: float = 1.0,
 ) -> Tuple[float, float, float]:
-    """
-    Normalize portfolio weights with leverage cap.
-
-    - Stocks >= 0, Bonds >= 0 (no shorting risky assets)
-    - Stocks + Bonds <= max_leverage * FW (cap total long exposure)
-    - Cash = FW - Stocks - Bonds (residual, can be negative = borrowing)
-
-    max_leverage=1.0 means no borrowing (cash >= 0).
-    max_leverage=inf means unconstrained.
-    """
-    if fw <= 1e-6:
-        # Clip MV targets (may be negative with unconstrained optimization)
-        ws = max(0.0, target_stock)
-        wb = max(0.0, target_bond)
-        total = ws + wb
-        if total > max_leverage:
-            scale = max_leverage / total
-            ws *= scale
-            wb *= scale
-        wc = 1.0 - ws - wb
-        if ws + wb > 0 or wc > 0:
-            return ws, wb, wc
-        return 0.0, 0.0, 1.0
-
-    # Clip stocks and bonds at 0 (no shorting risky assets)
-    fin_stock = max(0.0, target_fin_stock)
-    fin_bond = max(0.0, target_fin_bond)
-
-    # Cap total long exposure at max_leverage * FW
-    total_long = fin_stock + fin_bond
-    max_long = max_leverage * fw
-    if total_long > max_long:
-        scale = max_long / total_long
-        fin_stock *= scale
-        fin_bond *= scale
-
-    # Cash is residual: can be negative (= borrowing)
-    fin_cash = fw - fin_stock - fin_bond
-
-    return fin_stock / fw, fin_bond / fw, fin_cash / fw
+    """Delegate to normalize_portfolio_weights in simulation.py (avoids code duplication)."""
+    from .simulation import normalize_portfolio_weights
+    return normalize_portfolio_weights(
+        target_fin_stock, target_fin_bond, target_fin_cash, fw,
+        target_stock, target_bond, target_cash, max_leverage,
+    )
 
 
 @dataclass
@@ -96,46 +62,15 @@ class LDIStrategy:
 
     def __call__(self, state: SimulationState) -> StrategyActions:
         """Compute LDI strategy actions given current state."""
-        # Compute consumption rate if not specified
-        if self.consumption_rate is None:
-            r = state.current_rate
-            sigma_s = state.econ_params.sigma_s
-            sigma_r = state.econ_params.sigma_r
-            rho = state.econ_params.rho
-            D = state.econ_params.bond_duration
-            mu_bond = state.econ_params.mu_bond
-
-            w_s = state.target_stock
-            w_b = state.target_bond
-
-            # Expected (arithmetic mean) portfolio return - includes bond excess return
-            expected_return = (
-                w_s * (r + state.econ_params.mu_excess) +
-                w_b * (r + mu_bond) +
-                state.target_cash * r
-            )
-
-            # Full portfolio variance with correlation
-            # Bond volatility = duration * rate volatility
-            sigma_b = D * sigma_r
-            # Stock-bond covariance (negative when rho > 0: rising rates hurt bonds)
-            cov_sb = -D * sigma_s * sigma_r * rho
-            portfolio_var = w_s**2 * sigma_s**2 + w_b**2 * sigma_b**2 + 2 * w_s * w_b * cov_sb
-
-            # Median portfolio return = expected - 0.5 * variance (Jensen's correction)
-            median_return = expected_return - 0.5 * portfolio_var
-            consumption_rate = median_return + state.params.consumption_boost
-        else:
-            consumption_rate = self.consumption_rate
-
-        # Consumption: subsistence + rate * net_worth
-        subsistence = state.expenses
-        variable = max(0, consumption_rate * state.net_worth)
-        total_cons = subsistence + variable
-
-        # Apply constraints: can't consume more than financial wealth
-        # (you can spend more than income, but you can't borrow)
         fw = state.financial_wealth
+
+        # LDI allocation: surplus optimization
+        # Compute portfolio weights FIRST (needed for consumption rate)
+        surplus = max(0, state.net_worth)
+        target_fin_stock = state.target_stock * surplus - state.hc_stock_component
+        target_fin_bond = state.target_bond * surplus - state.hc_bond_component + state.exp_bond_component
+        target_fin_cash = state.target_cash * surplus - state.hc_cash_component + state.exp_cash_component
+
         if fw <= 0:
             return StrategyActions(
                 total_consumption=0.0,
@@ -148,29 +83,48 @@ class LDIStrategy:
                 target_fin_bond=0.0,
                 target_fin_cash=0.0,
             )
+
+        # Normalize to weights with leverage cap
+        w_s, w_b, w_c = _normalize_weights(
+            target_fin_stock, target_fin_bond, target_fin_cash, fw,
+            state.target_stock, state.target_bond, state.target_cash,
+            max_leverage=self.max_leverage
+        )
+
+        # Compute consumption rate using REALIZED weights (after normalization)
+        if self.consumption_rate is None:
+            r = state.current_rate
+            sigma_s = state.econ_params.sigma_s
+            sigma_r = state.econ_params.sigma_r
+            rho = state.econ_params.rho
+            D = state.econ_params.bond_duration
+
+            expected_return = (
+                w_s * (r + state.econ_params.mu_excess) +
+                w_b * (r + state.econ_params.mu_bond) +
+                w_c * r
+            )
+
+            sigma_b = D * sigma_r
+            cov_sb = -D * sigma_s * sigma_r * rho
+            portfolio_var = w_s**2 * sigma_s**2 + w_b**2 * sigma_b**2 + 2 * w_s * w_b * cov_sb
+
+            consumption_rate = expected_return - 0.5 * portfolio_var + state.params.consumption_boost
+        else:
+            consumption_rate = self.consumption_rate
+
+        # Consumption: subsistence + rate * net_worth
+        subsistence = state.expenses
+        variable = max(0, consumption_rate * state.net_worth)
+        total_cons = subsistence + variable
+
+        # Apply constraints: can't consume more than financial wealth
         if total_cons > fw:
             total_cons = fw
             variable = max(0, fw - subsistence)
             if variable < 0:
                 subsistence = fw
                 variable = 0.0
-
-        # LDI allocation: surplus optimization
-        # Surplus = max(0, net_worth) where net_worth = HC + FW - PV(expenses)
-        # Target = target_pct * surplus - HC_component + expense_component
-        # Sum of targets = FW (no leverage needed). When surplus=0, all FW in bonds.
-        surplus = max(0, state.net_worth)
-        target_fin_stock = state.target_stock * surplus - state.hc_stock_component
-        target_fin_bond = state.target_bond * surplus - state.hc_bond_component + state.exp_bond_component
-        target_fin_cash = state.target_cash * surplus - state.hc_cash_component + state.exp_cash_component
-
-        # Normalize to weights with leverage cap
-        fw = state.financial_wealth
-        w_s, w_b, w_c = _normalize_weights(
-            target_fin_stock, target_fin_bond, target_fin_cash, fw,
-            state.target_stock, state.target_bond, state.target_cash,
-            max_leverage=self.max_leverage
-        )
 
         return StrategyActions(
             total_consumption=total_cons,
