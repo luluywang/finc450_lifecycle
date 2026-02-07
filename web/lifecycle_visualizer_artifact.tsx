@@ -3925,6 +3925,25 @@ const symlogTickFormatter = (t: number) => {
   return `$${(v / 1000).toFixed(1)}M`;
 };
 
+const EarningsConsumptionTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload || !payload.length) return null;
+  const data = payload[0]?.payload;
+  if (!data) return null;
+  const earnings = data.earnings;
+  const consumption = data.totalConsumption;
+  const savings = earnings - consumption;
+  return (
+    <div style={{ background: 'white', padding: '8px 12px', border: '1px solid #ccc', borderRadius: 4, fontSize: '12px', lineHeight: '1.6' }}>
+      <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{label}</div>
+      <div style={{ color: COLORS.earnings }}>Earnings: ${formatDollar(earnings)}k</div>
+      <div style={{ color: COLORS.expenses }}>Total Consumption: ${formatDollar(consumption)}k</div>
+      <div style={{ color: savings >= 0 ? COLORS.cash : COLORS.expenses }}>
+        {savings >= 0 ? `Savings: $${formatDollar(savings)}k` : `Drawdown: -$${formatDollar(Math.abs(savings))}k`}
+      </div>
+    </div>
+  );
+};
+
 const symlogTooltipFormatter = tooltipFmt((t) => {
   const v = symlogInv(t);
   return `$${Math.round(v)}k`;
@@ -4801,7 +4820,7 @@ export default function LifecycleVisualizer() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="age" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={formatDollar} />
-                <Tooltip formatter={dollarTooltipFormatter} />
+                <Tooltip content={<EarningsConsumptionTooltip />} />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <ReferenceLine y={0} stroke="#333" strokeWidth={1} />
                 <ReferenceLine x={params.retirementAge} stroke="#999" strokeDasharray="3 3" />
