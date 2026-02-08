@@ -114,12 +114,14 @@ def create_teaching_scenario(
         variable = max(0, consumption_rate * net_worth)
         total_cons = subsistence + variable
 
-        # Apply constraints: can't consume more than financial wealth
+        # Apply constraints: can't consume more than available resources
+        # Budget: (fw + earnings - consumption)*(1+r), solvency requires consumption <= fw + earnings
+        available = fw + earnings[t]
         if defaulted or fw <= 0:
             defaulted = True
             total_cons = 0
-        elif total_cons > fw:
-            total_cons = fw
+        elif total_cons > available:
+            total_cons = available
 
         total_consumption[t] = total_cons
 
@@ -127,17 +129,19 @@ def create_teaching_scenario(
         surplus = max(0, net_worth)
         target_fin_stock = target_stock * surplus - hc_stock[t]
 
-        if fw > 1e-6:
-            w_stock = target_fin_stock / fw
-            w_stock = max(0, min(1, w_stock))  # Constrain to [0, 1]
-        else:
-            w_stock = target_stock
-
-        stock_weight[t] = w_stock
-
         # Evolve wealth
         if t < total_years - 1 and not defaulted:
             savings = earnings[t] - total_cons
+            investable = fw + savings
+
+            # Normalize weights to investable base for exact hedge
+            if investable > 1e-6:
+                w_stock = target_fin_stock / investable
+                w_stock = max(0, min(1, w_stock))  # Constrain to [0, 1]
+            else:
+                w_stock = target_stock
+
+            stock_weight[t] = w_stock
 
             # Use overridden stock return
             stock_ret = returns_override[t]
@@ -148,7 +152,15 @@ def create_teaching_scenario(
             w_c = 1 - w_stock - w_b
 
             portfolio_return = w_stock * stock_ret + w_b * bond_ret + w_c * cash_ret
-            financial_wealth[t + 1] = (fw + savings) * (1 + portfolio_return)
+            financial_wealth[t + 1] = investable * (1 + portfolio_return)
+        elif not defaulted:
+            # Last period: still record the weight based on fw
+            if fw > 1e-6:
+                w_stock = target_fin_stock / fw
+                w_stock = max(0, min(1, w_stock))
+            else:
+                w_stock = target_stock
+            stock_weight[t] = w_stock
 
     cumulative_consumption = np.cumsum(total_consumption)
 
