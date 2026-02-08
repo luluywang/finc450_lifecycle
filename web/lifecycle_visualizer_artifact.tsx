@@ -4,7 +4,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  LineChart, Line, AreaChart, Area, ComposedChart, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell
 } from 'recharts';
 
@@ -1431,8 +1431,8 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
     let variable = Math.max(0, effectiveConsumptionRate * state.netWorth);
     let totalCons = subsistence + variable;
 
-    // Step 5: Apply budget constraint: cap at fw + earnings
-    const available = fw + state.earnings;
+    // Step 5: Apply budget constraint: leave at least $1K investable
+    const available = Math.max(0, fw + state.earnings - 1.0);
     if (totalCons > available) {
       totalCons = available;
       variable = Math.max(0, available - subsistence);
@@ -1553,7 +1553,7 @@ function createRuleOfThumbStrategy(options: RuleOfThumbStrategyOptions = {}): St
         variable = baselineConsumption - subsistence;
       } else {
         // Can't meet baseline, try to cover subsistence
-        const available = state.earnings + fw;
+        const available = Math.max(0, state.earnings + fw - 1.0);
         if (available >= subsistence) {
           totalCons = subsistence;
           variable = 0.0;
@@ -1579,10 +1579,11 @@ function createRuleOfThumbStrategy(options: RuleOfThumbStrategyOptions = {}): St
       }
 
       const targetConsumption = Math.max(retirementConsumption, subsistence);
-      if (fw < targetConsumption) {
-        totalCons = fw;
-        subsistence = Math.min(fw, state.expenses);
-        variable = Math.max(0, fw - state.expenses);
+      const available = Math.max(0, fw + state.earnings - 1.0);
+      if (targetConsumption > available) {
+        totalCons = available;
+        subsistence = Math.min(available, state.expenses);
+        variable = Math.max(0, available - state.expenses);
       } else {
         totalCons = targetConsumption;
         variable = targetConsumption - subsistence;
@@ -2905,8 +2906,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap consumption at available resources (fw + earnings)
-    const availableI = fw + earnings[i];
+    // Cap consumption to leave at least $1K investable
+    const availableI = Math.max(0, fw + earnings[i] - 1.0);
     if (subsistenceConsumption[i] > availableI) {
       totalConsumption[i] = availableI;
       subsistenceConsumption[i] = availableI;
@@ -3357,10 +3358,10 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap consumption at available resources (fw + earnings)
+    // Cap consumption to leave at least $1K investable
     {
       const fw = financialWealth[i];
-      const availableI = fw + earnings[i];
+      const availableI = Math.max(0, fw + earnings[i] - 1.0);
       if (subsistenceConsumption[i] > availableI) {
         totalConsumption[i] = availableI;
         subsistenceConsumption[i] = availableI;
@@ -3674,10 +3675,10 @@ function computeScenarioPath(
       variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-      // Cap consumption at available resources (fw + earnings)
+      // Cap consumption to leave at least $1K investable
       {
         const fw = financialWealth[i];
-        const availableI = fw + earnings[i];
+        const availableI = Math.max(0, fw + earnings[i] - 1.0);
         if (subsistenceConsumption[i] > availableI) {
           if (!defaulted) {
             defaulted = true;
@@ -3699,10 +3700,10 @@ function computeScenarioPath(
           totalConsumption[i] = preRetirementConsumption[i];
           variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
         } else {
-          // Fallback: consume from earnings, capped at financial wealth
+          // Fallback: consume from earnings, leave at least $1K investable
           variableConsumption[i] = Math.max(0, earnings[i] - subsistenceConsumption[i]);
           totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
-          const fwCap = financialWealth[i];
+          const fwCap = Math.max(0, financialWealth[i] + earnings[i] - 1.0);
           if (totalConsumption[i] > fwCap) {
             totalConsumption[i] = fwCap;
             variableConsumption[i] = Math.max(0, fwCap - subsistenceConsumption[i]);
@@ -3720,13 +3721,14 @@ function computeScenarioPath(
         variableConsumption[i] = Math.max(0, fourPercentWithdrawal - subsistenceConsumption[i]);
 
         // Check if we can meet the withdrawal (or at least subsistence)
-        if (financialWealth[i] < fourPercentWithdrawal) {
-          // Can only withdraw what we have
-          totalConsumption[i] = Math.max(0, financialWealth[i]);
+        const availableRetire = Math.max(0, financialWealth[i] - 1.0);
+        if (availableRetire < fourPercentWithdrawal) {
+          // Can only withdraw what we have minus $1K floor
+          totalConsumption[i] = availableRetire;
           variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
 
           // Check if we can't even meet subsistence
-          if (financialWealth[i] < subsistenceConsumption[i]) {
+          if (availableRetire < subsistenceConsumption[i]) {
             if (!defaulted) {
               defaulted = true;
               defaultAge = age;
@@ -4023,6 +4025,23 @@ const symlogTooltipFormatter = tooltipFmt((t) => {
   const v = symlogInv(t);
   return `$${Math.round(v)}k`;
 });
+
+const makeFanTooltip = (fmt: (v: number) => string) =>
+  ({ active, payload, label }: any) => {
+    if (!active || !payload) return null;
+    const medians = payload.filter((e: any) => String(e.dataKey).includes('p50'));
+    if (medians.length === 0) return null;
+    return (
+      <div style={{ background: '#fff', border: '1px solid #ccc', padding: '6px 10px', borderRadius: '4px', fontSize: '11px' }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>Age {label}</div>
+        {medians.map((e: any, idx: number) => (
+          <div key={idx} style={{ color: e.stroke || e.color }}>
+            {e.name || e.dataKey}: {fmt(e.value)}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
 function ChartSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -5946,45 +5965,45 @@ export default function LifecycleVisualizer() {
                 rate_band_75_95: (scenario.ldi.percentiles.interestRates.p95[i] - scenario.ldi.percentiles.interestRates.p75[i]) * 100,
               }));
 
-              // Panel 3, 5, 6 data: Overlaid LDI vs RoT
+              // Panel 3, 5, 6 data: Overlaid LDI vs RoT (fan chart bands)
               const wealthAllocationData = ages.map((age, i) => ({
                 age,
-                // Financial wealth - LDI (symlog scale)
+                // Financial wealth - LDI (symlog scale): base + bands + median
                 ldi_fw_p5: symlog(scenario.ldi.percentiles.financialWealth.p5[i]),
-                ldi_fw_p25: symlog(scenario.ldi.percentiles.financialWealth.p25[i]),
                 ldi_fw_p50: symlog(scenario.ldi.percentiles.financialWealth.p50[i]),
-                ldi_fw_p75: symlog(scenario.ldi.percentiles.financialWealth.p75[i]),
-                ldi_fw_p95: symlog(scenario.ldi.percentiles.financialWealth.p95[i]),
+                ldi_fw_band_5_25: symlog(scenario.ldi.percentiles.financialWealth.p25[i]) - symlog(scenario.ldi.percentiles.financialWealth.p5[i]),
+                ldi_fw_band_25_75: symlog(scenario.ldi.percentiles.financialWealth.p75[i]) - symlog(scenario.ldi.percentiles.financialWealth.p25[i]),
+                ldi_fw_band_75_95: symlog(scenario.ldi.percentiles.financialWealth.p95[i]) - symlog(scenario.ldi.percentiles.financialWealth.p75[i]),
                 // Financial wealth - RoT (symlog scale)
                 rot_fw_p5: symlog(scenario.rot.percentiles.financialWealth.p5[i]),
-                rot_fw_p25: symlog(scenario.rot.percentiles.financialWealth.p25[i]),
                 rot_fw_p50: symlog(scenario.rot.percentiles.financialWealth.p50[i]),
-                rot_fw_p75: symlog(scenario.rot.percentiles.financialWealth.p75[i]),
-                rot_fw_p95: symlog(scenario.rot.percentiles.financialWealth.p95[i]),
+                rot_fw_band_5_25: symlog(scenario.rot.percentiles.financialWealth.p25[i]) - symlog(scenario.rot.percentiles.financialWealth.p5[i]),
+                rot_fw_band_25_75: symlog(scenario.rot.percentiles.financialWealth.p75[i]) - symlog(scenario.rot.percentiles.financialWealth.p25[i]),
+                rot_fw_band_75_95: symlog(scenario.rot.percentiles.financialWealth.p95[i]) - symlog(scenario.rot.percentiles.financialWealth.p75[i]),
                 // Stock allocation - LDI (as %)
                 ldi_stock_p5: scenario.ldi.percentiles.stockWeight.p5[i] * 100,
-                ldi_stock_p25: scenario.ldi.percentiles.stockWeight.p25[i] * 100,
                 ldi_stock_p50: scenario.ldi.percentiles.stockWeight.p50[i] * 100,
-                ldi_stock_p75: scenario.ldi.percentiles.stockWeight.p75[i] * 100,
-                ldi_stock_p95: scenario.ldi.percentiles.stockWeight.p95[i] * 100,
+                ldi_stock_band_5_25: (scenario.ldi.percentiles.stockWeight.p25[i] - scenario.ldi.percentiles.stockWeight.p5[i]) * 100,
+                ldi_stock_band_25_75: (scenario.ldi.percentiles.stockWeight.p75[i] - scenario.ldi.percentiles.stockWeight.p25[i]) * 100,
+                ldi_stock_band_75_95: (scenario.ldi.percentiles.stockWeight.p95[i] - scenario.ldi.percentiles.stockWeight.p75[i]) * 100,
                 // Stock allocation - RoT (as %)
                 rot_stock_p5: scenario.rot.percentiles.stockWeight.p5[i] * 100,
-                rot_stock_p25: scenario.rot.percentiles.stockWeight.p25[i] * 100,
                 rot_stock_p50: scenario.rot.percentiles.stockWeight.p50[i] * 100,
-                rot_stock_p75: scenario.rot.percentiles.stockWeight.p75[i] * 100,
-                rot_stock_p95: scenario.rot.percentiles.stockWeight.p95[i] * 100,
+                rot_stock_band_5_25: (scenario.rot.percentiles.stockWeight.p25[i] - scenario.rot.percentiles.stockWeight.p5[i]) * 100,
+                rot_stock_band_25_75: (scenario.rot.percentiles.stockWeight.p75[i] - scenario.rot.percentiles.stockWeight.p25[i]) * 100,
+                rot_stock_band_75_95: (scenario.rot.percentiles.stockWeight.p95[i] - scenario.rot.percentiles.stockWeight.p75[i]) * 100,
                 // Bond allocation - LDI (as %)
                 ldi_bond_p5: scenario.ldi.percentiles.bondWeight.p5[i] * 100,
-                ldi_bond_p25: scenario.ldi.percentiles.bondWeight.p25[i] * 100,
                 ldi_bond_p50: scenario.ldi.percentiles.bondWeight.p50[i] * 100,
-                ldi_bond_p75: scenario.ldi.percentiles.bondWeight.p75[i] * 100,
-                ldi_bond_p95: scenario.ldi.percentiles.bondWeight.p95[i] * 100,
+                ldi_bond_band_5_25: (scenario.ldi.percentiles.bondWeight.p25[i] - scenario.ldi.percentiles.bondWeight.p5[i]) * 100,
+                ldi_bond_band_25_75: (scenario.ldi.percentiles.bondWeight.p75[i] - scenario.ldi.percentiles.bondWeight.p25[i]) * 100,
+                ldi_bond_band_75_95: (scenario.ldi.percentiles.bondWeight.p95[i] - scenario.ldi.percentiles.bondWeight.p75[i]) * 100,
                 // Bond allocation - RoT (as %)
                 rot_bond_p5: scenario.rot.percentiles.bondWeight.p5[i] * 100,
-                rot_bond_p25: scenario.rot.percentiles.bondWeight.p25[i] * 100,
                 rot_bond_p50: scenario.rot.percentiles.bondWeight.p50[i] * 100,
-                rot_bond_p75: scenario.rot.percentiles.bondWeight.p75[i] * 100,
-                rot_bond_p95: scenario.rot.percentiles.bondWeight.p95[i] * 100,
+                rot_bond_band_5_25: (scenario.rot.percentiles.bondWeight.p25[i] - scenario.rot.percentiles.bondWeight.p5[i]) * 100,
+                rot_bond_band_25_75: (scenario.rot.percentiles.bondWeight.p75[i] - scenario.rot.percentiles.bondWeight.p25[i]) * 100,
+                rot_bond_band_75_95: (scenario.rot.percentiles.bondWeight.p95[i] - scenario.rot.percentiles.bondWeight.p75[i]) * 100,
               }));
 
               // Panel 4 data: Default timing histogram
@@ -6039,37 +6058,49 @@ export default function LifecycleVisualizer() {
                 (lo) => `$${Math.round(lo / 1000)}M`
               );
 
-              // Panel 9 data: Net FI PV (median path comparison)
+              // Panel 9 data: Net FI PV (fan chart)
               const netFiPvData = ages.map((age, i) => ({
                 age,
-                ldi_p50: scenario.ldi.percentiles.netFiPv.p50[i],
-                rot_p50: scenario.rot.percentiles.netFiPv.p50[i],
                 ldi_p5: scenario.ldi.percentiles.netFiPv.p5[i],
-                ldi_p95: scenario.ldi.percentiles.netFiPv.p95[i],
+                ldi_p50: scenario.ldi.percentiles.netFiPv.p50[i],
+                ldi_band_5_25: scenario.ldi.percentiles.netFiPv.p25[i] - scenario.ldi.percentiles.netFiPv.p5[i],
+                ldi_band_25_75: scenario.ldi.percentiles.netFiPv.p75[i] - scenario.ldi.percentiles.netFiPv.p25[i],
+                ldi_band_75_95: scenario.ldi.percentiles.netFiPv.p95[i] - scenario.ldi.percentiles.netFiPv.p75[i],
                 rot_p5: scenario.rot.percentiles.netFiPv.p5[i],
-                rot_p95: scenario.rot.percentiles.netFiPv.p95[i],
+                rot_p50: scenario.rot.percentiles.netFiPv.p50[i],
+                rot_band_5_25: scenario.rot.percentiles.netFiPv.p25[i] - scenario.rot.percentiles.netFiPv.p5[i],
+                rot_band_25_75: scenario.rot.percentiles.netFiPv.p75[i] - scenario.rot.percentiles.netFiPv.p25[i],
+                rot_band_75_95: scenario.rot.percentiles.netFiPv.p95[i] - scenario.rot.percentiles.netFiPv.p75[i],
               }));
 
-              // Panel 10 data: DV01 (interest rate sensitivity)
+              // Panel 10 data: DV01 (fan chart)
               const dv01Data = ages.map((age, i) => ({
                 age,
-                ldi_p50: scenario.ldi.percentiles.dv01.p50[i],
-                rot_p50: scenario.rot.percentiles.dv01.p50[i],
                 ldi_p5: scenario.ldi.percentiles.dv01.p5[i],
-                ldi_p95: scenario.ldi.percentiles.dv01.p95[i],
+                ldi_p50: scenario.ldi.percentiles.dv01.p50[i],
+                ldi_band_5_25: scenario.ldi.percentiles.dv01.p25[i] - scenario.ldi.percentiles.dv01.p5[i],
+                ldi_band_25_75: scenario.ldi.percentiles.dv01.p75[i] - scenario.ldi.percentiles.dv01.p25[i],
+                ldi_band_75_95: scenario.ldi.percentiles.dv01.p95[i] - scenario.ldi.percentiles.dv01.p75[i],
                 rot_p5: scenario.rot.percentiles.dv01.p5[i],
-                rot_p95: scenario.rot.percentiles.dv01.p95[i],
+                rot_p50: scenario.rot.percentiles.dv01.p50[i],
+                rot_band_5_25: scenario.rot.percentiles.dv01.p25[i] - scenario.rot.percentiles.dv01.p5[i],
+                rot_band_25_75: scenario.rot.percentiles.dv01.p75[i] - scenario.rot.percentiles.dv01.p25[i],
+                rot_band_75_95: scenario.rot.percentiles.dv01.p95[i] - scenario.rot.percentiles.dv01.p75[i],
               }));
 
-              // Panel 11 data: Net Wealth (HC + FW - PV Expenses)
+              // Panel 11 data: Net Wealth (fan chart)
               const netWealthData = ages.map((age, i) => ({
                 age,
                 ldi_nw_p5: symlog(scenario.ldi.percentiles.netWorth.p5[i]),
                 ldi_nw_p50: symlog(scenario.ldi.percentiles.netWorth.p50[i]),
-                ldi_nw_p95: symlog(scenario.ldi.percentiles.netWorth.p95[i]),
+                ldi_nw_band_5_25: symlog(scenario.ldi.percentiles.netWorth.p25[i]) - symlog(scenario.ldi.percentiles.netWorth.p5[i]),
+                ldi_nw_band_25_75: symlog(scenario.ldi.percentiles.netWorth.p75[i]) - symlog(scenario.ldi.percentiles.netWorth.p25[i]),
+                ldi_nw_band_75_95: symlog(scenario.ldi.percentiles.netWorth.p95[i]) - symlog(scenario.ldi.percentiles.netWorth.p75[i]),
                 rot_nw_p5: symlog(scenario.rot.percentiles.netWorth.p5[i]),
                 rot_nw_p50: symlog(scenario.rot.percentiles.netWorth.p50[i]),
-                rot_nw_p95: symlog(scenario.rot.percentiles.netWorth.p95[i]),
+                rot_nw_band_5_25: symlog(scenario.rot.percentiles.netWorth.p25[i]) - symlog(scenario.rot.percentiles.netWorth.p5[i]),
+                rot_nw_band_25_75: symlog(scenario.rot.percentiles.netWorth.p75[i]) - symlog(scenario.rot.percentiles.netWorth.p25[i]),
+                rot_nw_band_75_95: symlog(scenario.rot.percentiles.netWorth.p95[i]) - symlog(scenario.rot.percentiles.netWorth.p75[i]),
                 // Reference lines: total wealth and PV expenses (median only)
                 ldi_tw_p50: symlog(scenario.ldi.percentiles.totalAssets.p50[i]),
                 rot_tw_p50: symlog(scenario.rot.percentiles.totalAssets.p50[i]),
@@ -6077,15 +6108,19 @@ export default function LifecycleVisualizer() {
                 rot_pvexp_p50: symlog(scenario.rot.percentiles.pvExpenses.p50[i]),
               }));
 
-              // Panel 12 data: Annual Consumption (LDI vs RoT)
+              // Panel 12 data: Annual Consumption (fan chart)
               const consumptionData = ages.map((age, i) => ({
                 age,
                 ldi_cons_p5: symlog(scenario.ldi.percentiles.consumption.p5[i]),
                 ldi_cons_p50: symlog(scenario.ldi.percentiles.consumption.p50[i]),
-                ldi_cons_p95: symlog(scenario.ldi.percentiles.consumption.p95[i]),
+                ldi_cons_band_5_25: symlog(scenario.ldi.percentiles.consumption.p25[i]) - symlog(scenario.ldi.percentiles.consumption.p5[i]),
+                ldi_cons_band_25_75: symlog(scenario.ldi.percentiles.consumption.p75[i]) - symlog(scenario.ldi.percentiles.consumption.p25[i]),
+                ldi_cons_band_75_95: symlog(scenario.ldi.percentiles.consumption.p95[i]) - symlog(scenario.ldi.percentiles.consumption.p75[i]),
                 rot_cons_p5: symlog(scenario.rot.percentiles.consumption.p5[i]),
                 rot_cons_p50: symlog(scenario.rot.percentiles.consumption.p50[i]),
-                rot_cons_p95: symlog(scenario.rot.percentiles.consumption.p95[i]),
+                rot_cons_band_5_25: symlog(scenario.rot.percentiles.consumption.p25[i]) - symlog(scenario.rot.percentiles.consumption.p5[i]),
+                rot_cons_band_25_75: symlog(scenario.rot.percentiles.consumption.p75[i]) - symlog(scenario.rot.percentiles.consumption.p25[i]),
+                rot_cons_band_75_95: symlog(scenario.rot.percentiles.consumption.p95[i]) - symlog(scenario.rot.percentiles.consumption.p75[i]),
               }));
 
               return (
@@ -6166,26 +6201,31 @@ export default function LifecycleVisualizer() {
                   {/* Panel 3: Financial Wealth - LDI vs RoT (overlaid fan chart) */}
                   <ChartCard title="Panel 3: Financial Wealth (LDI vs RoT)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={wealthAllocationData}>
+                      <ComposedChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={symlogTickFormatter} domain={['auto', 'auto']} />
-                        <Tooltip formatter={symlogTooltipFormatter} />
+                        <Tooltip content={makeFanTooltip((v) => `$${Math.round(symlogInv(v))}k`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
-                        {/* LDI lines */}
-                        <Line type="monotone" dataKey="ldi_fw_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_fw_p5" stackId="ldi_fw" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_fw_band_5_25" stackId="ldi_fw" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_fw_band_25_75" stackId="ldi_fw" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_fw_band_75_95" stackId="ldi_fw" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_fw_p5" stackId="rot_fw" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_fw_band_5_25" stackId="rot_fw" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_fw_band_25_75" stackId="rot_fw" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_fw_band_75_95" stackId="rot_fw" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_fw_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_fw_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT lines */}
-                        <Line type="monotone" dataKey="rot_fw_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_fw_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_fw_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
-                      <span style={{ color: COLOR_LDI }}>LDI (blue)</span> vs <span style={{ color: COLOR_ROT }}>RoT (gold)</span>. Shows 5th, 50th, 95th percentiles.
+                      <span style={{ color: COLOR_LDI }}>LDI (blue)</span> vs <span style={{ color: COLOR_ROT }}>RoT (gold)</span>. Shaded: 5-95th percentile bands.
                     </div>
                   </ChartCard>
 
@@ -6222,22 +6262,27 @@ export default function LifecycleVisualizer() {
                   {/* Panel 5: Stock Allocation - LDI vs RoT (overlaid fan chart) */}
                   <ChartCard title="Panel 5: Stock Allocation (LDI vs RoT)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={wealthAllocationData}>
+                      <ComposedChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} domain={[0, 100]} tickFormatter={formatPercent} />
-                        <Tooltip formatter={percentTooltipFormatter} />
+                        <Tooltip content={makeFanTooltip((v) => `${Math.round(v)}%`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
-                        {/* LDI lines */}
-                        <Line type="monotone" dataKey="ldi_stock_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_stock_p5" stackId="ldi_stock" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_stock_band_5_25" stackId="ldi_stock" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_stock_band_25_75" stackId="ldi_stock" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_stock_band_75_95" stackId="ldi_stock" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_stock_p5" stackId="rot_stock" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_stock_band_5_25" stackId="rot_stock" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_stock_band_25_75" stackId="rot_stock" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_stock_band_75_95" stackId="rot_stock" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_stock_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_stock_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT lines */}
-                        <Line type="monotone" dataKey="rot_stock_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_stock_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_stock_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       LDI dynamic allocation vs RoT static. Y-axis: 0-100%.
@@ -6247,22 +6292,27 @@ export default function LifecycleVisualizer() {
                   {/* Panel 6: Bond Allocation - LDI vs RoT (overlaid fan chart) */}
                   <ChartCard title="Panel 6: Bond Allocation (LDI vs RoT)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={wealthAllocationData}>
+                      <ComposedChart data={wealthAllocationData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} domain={[0, 100]} tickFormatter={formatPercent} />
-                        <Tooltip formatter={percentTooltipFormatter} />
+                        <Tooltip content={makeFanTooltip((v) => `${Math.round(v)}%`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
-                        {/* LDI lines */}
-                        <Line type="monotone" dataKey="ldi_bond_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_bond_p5" stackId="ldi_bond" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_bond_band_5_25" stackId="ldi_bond" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_bond_band_25_75" stackId="ldi_bond" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_bond_band_75_95" stackId="ldi_bond" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_bond_p5" stackId="rot_bond" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_bond_band_5_25" stackId="rot_bond" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_bond_band_25_75" stackId="rot_bond" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_bond_band_75_95" stackId="rot_bond" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_bond_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_bond_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT lines */}
-                        <Line type="monotone" dataKey="rot_bond_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_bond_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_bond_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       Duration-matched bonds for LDI. Y-axis: 0-100%.
@@ -6324,23 +6374,28 @@ export default function LifecycleVisualizer() {
                   {/* Panel 9: Net Fixed Income PV */}
                   <ChartCard title="Panel 9: Net Fixed Income PV ($k)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={netFiPvData}>
+                      <ComposedChart data={netFiPvData}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}k`} />
-                        <Tooltip formatter={(v, name) => [`$${Math.round(v as number)}k`, name]} />
+                        <Tooltip content={makeFanTooltip((v) => `$${Math.round(v)}k`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
-                        {/* LDI lines */}
-                        <Line type="monotone" dataKey="ldi_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_p5" stackId="ldi_fi" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_band_5_25" stackId="ldi_fi" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_band_25_75" stackId="ldi_fi" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_band_75_95" stackId="ldi_fi" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_p5" stackId="rot_fi" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_band_5_25" stackId="rot_fi" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_band_25_75" stackId="rot_fi" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_band_75_95" stackId="rot_fi" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT lines */}
-                        <Line type="monotone" dataKey="rot_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       Net FI PV = Bond Holdings + HC Bond - Expense Bond. Zero line = perfectly hedged.
@@ -6350,23 +6405,28 @@ export default function LifecycleVisualizer() {
                   {/* Panel 10: DV01 (Interest Rate Sensitivity) */}
                   <ChartCard title="Panel 10: Interest Rate Sensitivity (DV01)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={dv01Data}>
+                      <ComposedChart data={dv01Data}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `$${Math.round(v)}`} />
-                        <Tooltip formatter={(v, name) => [`$${Math.round(v as number)}`, name]} />
+                        <Tooltip content={makeFanTooltip((v) => `$${Math.round(v)}`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
-                        {/* LDI lines */}
-                        <Line type="monotone" dataKey="ldi_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_p5" stackId="ldi_dv" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_band_5_25" stackId="ldi_dv" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_band_25_75" stackId="ldi_dv" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_band_75_95" stackId="ldi_dv" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_p5" stackId="rot_dv" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_band_5_25" stackId="rot_dv" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_band_25_75" stackId="rot_dv" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_band_75_95" stackId="rot_dv" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT lines */}
-                        <Line type="monotone" dataKey="rot_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       DV01 = Dollar value change per 1pp rate move. Zero = duration matched.
@@ -6376,23 +6436,28 @@ export default function LifecycleVisualizer() {
                   {/* Panel 11: Net Wealth (HC + FW - PV Expenses) */}
                   <ChartCard title="Panel 11: Net Wealth (HC + FW − Expenses)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={netWealthData}>
+                      <ComposedChart data={netWealthData}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={symlogTickFormatter} />
-                        <Tooltip formatter={symlogTooltipFormatter} />
+                        <Tooltip content={makeFanTooltip((v) => `$${Math.round(symlogInv(v))}k`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
-                        {/* LDI Net Worth lines */}
-                        <Line type="monotone" dataKey="ldi_nw_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_nw_p5" stackId="ldi_nw" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_nw_band_5_25" stackId="ldi_nw" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_nw_band_25_75" stackId="ldi_nw" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_nw_band_75_95" stackId="ldi_nw" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_nw_p5" stackId="rot_nw" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_nw_band_5_25" stackId="rot_nw" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_nw_band_25_75" stackId="rot_nw" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_nw_band_75_95" stackId="rot_nw" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_nw_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_nw_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT Net Worth lines */}
-                        <Line type="monotone" dataKey="rot_nw_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_nw_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_nw_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       Net Wealth = HC + FW − PV(Expenses). Zero means exactly funded.
@@ -6402,23 +6467,28 @@ export default function LifecycleVisualizer() {
                   {/* Panel 12: Annual Consumption (LDI vs RoT) */}
                   <ChartCard title="Panel 12: Annual Consumption (LDI vs RoT)">
                     <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={consumptionData}>
+                      <ComposedChart data={consumptionData}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={symlogTickFormatter} />
-                        <Tooltip formatter={symlogTooltipFormatter} />
+                        <Tooltip content={makeFanTooltip((v) => `$${Math.round(symlogInv(v))}k`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#999" strokeDasharray="3 3" />
                         <ReferenceLine y={0} stroke="#000" strokeWidth={1.5} opacity={0.7} />
-                        {/* LDI lines */}
-                        <Line type="monotone" dataKey="ldi_cons_p5" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 5th" />
+                        {/* LDI fan bands */}
+                        <Area type="monotone" dataKey="ldi_cons_p5" stackId="ldi_cons" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_cons_band_5_25" stackId="ldi_cons" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_cons_band_25_75" stackId="ldi_cons" fill={COLOR_LDI} fillOpacity={0.2} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="ldi_cons_band_75_95" stackId="ldi_cons" fill={COLOR_LDI} fillOpacity={0.1} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* RoT fan bands */}
+                        <Area type="monotone" dataKey="rot_cons_p5" stackId="rot_cons" fill="transparent" stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_cons_band_5_25" stackId="rot_cons" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_cons_band_25_75" stackId="rot_cons" fill={COLOR_ROT} fillOpacity={0.22} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        <Area type="monotone" dataKey="rot_cons_band_75_95" stackId="rot_cons" fill={COLOR_ROT} fillOpacity={0.12} stroke="transparent" legendType="none" isAnimationActive={false} />
+                        {/* Median lines */}
                         <Line type="monotone" dataKey="ldi_cons_p50" stroke={COLOR_LDI} strokeWidth={2} dot={false} name="LDI Median" />
-                        <Line type="monotone" dataKey="ldi_cons_p95" stroke={COLOR_LDI} strokeWidth={1} strokeDasharray="2 2" dot={false} name="LDI 95th" />
-                        {/* RoT lines */}
-                        <Line type="monotone" dataKey="rot_cons_p5" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 5th" />
                         <Line type="monotone" dataKey="rot_cons_p50" stroke={COLOR_ROT} strokeWidth={2} dot={false} name="RoT Median" />
-                        <Line type="monotone" dataKey="rot_cons_p95" stroke={COLOR_ROT} strokeWidth={1} strokeDasharray="2 2" dot={false} name="RoT 95th" />
                         <Legend wrapperStyle={{ fontSize: '11px' }} />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                     <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '4px' }}>
                       Annual total consumption (subsistence + variable). LDI adapts; RoT uses fixed 4% rule.

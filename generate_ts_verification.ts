@@ -462,8 +462,8 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
-    // Cap consumption at available resources (fw + earnings)
-    const available = fw + earnings[i];
+    // Cap consumption to leave at least $1K investable
+    const available = Math.max(0, fw + earnings[i] - 1.0);
     if (subsistenceConsumption[i] > available) {
       totalConsumption[i] = available;
       subsistenceConsumption[i] = available;

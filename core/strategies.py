@@ -120,8 +120,8 @@ class LDIStrategy:
 
         # Apply constraints: can't consume more than available resources
         # Budget: fw[t+1] = (fw + earnings - consumption)*(1+r), so solvency
-        # requires consumption <= fw + earnings
-        available = fw + state.earnings
+        # requires consumption <= fw + earnings - MIN_WEALTH to keep fw > 0
+        available = max(0.0, fw + state.earnings - 1.0)
         if total_cons > available:
             total_cons = available
             variable = max(0, available - subsistence)
@@ -219,7 +219,7 @@ class RuleOfThumbStrategy:
                 variable = baseline_consumption - subsistence
             else:
                 # Can't meet baseline, try to cover subsistence
-                available = state.earnings + fw
+                available = max(0.0, state.earnings + fw - 1.0)
                 if available >= subsistence:
                     total_cons = subsistence
                     variable = 0.0
@@ -243,10 +243,11 @@ class RuleOfThumbStrategy:
                 )
 
             target_consumption = max(self._retirement_consumption, subsistence)
-            if fw < target_consumption:
-                total_cons = fw
-                subsistence = min(fw, state.expenses)
-                variable = max(0, fw - state.expenses)
+            available = max(0.0, fw + state.earnings - 1.0)
+            if target_consumption > available:
+                total_cons = available
+                subsistence = min(available, state.expenses)
+                variable = max(0, available - state.expenses)
             else:
                 total_cons = target_consumption
                 variable = target_consumption - subsistence
@@ -317,9 +318,10 @@ class FixedConsumptionStrategy:
                     target_fin_cash=0.0,
                 )
 
-            if fw < self._retirement_consumption:
-                total_cons = fw
-                subsistence = min(state.expenses, fw)
+            available = max(0.0, fw + state.earnings - 1.0)
+            if self._retirement_consumption > available:
+                total_cons = available
+                subsistence = min(state.expenses, available)
                 variable = max(0, total_cons - subsistence)
             else:
                 total_cons = self._retirement_consumption

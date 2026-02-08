@@ -114,9 +114,8 @@ def create_teaching_scenario(
         variable = max(0, consumption_rate * net_worth)
         total_cons = subsistence + variable
 
-        # Apply constraints: can't consume more than available resources
-        # Budget: (fw + earnings - consumption)*(1+r), solvency requires consumption <= fw + earnings
-        available = fw + earnings[t]
+        # Apply constraints: leave at least $1K investable
+        available = max(0.0, fw + earnings[t] - 1.0)
         if defaulted or fw <= 0:
             defaulted = True
             total_cons = 0
