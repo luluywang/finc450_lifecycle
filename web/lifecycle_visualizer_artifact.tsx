@@ -78,6 +78,7 @@ interface LifecycleParams {
   // Consumption parameters
   consumptionShare: number;     // Share of net worth consumed above subsistence
   consumptionBoost: number;     // Boost above median return for consumption rate
+  annuityConsumption: boolean;  // Annuity-adjust consumption rate to spend down by end_age
 
   // Asset allocation parameters
   stockBetaHumanCapital: number; // Beta of human capital to stocks
@@ -126,6 +127,7 @@ const DEFAULT_LIFECYCLE_PARAMS: LifecycleParams = {
   // Consumption parameters
   consumptionShare: 0.05,       // 5% of net worth consumed above subsistence
   consumptionBoost: 0.0,        // No boost
+  annuityConsumption: false,    // No annuity adjustment
 
   // Asset allocation parameters
   stockBetaHumanCapital: 0.0,   // Bond-like human capital
@@ -190,6 +192,7 @@ const CONSERVATIVE_LIFECYCLE_PARAMS: LifecycleParams = {
   // Consumption parameters (more cautious)
   consumptionShare: 0.03,       // Lower consumption share (3% vs 5%)
   consumptionBoost: 0.0,
+  annuityConsumption: false,
 
   // Asset allocation parameters
   stockBetaHumanCapital: 0.0,   // Bond-like human capital
@@ -396,6 +399,7 @@ interface Params {
   phi: number;
   maxDuration?: number;  // Cap on computed durations (undefined = no cap)
   consumptionBoost: number;  // Boost above median return for consumption rate
+  annuityConsumption: boolean;  // Annuity-adjust consumption rate to spend down by end_age
 }
 
 // Raw muBond calculation from primitive values
@@ -434,6 +438,7 @@ function toLegacyParams(lp: LifecycleParams, ep: EconomicParams): Params {
     phi: ep.phi,
     maxDuration: ep.maxDuration,
     consumptionBoost: lp.consumptionBoost,
+    annuityConsumption: lp.annuityConsumption,
   };
 }
 
@@ -446,6 +451,19 @@ function computePortfolioVariance(
   const sigmaB = duration * sigmaR;
   const covSB = -duration * sigmaS * sigmaR * rho;
   return wS * wS * sigmaS * sigmaS + wB * wB * sigmaB * sigmaB + 2 * wS * wB * covSB;
+}
+
+/**
+ * Finite-horizon consumption rate: 1/A(T-t) where A is annuity factor at ceReturn.
+ * Implements Merton finite-horizon optimal consumption rate.
+ */
+function annuityConsumptionRate(ceReturn: number, remainingYears: number): number {
+  if (remainingYears <= 0) return 1.0;
+  if (Math.abs(ceReturn) > 1e-10) {
+    const annuity = (1 - Math.pow(1 + ceReturn, -remainingYears)) / ceReturn;
+    return 1.0 / annuity;
+  }
+  return 1.0 / remainingYears;
 }
 
 interface LifecycleResult {
@@ -1425,7 +1443,13 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
         wC * r;
 
       const portfolioVar = computePortfolioVariance(wS, wB, sigmaS, sigmaR, D, rho);
-      effectiveConsumptionRate = expectedReturn - 0.5 * portfolioVar + state.params.consumptionBoost;
+      const ceReturn = expectedReturn - 0.5 * portfolioVar + state.params.consumptionBoost;
+      if (state.params.annuityConsumption) {
+        const remaining = state.params.endAge - state.age;
+        effectiveConsumptionRate = annuityConsumptionRate(ceReturn, remaining);
+      } else {
+        effectiveConsumptionRate = ceReturn;
+      }
     } else {
       effectiveConsumptionRate = consumptionRate;
     }
@@ -2907,7 +2931,10 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const portfolioVarPrelim = computePortfolioVariance(
       wSPrelim, wBPrelim, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
     );
-    const consumptionRate = expectedReturnPrelim - 0.5 * portfolioVarPrelim + params.consumptionBoost;
+    const ceReturnI = expectedReturnPrelim - 0.5 * portfolioVarPrelim + params.consumptionBoost;
+    const consumptionRate = params.annuityConsumption
+      ? annuityConsumptionRate(ceReturnI, totalYears - i)
+      : ceReturnI;
 
     // Compute consumption using dynamic rate
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
@@ -3146,6 +3173,7 @@ function generateVerificationData(params: Params): Record<string, unknown> {
     retirementExpenses: params.retirementExpenses,
     consumptionShare: 0.05,
     consumptionBoost: 0.0,
+    annuityConsumption: false,
     stockBetaHumanCapital: params.stockBetaHC,
     gamma: params.gamma,
     targetStockAllocation: 0.6,
@@ -3361,7 +3389,10 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     const portfolioVarPrelimI = computePortfolioVariance(
       wSPrelim, wBPrelim, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
     );
-    const consumptionRateI = expectedReturnPrelimI - 0.5 * portfolioVarPrelimI + params.consumptionBoost;
+    const ceReturnStochI = expectedReturnPrelimI - 0.5 * portfolioVarPrelimI + params.consumptionBoost;
+    const consumptionRateI = params.annuityConsumption
+      ? annuityConsumptionRate(ceReturnStochI, totalYears - i)
+      : ceReturnStochI;
 
     variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
@@ -3680,7 +3711,10 @@ function computeScenarioPath(
       const portfolioVarI = computePortfolioVariance(
         stockWeightPrelim, bondWeightPrelim, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
       );
-      const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
+      const ceReturnScenI = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
+      const consumptionRateI = params.annuityConsumption
+        ? annuityConsumptionRate(ceReturnScenI, totalYears - i)
+        : ceReturnScenI;
       variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
       totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
 
@@ -4133,6 +4167,7 @@ export default function LifecycleVisualizer() {
     bondDuration: 20,
     phi: 1.0,
     consumptionBoost: 0.0,
+    annuityConsumption: false,
   });
 
   const updateParam = (key: keyof Params, value: number) => {
@@ -4189,6 +4224,7 @@ export default function LifecycleVisualizer() {
     retirementExpenses: params.retirementExpenses,
     consumptionShare: 0.05,
     consumptionBoost: params.consumptionBoost,
+    annuityConsumption: params.annuityConsumption,
     gamma: params.gamma,
     stockBetaHumanCapital: params.stockBetaHC,  // Use selected beta from params
     targetStockAllocation: 0.6,
@@ -4641,6 +4677,14 @@ export default function LifecycleVisualizer() {
             onChange={(v) => updateParam('consumptionBoost', v / 100)}
             min={0} max={5} step={0.5} suffix="%" decimals={1}
           />
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={params.annuityConsumption}
+              onChange={(e) => setParams(prev => ({ ...prev, annuityConsumption: e.target.checked }))}
+            />
+            Annuity consumption (spend down by end age)
+          </label>
         </ParamGroup>
 
         {/* Target allocation summary */}

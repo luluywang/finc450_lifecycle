@@ -146,6 +146,18 @@ function computeFullMertonAllocationConstrained(
   return [wStock, wBond, wCash];
 }
 
+/**
+ * Finite-horizon consumption rate: 1/A(T-t) where A is annuity factor at ceReturn.
+ */
+function annuityConsumptionRate(ceReturn: number, remainingYears: number): number {
+  if (remainingYears <= 0) return 1.0;
+  if (Math.abs(ceReturn) > 1e-10) {
+    const annuity = (1 - Math.pow(1 + ceReturn, -remainingYears)) / ceReturn;
+    return 1.0 / annuity;
+  }
+  return 1.0 / remainingYears;
+}
+
 // =============================================================================
 // Default Parameters (matching Python)
 // =============================================================================
@@ -458,7 +470,9 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
       wBPrelim * wBPrelim * sigmaBi * sigmaBi +
       2 * wSPrelim * wBPrelim * covSBi
     );
-    const consumptionRate = expectedReturnPrelim - 0.5 * portfolioVarPrelim;
+    const ceReturnI = expectedReturnPrelim - 0.5 * portfolioVarPrelim;
+    // annuityConsumption is false for verification (matches Python defaults)
+    const consumptionRate = ceReturnI;
 
     // Compute consumption using dynamic rate
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
