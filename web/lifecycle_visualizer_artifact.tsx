@@ -1146,28 +1146,29 @@ function simulateWithStrategy(
 
       let hc = 0.0;
       let durationHc = 0.0;
+      const hcSpread = params.stockBetaHumanCapital * econParams.muExcess;
       if (isWorking) {
         const remainingEarnings = baseEarnings.slice(t, workingYears);
-        hc = computePresentValue(remainingEarnings, currentRate, phi, rBar);
-        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar, econParams.maxDuration);
+        hc = computePresentValue(remainingEarnings, currentRate + hcSpread, phi, rBar + hcSpread);
+        durationHc = computeDuration(remainingEarnings, currentRate + hcSpread, phi, rBar + hcSpread, econParams.maxDuration);
       }
 
       humanCapital[t] = hc;
 
       // Compute HC decomposition at current rate
+      // Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
       let hcStock = 0.0;
       let hcBond = 0.0;
       let hcCash = 0.0;
       if (isWorking && hc > 0) {
         hcStock = hc * params.stockBetaHumanCapital;
-        const nonStockHc = hc * (1.0 - params.stockBetaHumanCapital);
         if (econParams.bondDuration > 0) {
           const hcBondFrac = durationHc / econParams.bondDuration;
-          hcBond = nonStockHc * hcBondFrac;
-          hcCash = nonStockHc * (1.0 - hcBondFrac);
+          hcBond = hc * hcBondFrac;
+          hcCash = hc - hcStock - hcBond;
         } else {
           hcBond = 0.0;
-          hcCash = nonStockHc;
+          hcCash = hc - hcStock;
         }
       }
 
@@ -1861,20 +1862,21 @@ function computeNetFiPvAndDv01Paths(
       const pvExp = computePresentValue(remainingExpenses, currentRate, phi, rBar);
       const durationExp = computeDuration(remainingExpenses, currentRate, phi, rBar, econParams.maxDuration);
 
-      // Compute duration of HC at current rate
+      // Compute duration of HC at current rate (with hcSpread for risky HC)
+      const hcSpread = stockBeta * econParams.muExcess;
       let durationHc = 0;
       if (isWorking) {
         const remainingEarnings = baseEarnings.slice(t, workingYears);
-        durationHc = computeDuration(remainingEarnings, currentRate, phi, rBar, econParams.maxDuration);
+        durationHc = computeDuration(remainingEarnings, currentRate + hcSpread, phi, rBar + hcSpread, econParams.maxDuration);
       }
 
       // Decompose HC into bond-like and other components
+      // Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
       let hcBond = 0;
       if (isWorking && hc > 0) {
-        const nonStockHc = hc * (1 - stockBeta);
         if (bondDuration > 0) {
           const bondFrac = durationHc / bondDuration;
-          hcBond = nonStockHc * bondFrac;
+          hcBond = hc * bondFrac;
         }
       }
 
@@ -2789,6 +2791,7 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const durationEarnings = Array(totalYears).fill(0);
   const durationExpenses = Array(totalYears).fill(0);
 
+  const hcSpread = params.stockBetaHC * params.muStock;
   for (let i = 0; i < totalYears; i++) {
     // Remaining earnings
     let remainingEarnings: number[] = [];
@@ -2800,9 +2803,10 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const remainingExpenses = expenses.slice(i);
 
     // Use VCV term structure (phi, rBar) to match Python compute_static_pvs
-    pvEarnings[i] = computePresentValue(remainingEarnings, r, phi, r);
+    // HC discounted at r + hcSpread (CAPM-adjusted rate)
+    pvEarnings[i] = computePresentValue(remainingEarnings, r + hcSpread, phi, r + hcSpread);
     pvExpenses[i] = computePresentValue(remainingExpenses, r, phi, r);
-    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r, params.maxDuration);
+    durationEarnings[i] = computeDuration(remainingEarnings, r + hcSpread, phi, r + hcSpread, params.maxDuration);
     durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r, params.maxDuration);
   }
 
@@ -2810,20 +2814,20 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const humanCapital = [...pvEarnings];
 
   // Decompose human capital
+  // Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
   const hcStock = humanCapital.map(hc => hc * params.stockBetaHC);
-  const nonStockHC = humanCapital.map(hc => hc * (1 - params.stockBetaHC));
 
   const hcBond = Array(totalYears).fill(0);
   const hcCash = Array(totalYears).fill(0);
 
   // Unconstrained calculation - bond fraction can exceed 1.0 when duration > bondDuration
   for (let i = 0; i < totalYears; i++) {
-    if (params.bondDuration > 0 && nonStockHC[i] > 0) {
+    if (params.bondDuration > 0 && humanCapital[i] > 0) {
       const bondFraction = durationEarnings[i] / params.bondDuration;
-      hcBond[i] = nonStockHC[i] * bondFraction;
-      hcCash[i] = nonStockHC[i] * (1 - bondFraction);
+      hcBond[i] = humanCapital[i] * bondFraction;
+      hcCash[i] = humanCapital[i] - hcStock[i] - hcBond[i];
     } else {
-      hcCash[i] = nonStockHC[i];
+      hcCash[i] = humanCapital[i] - hcStock[i];
     }
   }
 
@@ -3305,23 +3309,24 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     }
     const remainingExpenses = expenses.slice(i);
 
-    pvEarnings[i] = computePresentValue(remainingEarnings, preShockRate, phi, params.rBar);
+    const hcSpreadI = params.stockBetaHC * params.muStock;
+    pvEarnings[i] = computePresentValue(remainingEarnings, preShockRate + hcSpreadI, phi, params.rBar + hcSpreadI);
     pvExpenses[i] = computePresentValue(remainingExpenses, preShockRate, phi, params.rBar);
-    durationEarnings[i] = computeDuration(remainingEarnings, preShockRate, phi, params.rBar, params.maxDuration);
+    durationEarnings[i] = computeDuration(remainingEarnings, preShockRate + hcSpreadI, phi, params.rBar + hcSpreadI, params.maxDuration);
     durationExpenses[i] = computeDuration(remainingExpenses, preShockRate, phi, params.rBar, params.maxDuration);
 
     humanCapital[i] = pvEarnings[i];
 
     // Decompose human capital (no cap on bond fraction — matches Python and median path)
+    // Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
     hcStock[i] = humanCapital[i] * params.stockBetaHC;
-    const nonStockHC = humanCapital[i] * (1 - params.stockBetaHC);
 
-    if (params.bondDuration > 0 && nonStockHC > 0) {
+    if (params.bondDuration > 0 && humanCapital[i] > 0) {
       const bondFraction = durationEarnings[i] / params.bondDuration;
-      hcBond[i] = nonStockHC * bondFraction;
-      hcCash[i] = nonStockHC * (1 - bondFraction);
+      hcBond[i] = humanCapital[i] * bondFraction;
+      hcCash[i] = humanCapital[i] - hcStock[i] - hcBond[i];
     } else {
-      hcCash[i] = nonStockHC;
+      hcCash[i] = humanCapital[i] - hcStock[i];
     }
 
     // Decompose expenses
@@ -3618,23 +3623,24 @@ function computeScenarioPath(
     }
     const remainingExpenses = expenses.slice(i);
 
-    const pvEarnings = computePresentValue(remainingEarnings, preShockRate, phi, params.rBar);
+    const hcSpreadI = params.stockBetaHC * params.muStock;
+    const pvEarnings = computePresentValue(remainingEarnings, preShockRate + hcSpreadI, phi, params.rBar + hcSpreadI);
     const pvExpenses = computePresentValue(remainingExpenses, preShockRate, phi, params.rBar);
-    const durationEarnings = computeDuration(remainingEarnings, preShockRate, phi, params.rBar, params.maxDuration);
+    const durationEarnings = computeDuration(remainingEarnings, preShockRate + hcSpreadI, phi, params.rBar + hcSpreadI, params.maxDuration);
 
     const humanCapital = pvEarnings;
 
     // HC decomposition for portfolio (no cap on bond fraction — matches Python and median path)
+    // Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
     const hcStock = humanCapital * params.stockBetaHC;
-    const nonStockHC = humanCapital * (1 - params.stockBetaHC);
     let hcBond = 0;
     let hcCash = 0;
-    if (params.bondDuration > 0 && nonStockHC > 0) {
+    if (params.bondDuration > 0 && humanCapital > 0) {
       const bondFraction = durationEarnings / params.bondDuration;
-      hcBond = nonStockHC * bondFraction;
-      hcCash = nonStockHC * (1 - bondFraction);
+      hcBond = humanCapital * bondFraction;
+      hcCash = humanCapital - hcStock - hcBond;
     } else {
-      hcCash = nonStockHC;
+      hcCash = humanCapital - hcStock;
     }
 
     // Decompose expenses
@@ -6184,7 +6190,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `${Math.exp(v).toFixed(0)}x`} domain={['auto', 'auto']} />
-                        <Tooltip formatter={(v) => v !== undefined ? [`${Math.exp(v as number).toFixed(1)}x`, 'Cumulative'] : ['', '']} />
+                        <Tooltip content={makeFanTooltip((v) => `${Math.exp(v).toFixed(1)}x`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
                         <Area type="monotone" dataKey="sr_p5" stackId="sr" fill="transparent" stroke="transparent" />
@@ -6206,7 +6212,7 @@ export default function LifecycleVisualizer() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="age" fontSize={11} />
                         <YAxis fontSize={11} tickFormatter={(v) => `${v.toFixed(1)}%`} domain={['auto', 'auto']} />
-                        <Tooltip formatter={(v) => v !== undefined ? [`${(v as number).toFixed(2)}%`, 'Rate'] : ['', '']} />
+                        <Tooltip content={makeFanTooltip((v) => `${v.toFixed(2)}%`)} />
                         <ReferenceLine x={scenarioRetirementAge} stroke="#666" strokeDasharray="5 5" />
                         <Area type="monotone" dataKey="rate_p5" stackId="rate" fill="transparent" stroke="transparent" />
                         <Area type="monotone" dataKey="rate_band_5_25" stackId="rate" fill={COLOR_RATES} fillOpacity={0.15} stroke="transparent" />
