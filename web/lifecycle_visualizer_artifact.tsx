@@ -1248,8 +1248,11 @@ function simulateWithStrategy(
       // Check for default: budget constraint binding in retirement.
       // LDI adjusts discretionary down so only hits cap when broke.
       // RoT/Fixed have fixed targets so hit it when FW can't support withdrawal.
+      // Skip last period under annuity consumption (spending down is intentional).
       const availableForDefault = Math.max(0, fw + currentEarnings - 1.0);
-      if (!isWorking && actions.consumption >= availableForDefault - 1e-6 && !defaulted) {
+      const isLastPeriod = (t === totalYears - 1);
+      if (!isWorking && actions.consumption >= availableForDefault - 1e-6 && !defaulted
+          && !(isLastPeriod && lifecycleParams.annuityConsumption)) {
         defaulted = true;
         defaultAge = age;
       }
@@ -3731,8 +3734,9 @@ function computeScenarioPath(
       {
         const fw = financialWealth[i];
         const availableI = Math.max(0, fw + earnings[i] - 1.0);
+        const isLastPeriodScen = (i === totalYears - 1);
         if (subsistenceConsumption[i] > availableI) {
-          if (!defaulted) {
+          if (!defaulted && !(isLastPeriodScen && params.annuityConsumption)) {
             defaulted = true;
             defaultAge = params.startAge + i;
           }
@@ -3780,8 +3784,10 @@ function computeScenarioPath(
           variableConsumption[i] = Math.max(0, totalConsumption[i] - subsistenceConsumption[i]);
 
           // Check if we can't even meet subsistence
+          // Skip last period under annuity consumption (spending down is intentional)
           if (availableRetire < subsistenceConsumption[i]) {
-            if (!defaulted) {
+            const isLastPeriod4pct = (i === totalYears - 1);
+            if (!defaulted && !(isLastPeriod4pct && params.annuityConsumption)) {
               defaulted = true;
               defaultAge = age;
             }

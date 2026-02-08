@@ -500,8 +500,12 @@ def simulate_with_strategy(
             # LDI adjusts discretionary consumption down, so it only hits the
             # cap when truly broke.  RoT/Fixed have fixed targets, so they hit
             # it whenever FW can't support the planned withdrawal.
+            # Skip last period under annuity consumption (spending down is intentional).
             available = max(0.0, fw + current_earnings - 1.0)
-            if not is_working and actions.total_consumption >= available - 1e-6 and not defaulted:
+            is_last_period = (t == total_years - 1)
+            if (not is_working and actions.total_consumption >= available - 1e-6
+                    and not defaulted
+                    and not (is_last_period and params.annuity_consumption)):
                 defaulted = True
                 default_flags[sim] = True
                 default_ages[sim] = age

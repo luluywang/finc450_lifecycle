@@ -127,7 +127,9 @@ def create_teaching_scenario(
         elif total_cons > available:
             total_cons = available
             # Default if can't meet subsistence in retirement
-            if t >= working_years and total_cons < subsistence:
+            # Skip last period under annuity consumption (spending down is intentional)
+            is_last_period = (t == total_years - 1)
+            if t >= working_years and total_cons < subsistence and not (is_last_period and params.annuity_consumption):
                 defaulted = True
 
         total_consumption[t] = total_cons
