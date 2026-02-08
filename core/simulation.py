@@ -496,8 +496,12 @@ def simulate_with_strategy(
             else:
                 actions = strategy(state)
 
-            # Check for default: can't meet subsistence in retirement
-            if not is_working and actions.total_consumption < expenses[t] and not defaulted:
+            # Check for default: budget constraint binding in retirement.
+            # LDI adjusts discretionary consumption down, so it only hits the
+            # cap when truly broke.  RoT/Fixed have fixed targets, so they hit
+            # it whenever FW can't support the planned withdrawal.
+            available = max(0.0, fw + current_earnings - 1.0)
+            if not is_working and actions.total_consumption >= available - 1e-6 and not defaulted:
                 defaulted = True
                 default_flags[sim] = True
                 default_ages[sim] = age

@@ -1226,8 +1226,11 @@ function simulateWithStrategy(
         actions = strategy(state);
       }
 
-      // Check for default: can't meet subsistence in retirement
-      if (!isWorking && actions.consumption < expenses[t] && !defaulted) {
+      // Check for default: budget constraint binding in retirement.
+      // LDI adjusts discretionary down so only hits cap when broke.
+      // RoT/Fixed have fixed targets so hit it when FW can't support withdrawal.
+      const availableForDefault = Math.max(0, fw + currentEarnings - 1.0);
+      if (!isWorking && actions.consumption >= availableForDefault - 1e-6 && !defaulted) {
         defaulted = true;
         defaultAge = age;
       }
@@ -4031,14 +4034,33 @@ const makeFanTooltip = (fmt: (v: number) => string) =>
     if (!active || !payload) return null;
     const medians = payload.filter((e: any) => String(e.dataKey).includes('p50'));
     if (medians.length === 0) return null;
+    const dataPoint = payload[0]?.payload;
     return (
       <div style={{ background: '#fff', border: '1px solid #ccc', padding: '6px 10px', borderRadius: '4px', fontSize: '11px' }}>
         <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>Age {label}</div>
-        {medians.map((e: any, idx: number) => (
-          <div key={idx} style={{ color: e.stroke || e.color }}>
-            {e.name || e.dataKey}: {fmt(e.value)}
-          </div>
-        ))}
+        {medians.map((e: any, idx: number) => {
+          const prefix = String(e.dataKey).replace(/_p50$/, '');
+          const p5 = dataPoint?.[`${prefix}_p5`];
+          const band525 = dataPoint?.[`${prefix}_band_5_25`];
+          const band2575 = dataPoint?.[`${prefix}_band_25_75`];
+          const band7595 = dataPoint?.[`${prefix}_band_75_95`];
+          const hasPercentiles = p5 != null && band525 != null && band2575 != null && band7595 != null;
+          const p25 = hasPercentiles ? p5 + band525 : undefined;
+          const p75 = hasPercentiles ? p5 + band525 + band2575 : undefined;
+          const p95 = hasPercentiles ? p5 + band525 + band2575 + band7595 : undefined;
+          return (
+            <div key={idx} style={{ marginBottom: idx < medians.length - 1 ? '4px' : 0 }}>
+              <div style={{ color: e.stroke || e.color, fontWeight: 600 }}>
+                {e.name || e.dataKey}: {fmt(e.value)}
+              </div>
+              {hasPercentiles && (
+                <div style={{ color: '#888', fontSize: '10px', paddingLeft: '6px' }}>
+                  5th: {fmt(p5)} · 25th: {fmt(p25!)} · 75th: {fmt(p75!)} · 95th: {fmt(p95!)}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   };
