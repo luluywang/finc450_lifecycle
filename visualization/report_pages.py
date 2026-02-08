@@ -221,7 +221,8 @@ def _plot_to_ax_net_fi_pv(ax, x, result, econ_params, COLORS, xlabel, retirement
     - Positive = net long bonds (overhedged)
     - Negative = net short bonds (underhedged)
     """
-    bond_holdings = result.bond_weight_no_short * result.financial_wealth
+    investable = result.financial_wealth + result.savings
+    bond_holdings = result.bond_weight_no_short * investable
     net_fi_pv = bond_holdings + result.hc_bond_component - result.exp_bond_component
 
     ax.plot(x, net_fi_pv, color=COLORS['bond'], linewidth=2)
@@ -262,7 +263,8 @@ def _plot_to_ax_dv01(ax, x, result, econ_params, COLORS, xlabel, retirement_x):
     - Positive = net long duration (gains when rates drop)
     - Negative = net short duration (loses when rates drop)
     """
-    bond_holdings = result.bond_weight_no_short * result.financial_wealth
+    investable = result.financial_wealth + result.savings
+    bond_holdings = result.bond_weight_no_short * investable
     # All components are in bond-equivalent dollars, so use bond_duration uniformly
     total_bond_equiv_assets = result.hc_bond_component + bond_holdings
     total_bond_equiv_liabs = result.exp_bond_component

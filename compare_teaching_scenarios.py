@@ -721,8 +721,11 @@ def run_teaching_scenario(
     bond_duration = econ_params.bond_duration  # Scalar (default 20.0)
 
     # Compute bond holdings for each strategy - shape: (n_sims, n_periods)
-    ldi_bond_holdings = ldi_result.bond_weight * ldi_result.financial_wealth
-    rot_bond_holdings = rot_result.bond_weight * rot_result.financial_wealth
+    # Weights are normalized to investable = fw + savings, so use that base
+    ldi_investable = ldi_result.financial_wealth + ldi_result.savings
+    rot_investable = rot_result.financial_wealth + rot_result.savings
+    ldi_bond_holdings = ldi_result.bond_weight * ldi_investable
+    rot_bond_holdings = rot_result.bond_weight * rot_investable
 
     # Net Fixed Income PV = Bond holdings + HC_bond - Exp_bond
     # All arrays are (n_sims, n_periods) — no broadcasting needed

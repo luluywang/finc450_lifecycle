@@ -1855,6 +1855,9 @@ function computeNetFiPvAndDv01Paths(
   const humanCapital = result.humanCapital as number[][];
   const interestRates = result.interestRates as number[][];
 
+  const consumption = result.consumption as number[][];
+  const earningsPaths = result.earnings as number[][];
+
   const nSims = financialWealth.length;
   const nPeriods = financialWealth[0].length;
   const workingYears = params.retirementAge - params.startAge;
@@ -1912,7 +1915,10 @@ function computeNetFiPvAndDv01Paths(
       }
 
       // Net FI PV = Bond Holdings + HC Bond - Expense Bond
-      const bondHoldings = wB * fw;
+      // Weights are normalized to investable = fw + savings, so use that base
+      const savings = (earningsPaths[sim][t] ?? 0) - (consumption[sim][t] ?? 0);
+      const investable = fw + savings;
+      const bondHoldings = wB * investable;
       netFiPv.push(bondHoldings + hcBond - expBond);
 
       // DV01 = bondDuration * Net_FI_PV * 0.01
@@ -2991,15 +2997,18 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
 
   // Fixed Income Hedging Metrics
   // Net FI PV = Bond Holdings + HC Bond Component - Expense Bond Component
-  const netFiPv = financialWealth.map((fw, t) =>
-    bondWeight[t] * fw + hcBond[t] - expBond[t]
-  );
+  // Weights are normalized to investable = fw + savings, so use that base
+  const netFiPv = financialWealth.map((fw, t) => {
+    const investable = fw + earnings[t] - totalConsumption[t];
+    return bondWeight[t] * investable + hcBond[t] - expBond[t];
+  });
 
   // DV01 = bondDuration * (hcBond + bondHoldings - expBond) * 0.01
   // hcBond and expBond are already bond-equivalent amounts (scaled by dur_X / bondDuration),
   // so we use bondDuration uniformly (avoids double-counting duration)
   const dv01 = financialWealth.map((fw, t) => {
-    const bondHoldings = bondWeight[t] * fw;
+    const investable = fw + earnings[t] - totalConsumption[t];
+    const bondHoldings = bondWeight[t] * investable;
     return params.bondDuration * (hcBond[t] + bondHoldings - expBond[t]) * 0.01;
   });
 

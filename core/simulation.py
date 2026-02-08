@@ -885,10 +885,11 @@ def _sim_result_to_lifecycle_result(
     expenses[:working_years] = working_exp
     expenses[working_years:] = retirement_exp
 
-    # Total holdings
-    total_stocks = result.stock_weight * fw + result.hc_stock_component
-    total_bonds = result.bond_weight * fw + result.hc_bond_component
-    total_cash = result.cash_weight * fw + result.hc_cash_component
+    # Total holdings (weights are normalized to investable = fw + savings)
+    investable = fw + result.savings
+    total_stocks = result.stock_weight * investable + result.hc_stock_component
+    total_bonds = result.bond_weight * investable + result.hc_bond_component
+    total_cash = result.cash_weight * investable + result.hc_cash_component
 
     # Consumption share of FW
     consumption_share_of_fw = np.where(
