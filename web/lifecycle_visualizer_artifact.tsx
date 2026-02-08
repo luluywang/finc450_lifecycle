@@ -1252,7 +1252,7 @@ function simulateWithStrategy(
       const availableForDefault = Math.max(0, fw + currentEarnings - 1.0);
       const isLastPeriod = (t === totalYears - 1);
       if (!isWorking && actions.consumption >= availableForDefault - 1e-6 && !defaulted
-          && !(isLastPeriod && lifecycleParams.annuityConsumption)) {
+          && !(isLastPeriod && params.annuityConsumption)) {
         defaulted = true;
         defaultAge = age;
       }
