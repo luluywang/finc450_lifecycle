@@ -15,7 +15,7 @@ from .params import (
     ScenarioResult,
     SimulationResult,
 )
-from .economics import compute_full_merton_allocation
+from .economics import compute_full_merton_allocation, annuity_consumption_rate
 from .simulation import compute_lifecycle_median_path
 
 
@@ -100,7 +100,7 @@ def create_teaching_scenario(
         target_bond**2 * sigma_b**2 +
         2 * target_stock * target_bond * cov_sb
     )
-    consumption_rate = expected_return - 0.5 * portfolio_var + params.consumption_boost
+    ce_return = expected_return - 0.5 * portfolio_var + params.consumption_boost
 
     defaulted = False
 
@@ -109,7 +109,13 @@ def create_teaching_scenario(
         hc = human_capital[t]
         net_worth = hc + fw - pv_expenses[t]
 
-        # Compute consumption
+        # Compute consumption rate (time-varying if annuity mode)
+        if params.annuity_consumption:
+            remaining = total_years - t
+            consumption_rate = annuity_consumption_rate(ce_return, remaining)
+        else:
+            consumption_rate = ce_return
+
         subsistence = expenses[t]
         variable = max(0, consumption_rate * net_worth)
         total_cons = subsistence + variable

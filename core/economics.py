@@ -708,6 +708,29 @@ def simulate_stock_returns(
     return stock_returns
 
 
+def annuity_consumption_rate(ce_return: float, remaining_years: int) -> float:
+    """
+    Finite-horizon consumption rate: 1/A(T-t) where A is annuity factor at ce_return.
+
+    This implements the Merton finite-horizon optimal consumption rate, which
+    increases the drawdown rate as end-of-life approaches, converging to
+    "consume everything" in the final year.
+
+    Args:
+        ce_return: Certainty-equivalent portfolio return (geometric mean)
+        remaining_years: Years remaining until end_age (T - t)
+
+    Returns:
+        Consumption rate (fraction of net worth to consume per year)
+    """
+    if remaining_years <= 0:
+        return 1.0
+    if abs(ce_return) > 1e-10:
+        annuity = (1 - (1 + ce_return) ** (-remaining_years)) / ce_return
+        return 1.0 / annuity
+    return 1.0 / remaining_years
+
+
 def compute_funded_ratio(
     wealth: np.ndarray,
     rates: np.ndarray,

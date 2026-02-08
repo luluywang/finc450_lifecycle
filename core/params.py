@@ -82,6 +82,9 @@ class LifecycleParams:
     target_stock_allocation: float = 0.60    # Target stock allocation (used if gamma=0)
     target_bond_allocation: float = 0.30     # Target bond allocation (used if gamma=0)
 
+    # Consumption parameters (advanced)
+    annuity_consumption: bool = False   # "Make the Last Check Bounce" — annuity-adjust consumption rate to spend down by end_age
+
     # Portfolio constraint parameters
     max_leverage: float = 1.0       # Max total long exposure as multiple of FW (1.0 = no borrowing)
 

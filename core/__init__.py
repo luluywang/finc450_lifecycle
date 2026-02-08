@@ -62,6 +62,7 @@ from .economics import (
     simulate_interest_rates_random_walk,
     simulate_stock_returns,
     compute_funded_ratio,
+    annuity_consumption_rate,
 )
 
 # Teaching scenarios
@@ -134,6 +135,7 @@ __all__ = [
     'simulate_interest_rates_random_walk',
     'simulate_stock_returns',
     'compute_funded_ratio',
+    'annuity_consumption_rate',
     # Teaching scenarios
     'create_teaching_scenario',
     'generate_teaching_scenarios',

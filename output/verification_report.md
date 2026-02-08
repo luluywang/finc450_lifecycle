@@ -4,11 +4,11 @@
 
 ## Discrepancies
 
+### Missing Typescript
+- `root.simulation_test`
+- `root.monte_carlo_stats`
+
 ### Value Mismatch
 - `root.metadata.source`
   - Python: Python (core module)
   - TypeScript: TypeScript (standalone generator)
-
-### Missing Typescript
-- `root.monte_carlo_stats`
-- `root.simulation_test`

@@ -217,13 +217,13 @@ These MV weights are used \emph{unconstrained} as target allocations. Constraint
 
 \subsection{Human Capital Decomposition}
 
-Assuming HC has stock exposure $\beta_{HC}$ and the rest is bond-like:
+HC has stock exposure $\beta_{HC}$ and interest-rate duration $D^{HC}_t$. The bond hedge uses the \emph{full} HC (not just the non-stock portion), because all of HC has interest-rate duration regardless of its stock beta. When $\beta_{HC} > 0$, the higher CAPM discount rate ($r + \beta_{HC}\mu_s$) naturally shortens $D^{HC}_t$ and reduces $HC_t$, so the bond hedge is already smaller:
 \begin{align}
 HC^{\text{stock}} &= \beta_{HC} \cdot HC_t \\
-HC^{\text{bond}} &= (1-\beta_{HC}) \cdot HC_t \cdot \frac{D^{HC}_t}{D} \\
-HC^{\text{cash}} &= (1-\beta_{HC}) \cdot HC_t \cdot \left(1 - \frac{D^{HC}_t}{D}\right)
+HC^{\text{bond}} &= HC_t \cdot \frac{D^{HC}_t}{D} \\
+HC^{\text{cash}} &= HC_t - HC^{\text{stock}} - HC^{\text{bond}}
 \end{align}
-where $D$ = duration of bonds in the financial portfolio. The ratio $D^{HC}_t / D$ determines how much of the non-stock HC is ``bond-equivalent'' vs ``cash-equivalent'' based on relative durations.
+where $D$ = duration of bonds in the financial portfolio. The cash component is a residual and can be negative when the stock and bond components together exceed total HC (e.g., when $\beta_{HC}$ is large and $D^{HC}_t / D$ is close to 1).
 
 \subsection{Expense Liability Decomposition}
 
@@ -328,6 +328,16 @@ where $\delta$ is an optional consumption boost parameter (default 0).
     \item \textbf{Dynamic rate}: uses the current short rate $r_t$ (not the long-run mean $\bar{r}$), so consumption responds to the prevailing interest rate environment.
     \item \textbf{Realized weights}: uses the post-constraint portfolio weights $w_s, w_b, w_c$, not the unconstrained MV targets. This ensures the variance correction matches the actual portfolio risk.
 \end{itemize}
+
+\subsection{Annuity-Adjusted Consumption (Optional)}
+
+When the \texttt{annuity\_consumption} flag is enabled (``Make the Last Check Bounce''), the consumption rate is replaced by the finite-horizon Merton solution:
+\begin{equation}
+c_t = \frac{1}{A(T - t)}, \quad \text{where } A(T-t) = \frac{1 - (1 + r_{CE})^{-(T-t)}}{r_{CE}}
+\end{equation}
+and $r_{CE}$ is the certainty-equivalent return from Eq.~\ref{eq:consumption_rate}. The annuity factor $A(T-t)$ decreases as end-of-life approaches, so the consumption rate \emph{increases} with age, converging to ``consume everything'' in the final year. This produces a lifecycle plan that spends wealth down to approximately zero at $T$ (end\_age).
+
+\textbf{Default behavior.} With \texttt{annuity\_consumption = False} (default), the consumption rate is simply $c_t = r_{CE}$, which is the infinite-horizon case. The infinite-horizon rate is \emph{horizon-independent}: a 25-year-old and a 90-year-old with the same portfolio and rates consume at the same rate of net worth.
 
 \subsection{Constraints}
 
@@ -453,6 +463,7 @@ The order is important: portfolio weights are determined \emph{before} consumpti
 \texttt{stock\_beta\_human\_capital} & $\beta_{HC}$ & 0.0 & Stock beta of human capital \\
 \texttt{max\_leverage} & $\lambda_{\max}$ & 1.0 & Max risky-asset exposure / $FW$ \\
 \texttt{consumption\_boost} & $\delta$ & 0.0 & Consumption rate boost \\
+\texttt{annuity\_consumption} & --- & False & Annuity-adjust consumption to spend down by $T$ \\
 \bottomrule
 \end{tabular}
 \end{table}

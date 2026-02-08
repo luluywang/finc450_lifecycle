@@ -418,16 +418,16 @@ def simulate_with_strategy(
                 duration_hc = 0.0
 
             # Compute HC decomposition at current rate
+            # Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
             if is_working and hc > 0:
                 hc_stock = hc * params.stock_beta_human_capital
-                non_stock_hc = hc * (1.0 - params.stock_beta_human_capital)
                 if econ_params.bond_duration > 0:
                     hc_bond_frac = duration_hc / econ_params.bond_duration
-                    hc_bond = non_stock_hc * hc_bond_frac
-                    hc_cash = non_stock_hc * (1.0 - hc_bond_frac)
+                    hc_bond = hc * hc_bond_frac
+                    hc_cash = hc - hc_stock - hc_bond
                 else:
                     hc_bond = 0.0
-                    hc_cash = non_stock_hc
+                    hc_cash = hc - hc_stock
             else:
                 hc_stock = 0.0
                 hc_bond = 0.0

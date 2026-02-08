@@ -359,9 +359,11 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const remainingExpenses = expenses.slice(i);
 
     // Use VCV term structure (phi, rBar) to match Python compute_static_pvs
-    pvEarnings[i] = computePresentValue(remainingEarnings, r, phi, r);
+    // HC discounted at r + hcSpread (CAPM-adjusted rate)
+    const hcSpread = params.stockBetaHC * params.muStock;
+    pvEarnings[i] = computePresentValue(remainingEarnings, r + hcSpread, phi, r + hcSpread);
     pvExpenses[i] = computePresentValue(remainingExpenses, r, phi, r);
-    durationEarnings[i] = computeDuration(remainingEarnings, r, phi, r, params.maxDuration);
+    durationEarnings[i] = computeDuration(remainingEarnings, r + hcSpread, phi, r + hcSpread, params.maxDuration);
     durationExpenses[i] = computeDuration(remainingExpenses, r, phi, r, params.maxDuration);
   }
 
@@ -369,19 +371,19 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
   const humanCapital = [...pvEarnings];
 
   // Decompose human capital
+  // Bond hedge uses full HC (duration already risk-adjusted when beta > 0)
   const hcStock = humanCapital.map(hc => hc * params.stockBetaHC);
-  const nonStockHC = humanCapital.map(hc => hc * (1 - params.stockBetaHC));
 
   const hcBond = Array(totalYears).fill(0);
   const hcCash = Array(totalYears).fill(0);
 
   for (let i = 0; i < totalYears; i++) {
-    if (params.bondDuration > 0 && nonStockHC[i] > 0) {
+    if (params.bondDuration > 0 && humanCapital[i] > 0) {
       const bondFraction = durationEarnings[i] / params.bondDuration;
-      hcBond[i] = nonStockHC[i] * bondFraction;
-      hcCash[i] = nonStockHC[i] * (1 - bondFraction);
+      hcBond[i] = humanCapital[i] * bondFraction;
+      hcCash[i] = humanCapital[i] - hcStock[i] - hcBond[i];
     } else {
-      hcCash[i] = nonStockHC[i];
+      hcCash[i] = humanCapital[i] - hcStock[i];
     }
   }
 

@@ -19,6 +19,7 @@ from .params import (
     LifecycleParams,
     EconomicParams,
 )
+from .economics import annuity_consumption_rate
 
 
 def _normalize_weights(
@@ -109,7 +110,13 @@ class LDIStrategy:
             cov_sb = -D * sigma_s * sigma_r * rho
             portfolio_var = w_s**2 * sigma_s**2 + w_b**2 * sigma_b**2 + 2 * w_s * w_b * cov_sb
 
-            consumption_rate = expected_return - 0.5 * portfolio_var + state.params.consumption_boost
+            ce_return = expected_return - 0.5 * portfolio_var + state.params.consumption_boost
+
+            if state.params.annuity_consumption:
+                remaining = state.params.end_age - state.age
+                consumption_rate = annuity_consumption_rate(ce_return, remaining)
+            else:
+                consumption_rate = ce_return
         else:
             consumption_rate = self.consumption_rate
 
