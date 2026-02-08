@@ -4445,30 +4445,8 @@ export default function LifecycleVisualizer() {
   // Check if simulation results are stale (params have changed since last run)
   const simulationResultsStale = useMemo(() => {
     if (!lastSimulationParams || !teachingScenarios) return false;
-    // Compare current params to the params used for the last simulation
-    const lp = lastSimulationParams.lifecycleParams;
-    const ep = lastSimulationParams.econParams;
-    return (
-      lp.startAge !== lifecycleParams.startAge ||
-      lp.retirementAge !== lifecycleParams.retirementAge ||
-      lp.endAge !== lifecycleParams.endAge ||
-      lp.initialEarnings !== lifecycleParams.initialEarnings ||
-      lp.earningsGrowth !== lifecycleParams.earningsGrowth ||
-      lp.baseExpenses !== lifecycleParams.baseExpenses ||
-      lp.retirementExpenses !== lifecycleParams.retirementExpenses ||
-      lp.gamma !== lifecycleParams.gamma ||
-      lp.stockBetaHumanCapital !== lifecycleParams.stockBetaHumanCapital ||
-      lp.initialWealth !== lifecycleParams.initialWealth ||
-      ep.rBar !== econParams.rBar ||
-      ep.phi !== econParams.phi ||
-      ep.sigmaR !== econParams.sigmaR ||
-      ep.muExcess !== econParams.muExcess ||
-      ep.bondSharpe !== econParams.bondSharpe ||
-      ep.sigmaS !== econParams.sigmaS ||
-      ep.rho !== econParams.rho ||
-      ep.bondDuration !== econParams.bondDuration ||
-      lastSimulationParams.rateShockMagnitude !== rateShockMagnitude
-    );
+    const current = { lifecycleParams, econParams, rateShockMagnitude };
+    return JSON.stringify(lastSimulationParams) !== JSON.stringify(current);
   }, [lastSimulationParams, teachingScenarios, lifecycleParams, econParams, rateShockMagnitude]);
 
   // Prepare chart data
