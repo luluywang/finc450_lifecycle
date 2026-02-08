@@ -508,22 +508,36 @@ def simulate_with_strategy(
             variable_consumption_paths[sim, t] = actions.variable_consumption
             savings_paths[sim, t] = current_earnings - actions.total_consumption
 
-            stock_weight_paths[sim, t] = actions.stock_weight
-            bond_weight_paths[sim, t] = actions.bond_weight
-            cash_weight_paths[sim, t] = actions.cash_weight
-
             if actions.target_fin_stock is not None:
                 target_fin_stock_paths[sim, t] = actions.target_fin_stock
                 target_fin_bond_paths[sim, t] = actions.target_fin_bond
                 target_fin_cash_paths[sim, t] = actions.target_fin_cash
 
+            # Re-normalize weights to investable base for exact LDI hedge.
+            # The strategy computed weights relative to fw, but under
+            # (fw+savings)*(1+R) timing the investable base is (fw+savings).
+            savings = current_earnings - actions.total_consumption
+            investable = fw + savings
+            if not defaulted and actions.target_fin_stock is not None and investable > 1e-6:
+                w_s_act, w_b_act, w_c_act = normalize_portfolio_weights(
+                    actions.target_fin_stock, actions.target_fin_bond,
+                    actions.target_fin_cash, investable,
+                    target_stock, target_bond, target_cash,
+                    max_leverage=getattr(strategy, 'max_leverage', 1.0),
+                )
+            else:
+                w_s_act = actions.stock_weight
+                w_b_act = actions.bond_weight
+                w_c_act = actions.cash_weight
+
+            stock_weight_paths[sim, t] = w_s_act
+            bond_weight_paths[sim, t] = w_b_act
+            cash_weight_paths[sim, t] = w_c_act
+
             # Evolve wealth to next period
             if t < total_years - 1 and not defaulted:
                 if use_geometric_returns:
                     # Use geometric (median) return: E[R_p] - 0.5*Var(R_p)
-                    w_s_act = actions.stock_weight
-                    w_b_act = actions.bond_weight
-                    w_c_act = actions.cash_weight
                     expected_ret = (
                         w_s_act * (current_rate + econ_params.mu_excess) +
                         w_b_act * (current_rate + econ_params.mu_bond) +
@@ -540,13 +554,12 @@ def simulate_with_strategy(
                     bond_ret = bond_return_paths[sim, t]
                     cash_ret = rate_paths[sim, t]
                     portfolio_return = (
-                        actions.stock_weight * stock_ret +
-                        actions.bond_weight * bond_ret +
-                        actions.cash_weight * cash_ret
+                        w_s_act * stock_ret +
+                        w_b_act * bond_ret +
+                        w_c_act * cash_ret
                     )
 
-                savings = current_earnings - actions.total_consumption
-                financial_wealth_paths[sim, t + 1] = (fw + savings) * (1 + portfolio_return)
+                financial_wealth_paths[sim, t + 1] = investable * (1 + portfolio_return)
 
     # Compute ages array
     ages = np.arange(params.start_age, params.end_age)
