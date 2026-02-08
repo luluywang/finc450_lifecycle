@@ -496,8 +496,8 @@ def simulate_with_strategy(
             else:
                 actions = strategy(state)
 
-            # Check for default
-            if not is_working and fw <= 0 and not defaulted:
+            # Check for default: can't meet subsistence in retirement
+            if not is_working and actions.total_consumption < expenses[t] and not defaulted:
                 defaulted = True
                 default_flags[sim] = True
                 default_ages[sim] = age

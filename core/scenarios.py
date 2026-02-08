@@ -116,11 +116,13 @@ def create_teaching_scenario(
 
         # Apply constraints: leave at least $1K investable
         available = max(0.0, fw + earnings[t] - 1.0)
-        if defaulted or fw <= 0:
-            defaulted = True
+        if defaulted:
             total_cons = 0
         elif total_cons > available:
             total_cons = available
+            # Default if can't meet subsistence in retirement
+            if t >= working_years and total_cons < subsistence:
+                defaulted = True
 
         total_consumption[t] = total_cons
 

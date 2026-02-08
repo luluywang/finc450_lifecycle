@@ -1226,8 +1226,8 @@ function simulateWithStrategy(
         actions = strategy(state);
       }
 
-      // Check for default
-      if (!isWorking && fw <= 0 && !defaulted) {
+      // Check for default: can't meet subsistence in retirement
+      if (!isWorking && actions.consumption < expenses[t] && !defaulted) {
         defaulted = true;
         defaultAge = age;
       }
