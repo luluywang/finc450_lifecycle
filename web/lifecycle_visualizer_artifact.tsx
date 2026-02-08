@@ -290,6 +290,12 @@ interface StrategyActions {
 
   // Consumption (non-negative)
   consumption: number;          // Total consumption for the period (Python: total_consumption)
+
+  // Target dollar positions (optional, for LDI-type strategies)
+  // When present, the engine re-normalizes weights to the investable base (fw + savings)
+  targetFinStock?: number;
+  targetFinBond?: number;
+  targetFinCash?: number;
 }
 
 /**
@@ -1241,17 +1247,34 @@ function simulateWithStrategy(
 
       // Evolve wealth to next period
       if (t < totalYears - 1 && !defaulted) {
+        const savings = currentEarnings - actions.consumption;
+        const investable = fw + savings;
+
+        // Re-normalize weights to investable base for exact LDI hedge
+        let wSAct = actions.stockWeight;
+        let wBAct = actions.bondWeight;
+        let wCAct = actions.cashWeight;
+        if (actions.targetFinStock !== undefined && investable > 1e-6) {
+          [wSAct, wBAct, wCAct] = normalizePortfolioWeights(
+            actions.targetFinStock, actions.targetFinBond!, actions.targetFinCash!,
+            investable, targetStock, targetBond, targetCash,
+            params.maxLeverage
+          );
+          stockWeight[t] = wSAct;
+          bondWeight[t] = wBAct;
+          cashWeight[t] = wCAct;
+        }
+
         const stockRet = stockReturnPaths[sim][t];
         const bondRet = bondReturnPaths[sim][t];
         const cashRet = ratePaths[sim][t];
 
         const portfolioReturn =
-          actions.stockWeight * stockRet +
-          actions.bondWeight * bondRet +
-          actions.cashWeight * cashRet;
+          wSAct * stockRet +
+          wBAct * bondRet +
+          wCAct * cashRet;
 
-        const savings = currentEarnings - actions.consumption;
-        financialWealth[t + 1] = fw * (1 + portfolioReturn) + savings;
+        financialWealth[t + 1] = investable * (1 + portfolioReturn);
       }
     }
 
@@ -1424,6 +1447,9 @@ function createLDIStrategy(options: LDIStrategyOptions = {}): Strategy {
       stockWeight: wS,
       bondWeight: wB,
       cashWeight: wC,
+      targetFinStock,
+      targetFinBond,
+      targetFinCash,
     };
   } as Strategy;
 
@@ -2857,26 +2883,23 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     targetFinBondArr[i] = targetFinBondI;
     targetFinCashArr[i] = targetFinCashI;
 
-    const [wS, wB, wC] = normalizePortfolioWeights(
+    // Preliminary weights (normalized to fw) for consumption rate calculation
+    const [wSPrelim, wBPrelim, wCPrelim] = normalizePortfolioWeights(
       targetFinStockI, targetFinBondI, targetFinCashI,
       fw, targetStock, targetBond, targetCash,
       1.0  // no leverage for median path
     );
 
-    stockWeight[i] = wS;
-    bondWeight[i] = wB;
-    cashWeight[i] = wC;
-
-    // Dynamic consumption rate using realized weights and current rate (r_bar for median path)
-    const expectedReturnI = (
-      wS * (r + params.muStock) +
-      wB * (r + muBond) +
-      wC * r
+    // Dynamic consumption rate using preliminary weights and current rate (r_bar for median path)
+    const expectedReturnPrelim = (
+      wSPrelim * (r + params.muStock) +
+      wBPrelim * (r + muBond) +
+      wCPrelim * r
     );
-    const portfolioVarI = computePortfolioVariance(
-      wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+    const portfolioVarPrelim = computePortfolioVariance(
+      wSPrelim, wBPrelim, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
     );
-    const consumptionRate = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
+    const consumptionRate = expectedReturnPrelim - 0.5 * portfolioVarPrelim + params.consumptionBoost;
 
     // Compute consumption using dynamic rate
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
@@ -2893,14 +2916,31 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
       variableConsumption[i] = availableI - subsistenceConsumption[i];
     }
 
+    const savings = earnings[i] - totalConsumption[i];
+    const investable = fw + savings;
+
+    // Re-normalize weights to investable base for exact LDI hedge
+    const [wS, wB, wC] = investable > 1e-6
+      ? normalizePortfolioWeights(
+          targetFinStockI, targetFinBondI, targetFinCashI,
+          investable, targetStock, targetBond, targetCash,
+          1.0
+        )
+      : [wSPrelim, wBPrelim, wCPrelim] as [number, number, number];
+
+    stockWeight[i] = wS;
+    bondWeight[i] = wB;
+    cashWeight[i] = wC;
+
     // Use geometric (median) return for wealth evolution: E[R_p] - 0.5*Var(R_p)
-    // expectedReturnI and portfolioVarI already computed above using per-step weights
+    const expectedReturnI = wS * (r + params.muStock) + wB * (r + muBond) + wC * r;
+    const portfolioVarI = computePortfolioVariance(
+      wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+    );
     const portfolioReturn = expectedReturnI - 0.5 * portfolioVarI;
 
-    const savings = earnings[i] - totalConsumption[i];
-
     if (i < totalYears - 1) {
-      financialWealth[i + 1] = Math.max(0, fw * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, investable * (1 + portfolioReturn));
     }
   }
 
@@ -3296,25 +3336,23 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
     const targetFinBonds = targetBond * surplus - hcBond[i] + expBond[i];
     const targetFinCash = targetCash * surplus - hcCash[i] + expCash[i];
 
-    const [wS, wB, wC] = normalizePortfolioWeights(
+    // Preliminary weights (normalized to fw) for consumption rate calculation
+    const [wSPrelim, wBPrelim, wCPrelim] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
       financialWealth[i], targetStock, targetBond, targetCash,
       1.0  // no leverage
     );
-    stockWeight[i] = wS;
-    bondWeight[i] = wB;
-    cashWeight[i] = wC;
 
-    // Dynamic consumption rate: use preShockRate (current rate) and realized weights
-    const expectedReturnI = (
-      wS * (preShockRate + params.muStock) +
-      wB * (preShockRate + muBondVal) +
-      wC * preShockRate
+    // Dynamic consumption rate: use preShockRate (current rate) and preliminary weights
+    const expectedReturnPrelimI = (
+      wSPrelim * (preShockRate + params.muStock) +
+      wBPrelim * (preShockRate + muBondVal) +
+      wCPrelim * preShockRate
     );
-    const portfolioVarI = computePortfolioVariance(
-      wS, wB, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+    const portfolioVarPrelimI = computePortfolioVariance(
+      wSPrelim, wBPrelim, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
     );
-    const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
+    const consumptionRateI = expectedReturnPrelimI - 0.5 * portfolioVarPrelimI + params.consumptionBoost;
 
     variableConsumption[i] = Math.max(0, consumptionRateI * netWorth[i]);
     totalConsumption[i] = subsistenceConsumption[i] + variableConsumption[i];
@@ -3333,12 +3371,33 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
       }
     }
 
+    // Re-normalize weights to investable base for exact LDI hedge
+    {
+      const savings = earnings[i] - totalConsumption[i];
+      const investable = financialWealth[i] + savings;
+      if (investable > 1e-6) {
+        const [wS, wB, wC] = normalizePortfolioWeights(
+          targetFinStocks, targetFinBonds, targetFinCash,
+          investable, targetStock, targetBond, targetCash,
+          1.0
+        );
+        stockWeight[i] = wS;
+        bondWeight[i] = wB;
+        cashWeight[i] = wC;
+      } else {
+        stockWeight[i] = wSPrelim;
+        bondWeight[i] = wBPrelim;
+        cashWeight[i] = wCPrelim;
+      }
+    }
+
     // Wealth accumulation with stochastic returns
     // Track cumulative stock return at start of this year
     cumulativeStockReturnArr[i] = cumStockReturn;
 
     if (i < totalYears - 1) {
       const savings = earnings[i] - totalConsumption[i];
+      const investable = financialWealth[i] + savings;
 
       // Realized returns with shocks (matching Python duration approximation)
       // Stock return uses pre-shock rate as yield component (matches Python: rate_paths[sim, t])
@@ -3357,7 +3416,7 @@ function computeStochasticPath(params: Params, rand: () => number): LifecycleRes
                              bondWeight[i] * bondReturn +
                              cashWeight[i] * cashReturn;
 
-      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, investable * (1 + portfolioReturn));
     }
   }
 
@@ -3593,7 +3652,8 @@ function computeScenarioPath(
     const targetFinBonds = targetBondAlloc * surplus - hcBond + expBond;
     const targetFinCash = targetCashAlloc * surplus - hcCash + expCash;
 
-    const [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
+    // Preliminary weights (normalized to fw) for consumption rate calculation
+    const [stockWeightPrelim, bondWeightPrelim, cashWeightPrelim] = normalizePortfolioWeights(
       targetFinStocks, targetFinBonds, targetFinCash,
       financialWealth[i], targetStockAlloc, targetBondAlloc, targetCashAlloc,
       1.0  // no leverage
@@ -3601,14 +3661,14 @@ function computeScenarioPath(
 
     // Consumption decision based on rule
     if (scenario.consumptionRule === 'adaptive') {
-      // Adaptive: dynamic consumption rate using preShockRate and realized weights
+      // Adaptive: dynamic consumption rate using preShockRate and preliminary weights
       const expectedReturnI = (
-        stockWeight * (preShockRate + params.muStock) +
-        bondWeight * (preShockRate + muBondVal) +
-        cashWeight * preShockRate
+        stockWeightPrelim * (preShockRate + params.muStock) +
+        bondWeightPrelim * (preShockRate + muBondVal) +
+        cashWeightPrelim * preShockRate
       );
       const portfolioVarI = computePortfolioVariance(
-        stockWeight, bondWeight, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
+        stockWeightPrelim, bondWeightPrelim, params.sigmaS, params.sigmaR, params.bondDuration, params.rho
       );
       const consumptionRateI = expectedReturnI - 0.5 * portfolioVarI + params.consumptionBoost;
       variableConsumption[i] = Math.max(0, consumptionRateI * netWorth);
@@ -3680,6 +3740,21 @@ function computeScenarioPath(
 
     // Wealth accumulation
     const savings = earnings[i] - totalConsumption[i];
+    const investable = financialWealth[i] + savings;
+
+    // Re-normalize weights to investable base for exact LDI hedge
+    let stockWeight: number, bondWeight: number, cashWeight: number;
+    if (investable > 1e-6) {
+      [stockWeight, bondWeight, cashWeight] = normalizePortfolioWeights(
+        targetFinStocks, targetFinBonds, targetFinCash,
+        investable, targetStockAlloc, targetBondAlloc, targetCashAlloc,
+        1.0
+      );
+    } else {
+      stockWeight = stockWeightPrelim;
+      bondWeight = bondWeightPrelim;
+      cashWeight = cashWeightPrelim;
+    }
 
     // Realized returns with shocks (matching Python duration approximation)
     // Stock return uses pre-shock rate as yield component (matches Python: rate_paths[sim, t])
@@ -3698,7 +3773,7 @@ function computeScenarioPath(
                              bondWeight * bondReturn +
                              cashWeight * cashReturn;
 
-      financialWealth[i + 1] = Math.max(0, financialWealth[i] * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, investable * (1 + portfolioReturn));
     }
   }
 

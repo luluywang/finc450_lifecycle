@@ -119,8 +119,8 @@ class LDIStrategy:
         total_cons = subsistence + variable
 
         # Apply constraints: can't consume more than available resources
-        # Budget: fw[t+1] = fw*(1+r) + earnings - consumption, so solvency
-        # requires consumption <= fw + earnings (ignoring investment return)
+        # Budget: fw[t+1] = (fw + earnings - consumption)*(1+r), so solvency
+        # requires consumption <= fw + earnings
         available = fw + state.earnings
         if total_cons > available:
             total_cons = available

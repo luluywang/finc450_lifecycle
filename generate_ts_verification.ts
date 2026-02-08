@@ -436,30 +436,27 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
     const targetFinBond = targetBond * surplus - hcBond[i] + expBond[i];
     const targetFinCash = targetCash * surplus - hcCash[i] + expCash[i];
 
-    const [wS, wB, wC] = normalizePortfolioWeights(
+    // Preliminary weights (normalized to fw) for consumption rate calculation
+    const [wSPrelim, wBPrelim, wCPrelim] = normalizePortfolioWeights(
       targetFinStock, targetFinBond, targetFinCash,
       fw, targetStock, targetBond, targetCash,
       1.0  // no leverage for median path
     );
 
-    stockWeight[i] = wS;
-    bondWeight[i] = wB;
-    cashWeight[i] = wC;
-
-    // Dynamic consumption rate using realized weights and current rate (r for median path)
-    const expectedReturnI = (
-      wS * (r + params.muStock) +
-      wB * (r + muBond) +
-      wC * r
+    // Dynamic consumption rate using preliminary weights and current rate (r for median path)
+    const expectedReturnPrelim = (
+      wSPrelim * (r + params.muStock) +
+      wBPrelim * (r + muBond) +
+      wCPrelim * r
     );
     const sigmaBi = params.bondDuration * params.sigmaR;
     const covSBi = -params.bondDuration * params.sigmaS * params.sigmaR * params.rho;
-    const portfolioVarI = (
-      wS * wS * params.sigmaS * params.sigmaS +
-      wB * wB * sigmaBi * sigmaBi +
-      2 * wS * wB * covSBi
+    const portfolioVarPrelim = (
+      wSPrelim * wSPrelim * params.sigmaS * params.sigmaS +
+      wBPrelim * wBPrelim * sigmaBi * sigmaBi +
+      2 * wSPrelim * wBPrelim * covSBi
     );
-    const consumptionRate = expectedReturnI - 0.5 * portfolioVarI;
+    const consumptionRate = expectedReturnPrelim - 0.5 * portfolioVarPrelim;
 
     // Compute consumption using dynamic rate
     variableConsumption[i] = Math.max(0, consumptionRate * netWorth[i]);
@@ -476,14 +473,33 @@ function computeLifecycleMedianPath(params: Params): LifecycleResult {
       variableConsumption[i] = available - subsistenceConsumption[i];
     }
 
+    const savings = earnings[i] - totalConsumption[i];
+    const investable = fw + savings;
+
+    // Re-normalize weights to investable base for exact LDI hedge
+    const [wS, wB, wC] = investable > 1e-6
+      ? normalizePortfolioWeights(
+          targetFinStock, targetFinBond, targetFinCash,
+          investable, targetStock, targetBond, targetCash,
+          1.0
+        )
+      : [wSPrelim, wBPrelim, wCPrelim] as [number, number, number];
+
+    stockWeight[i] = wS;
+    bondWeight[i] = wB;
+    cashWeight[i] = wC;
+
     // Use geometric (median) return for wealth evolution: E[R_p] - 0.5*Var(R_p)
-    // expectedReturnI and portfolioVarI already computed above using per-step weights
+    const expectedReturnI = wS * (r + params.muStock) + wB * (r + muBond) + wC * r;
+    const portfolioVarI = (
+      wS * wS * params.sigmaS * params.sigmaS +
+      wB * wB * sigmaBi * sigmaBi +
+      2 * wS * wB * covSBi
+    );
     const portfolioReturn = expectedReturnI - 0.5 * portfolioVarI;
 
-    const savings = earnings[i] - totalConsumption[i];
-
     if (i < totalYears - 1) {
-      financialWealth[i + 1] = Math.max(0, fw * (1 + portfolioReturn) + savings);
+      financialWealth[i + 1] = Math.max(0, investable * (1 + portfolioReturn));
     }
   }
 
