@@ -1,0 +1,499 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection.}{0.5em}{}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\theoremstyle{definition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{definition}{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\footnotesize Lifecycle Portfolio Choice}
+\lhead{\footnotesize Lecture Notes}
+\cfoot{\thepage}
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\begin{document}
+\begin{center}
+{\LARGE \textbf{Lifecycle Portfolio Choice with Log Utility}} \\[8pt]
+{\large \textbf{A Dividend-Primitive Formulation}} \\[16pt]
+\end{center}
+%-------------------------------------------------------------
+\section{Environment}
+%-------------------------------------------------------------
+\subsection{Primitive Shocks}
+All uncertainty is driven by two independent Brownian motions:
+\begin{itemize}[nosep]
+    \item $Z^r$: interest rate innovation,
+    \item $Z^D$: real economy / dividend innovation.
+\end{itemize}
+\subsection{Primitive Processes}
+\begin{assumption}[Interest Rates]
+The real short rate follows a driftless random walk:
+\[
+    dr_t = \sigma_r\,dZ_t^r.
+\]
+\end{assumption}
+\begin{assumption}[Dividends]\label{a:dividends}
+Aggregate dividends follow
+\[
+    \frac{dD_t}{D_t} = g\,dt + \sigma_D\,dZ_t^D + \beta_{Dr}\,\sigma_r\,dZ_t^r,
+\]
+where $g$ is the expected real growth rate, $\sigma_D$ is dividend volatility from real economy shocks, and $\beta_{Dr}$ governs how dividends respond to interest rate innovations.
+\end{assumption}
+The parameter $\beta_{Dr}$ is central to the model. When rates rise unexpectedly, do corporate earnings rise too? If $\beta_{Dr}$ is large (dividends fully adjust to rate movements), the stock behaves like a floating-rate instrument. If $\beta_{Dr}$ is small (dividends are sticky like bond coupons), the stock behaves like a long-duration bond.
+\subsection{Derived Asset Returns}
+\begin{assumption}[Financial Markets]
+The investor trades three assets in continuous time on $[0,T]$:
+\begin{enumerate}[label=(\roman*)]
+    \item A \textbf{short-term bond} (cash) earning the instantaneous real rate $r_t$.
+    \item A \textbf{stock}, which is a claim on the dividend stream $\{D_s\}_{s \geq t}$:
+    \[
+        S_t = \mathbb{E}_t^Q\!\left[\int_t^\infty e^{-\int_t^s r_u\,du}\,D_s\,ds\right].
+    \]
+    By It\^o's lemma, the stock return is
+    \begin{equation}\label{eq:stock_return}
+        \frac{dS_t}{S_t} = (r_t + \mu_e)\,dt + \sigma_D\,dZ_t^D + (\beta_{Dr} - D_S)\,\sigma_r\,dZ_t^r,
+    \end{equation}
+    where $\mu_e > 0$ is the equity premium and $D_S$ is the Macaulay duration of the equity claim. The stock's loading on rate shocks, $(\beta_{Dr} - D_S)\sigma_r$, is the net of two forces: dividends responding to rates ($+\beta_{Dr}\sigma_r$, stabilizing) minus the discount rate effect on a long-duration claim ($-D_S\sigma_r$, destabilizing).
+    \item A \textbf{long bond} of duration $D_B$ with return
+    \[
+        \frac{dP_t}{P_t} = r_t\,dt - D_B\,\sigma_r\,dZ_t^r.
+    \]
+    The long bond earns zero term premium.
+\end{enumerate}
+\end{assumption}
+\begin{remark}[Stock duration is endogenous]
+In a Gordon growth model, the Macaulay duration of the equity claim is $D_S^{\text{Mac}} \approx 1/(r + \mu_e - g)$, which can easily be 25--50 years; the modified duration $D_S = D_S^{\text{Mac}}/(1 + r + \mu_e - g)$ is correspondingly large. The standard lifecycle model implicitly sets $\beta_{Dr} = D_S$, so the stock's rate loading vanishes and the stock-bond correlation is zero. This is a knife-edge calibration, not a structural result.
+\end{remark}
+\subsection{Calibration from Observables}
+The model's structural parameters are pinned down by two observable moments---total stock return volatility $\sigma_S$ and the stock-bond correlation $\rho_{SB}$---along with the directly observable $\sigma_r$.
+From the factor structure \eqref{eq:stock_return}, total stock variance is
+\[
+    \sigma_S^2 = \sigma_D^2 + (\beta_{Dr} - D_S)^2\,\sigma_r^2,
+\]
+and the stock-bond correlation (recalling the bond loads $-D_B\sigma_r$ on $Z^r$) is
+\[
+    \rho_{SB} = \frac{-(\beta_{Dr} - D_S)\,\sigma_r \cdot D_B\,\sigma_r}{\sigma_S \cdot D_B\,\sigma_r} = \frac{-(\beta_{Dr} - D_S)\,\sigma_r}{\sigma_S}.
+\]
+Inverting:
+\begin{equation}\label{eq:calibration}
+\boxed{
+\begin{aligned}
+    (\beta_{Dr} - D_S)\,\sigma_r &= -\rho_{SB}\,\sigma_S, \\[4pt]
+    \sigma_D &= \sigma_S\sqrt{1 - \rho_{SB}^2}.
+\end{aligned}
+}
+\end{equation}
+We do not need to separately identify $\beta_{Dr}$ and $D_S$; only their difference matters for returns and portfolios. The ``pure dividend volatility'' $\sigma_D$ is smaller than total stock volatility whenever $\rho_{SB} \neq 0$, because part of the stock's movement is rate-driven.
+\subsection{Market Price of Risk}
+With zero bond term premium, the market price of rate risk is zero ($\lambda_r = 0$). The entire equity premium compensates dividend risk:
+\[
+    \mu_e = \lambda_D \cdot \sigma_D, \qquad \text{so} \qquad \lambda_D = \frac{\mu_e}{\sigma_S\sqrt{1 - \rho_{SB}^2}}.
+\]
+When $\rho_{SB} \neq 0$, the price of dividend risk exceeds the naive Sharpe ratio $\mu_e/\sigma_S$, because only the dividend component of stock volatility is compensated.
+%-------------------------------------------------------------
+\section{Human Capital}
+%-------------------------------------------------------------
+\begin{assumption}[Income]\label{a:income}
+The investor receives income $Y_t > 0$ for $t \in [0, T_{ret}]$. Income is exposed only to the real economy shock:
+\[
+    \frac{dY_t}{Y_t} = g_Y\,dt + \delta_D\,\sigma_D\,dZ_t^D,
+\]
+where $\delta_D$ is the income loading on dividend risk. There is no direct rate sensitivity in cash flows.
+\end{assumption}
+\begin{remark}[Why income loads on $Z^D$, not on $dS/S$]
+The old model specifies income beta as a regression of income growth on stock returns. But the stock return contains rate noise ($Z^r$) that is uncorrelated with income by Assumption~\ref{a:income}. Regressing on stock returns attenuates the true cash flow loading. If $\delta_H^{old}$ is the regression beta on the stock, the structural dividend loading is
+\begin{equation}\label{eq:beta_correction}
+    \delta_D = \frac{\delta_H^{old}}{1 - \rho_{SB}^2}.
+\end{equation}
+When $\rho_{SB} = 0$, the two coincide.
+\end{remark}
+\subsection{Valuation and Duration}
+The risk premium on income is $\delta_D\,\sigma_D \cdot \lambda_D = \delta_D\,\mu_e$. Human capital is valued at the CAPM discount rate
+\begin{equation}\label{eq:capm_rate}
+    k = r + \delta_D\,\mu_e.
+\end{equation}
+\begin{definition}[Human Capital]
+\begin{equation}\label{eq:H}
+    H_t \equiv H(r_t, t) = \int_t^{T_{ret}} e^{-k\,(s-t)}\,Y_s\,ds.
+\end{equation}
+Higher $\delta_D$ raises $k$, which simultaneously lowers $H$ and shortens its duration.
+\end{definition}
+\begin{definition}[Duration of Human Capital]
+The Macaulay duration at the CAPM rate is
+\[
+    D_H^{\text{Mac}} = \frac{1}{H}\int_t^{T_{ret}} (s-t)\,\frac{Y_s}{(1+k)^{s-t}}\,ds.
+\]
+The \textbf{modified duration}, which governs the actual price sensitivity $\frac{1}{H}\frac{dH}{dr} = -D_H$, is
+\begin{equation}\label{eq:D_H}
+    D_H = \frac{D_H^{\text{Mac}}}{1+k}.
+\end{equation}
+In continuous compounding the distinction vanishes, but in discrete time the $1/(1+k)$ correction matters. Modified duration appears throughout the optimal policies. It should be computed from the actual income profile---not from an annuity approximation.
+\end{definition}
+\subsection{Factor Exposures of Human Capital}
+Even though income itself only loads on $Z^D$, the present value $H$ is exposed to \emph{both} shocks:
+\begin{align}
+    Z^D\text{ exposure:} &\quad \delta_D\,\sigma_D \cdot H \qquad\text{(from cash flows),} \label{eq:H_ZD} \\[4pt]
+    Z^r\text{ exposure:} &\quad -D_H\,\sigma_r \cdot H \qquad\text{(from discounting only).} \label{eq:H_Zr}
+\end{align}
+This is the key asymmetry between stocks and human capital. Both are claims on long-duration cash flow streams, but the stock's cash flows respond to rates (parameter $\beta_{Dr}$, partially or fully offsetting the discount rate effect), while income cash flows do not (Assumption~\ref{a:income}). So human capital absorbs the full discount rate hit, making it behave like a long-duration bond even when the stock market does not.
+\begin{remark}[Duration convention]\label{rem:duration}
+Throughout the optimal policies, $D_H$, $D_{\bar{H}}$, $D_S$, and $D_B$ denote \textbf{modified durations}: the percentage price sensitivity to a unit change in the discount rate. In continuous compounding, modified duration equals Macaulay duration and the distinction is moot. In discrete compounding (as in any implementation), modified duration is $D^{\text{Mac}}/(1+k)$, where $k$ is the relevant discount rate. The correction is first-order and must not be dropped.
+\end{remark}
+\subsection{Replicating Portfolio for Human Capital}
+Human capital is equivalent to a portfolio of traded assets with the same factor exposures.
+\textbf{Match $Z^D$:} Requires stock holding $n_S$ such that $n_S \cdot \sigma_D = \delta_D\,\sigma_D \cdot H$:
+\begin{equation}\label{eq:n_S}
+    n_S = \delta_D \cdot H.
+\end{equation}
+\textbf{Match $Z^r$:} The stock position $n_S$ brings along $n_S \cdot (\beta_{Dr} - D_S)\sigma_r$ of rate exposure. The total rate exposure to match is $-D_H\,\sigma_r\,H$. Bonds supply $-D_B\,\sigma_r$ per dollar. So:
+\begin{equation}\label{eq:n_B}
+    n_B = \frac{1}{D_B}\!\left[D_H\,H - \delta_D\,H \cdot \frac{\rho_{SB}\,\sigma_S}{\sigma_r}\right].
+\end{equation}
+The bond position has two pieces: $(D_H/D_B)\cdot H$ for the pure duration hedge, plus a correction for the rate contamination brought in by the stock position. When $\rho_{SB} = 0$, the correction vanishes.
+%-------------------------------------------------------------
+\section{Preferences and Subsistence}
+%-------------------------------------------------------------
+\begin{assumption}[Preferences]
+The investor maximizes
+\[
+    \max\;\mathbb{E}\!\int_0^T e^{-\rho t}\log(c_t - \bar{c})\,dt,
+\]
+where $\bar{c} \geq 0$ is a subsistence consumption floor (Stone--Geary). The case $\bar{c} = 0$ is standard log utility.
+\end{assumption}
+\begin{definition}[Subsistence Liability]
+\[
+    \bar{H}_t \equiv \bar{H}(r_t, t) = \int_t^T e^{-r_t(s-t)}\,\bar{c}\,ds = \bar{c}\,\frac{1 - e^{-r_t(T-t)}}{r_t}.
+\]
+This extends to the terminal date $T$ (death), not retirement $T_{ret}$. It is discounted at the risk-free rate $r$ (deterministic, no risk premium). Its modified duration is $D_{\bar{H}} = D_{\bar{H}}^{\text{Mac}}/(1+r)$, and its factor exposures are $Z^D$: 0; $\;Z^r$: $-D_{\bar{H}}\,\sigma_r\,\bar{H}$.
+\end{definition}
+\begin{definition}[Surplus Wealth]
+\[
+    \widehat{W}_t = W_t + H_t - \bar{H}_t.
+\]
+\end{definition}
+%-------------------------------------------------------------
+\section{Dynamics of Surplus Wealth}
+%-------------------------------------------------------------
+Financial wealth evolves as
+\[
+    dW_t = \big[W_t\,r_t + \pi_t\,\mu_e + Y_t - c_t\big]\,dt + \pi_t\,\sigma_D\,dZ_t^D + \big[\pi_t(\beta_{Dr} - D_S)\sigma_r - \phi_t\,\sigma_r\big]\,dZ_t^r,
+\]
+where $\pi_t$ is dollars in stocks and $\phi_t$ is the dollar duration of the bond portfolio. By It\^o's lemma, human capital satisfies
+\[
+    dH = \big(k\,H - Y\big)\,dt + \delta_D\,\sigma_D\,H\,dZ^D - D_H\,\sigma_r\,H\,dZ^r,
+\]
+and the subsistence liability satisfies
+\[
+    d\bar{H} = \big(r\,\bar{H} - \bar{c}\big)\,dt - D_{\bar{H}}\,\sigma_r\,\bar{H}\,dZ^r.
+\]
+Adding $dW + dH - d\bar{H}$ and defining $\hat{c} = c - \bar{c}$:
+\begin{equation}\label{eq:surplus_dynamics}
+\boxed{
+    d\widehat{W} = \big[\widehat{W}\,r + (\pi + \delta_D H)\,\mu_e - \hat{c}\big]\,dt + (\pi + \delta_D H)\,\sigma_D\,dZ^D - \psi\,\sigma_r\,dZ^r,
+}
+\end{equation}
+where
+\begin{equation}\label{eq:psi}
+    \psi \equiv \phi - \pi\,(\beta_{Dr} - D_S) + D_H\,H - D_{\bar{H}}\,\bar{H}
+\end{equation}
+is the \textbf{net dollar duration of surplus wealth}: financial bond duration, minus the rate exposure of the stock position, plus human capital duration, minus subsistence liability duration.
+\begin{remark}
+When the stock has zero net rate exposure ($\beta_{Dr} = D_S$, i.e.\ $\rho_{SB} = 0$), the stock's contribution drops out and $\psi = \phi + D_H H - D_{\bar{H}}\bar{H}$ as in the standard model.
+\end{remark}
+%-------------------------------------------------------------
+\section{Hamilton--Jacobi--Bellman Equation}
+%-------------------------------------------------------------
+It is convenient to change variables. Define
+\[
+    \tilde{\pi} = \pi + \delta_D\,H, \qquad \tilde{\psi} = \psi.
+\]
+Then surplus wealth dynamics become
+\[
+    d\widehat{W} = \big[\widehat{W}\,r + \tilde{\pi}\,\mu_e - \hat{c}\big]\,dt + \tilde{\pi}\,\sigma_D\,dZ^D - \tilde{\psi}\,\sigma_r\,dZ^r,
+\]
+where $Z^D$ and $Z^r$ are independent. The HJB equation in state $(\widehat{W}, r, t)$ is
+\begin{equation}\label{eq:HJB}
+    0 = \max_{\hat{c},\,\tilde{\pi},\,\tilde{\psi}}\bigg\{e^{-\rho t}\log\hat{c} + J_t + J_{\widehat{W}}\!\big[\widehat{W}\,r + \tilde{\pi}\,\mu_e - \hat{c}\big] + \frac{1}{2}J_{\widehat{W}\widehat{W}}\!\big[\tilde{\pi}^2\sigma_D^2 + \tilde{\psi}^2\sigma_r^2\big] + \frac{1}{2}J_{rr}\,\sigma_r^2 - J_{\widehat{W}r}\,\tilde{\psi}\,\sigma_r^2\bigg\}.
+\end{equation}
+Note: we use $\sigma_D$ (not $\sigma_S$) in the stock variance term because the speculative demand is for dividend risk, and the stock is the vehicle that delivers it. The rate contamination in the stock has been absorbed into the definition of $\psi$.
+%-------------------------------------------------------------
+\section{Solution}
+%-------------------------------------------------------------
+\subsection{Conjecture}
+Conjecture that the value function is additively separable:
+\begin{equation}\label{eq:conjecture}
+    J(\widehat{W}, r, t) = A(t)\,\log\widehat{W} + G(r,t).
+\end{equation}
+The critical consequence: $J_{\widehat{W}r} = 0$ (myopia property of log utility).
+\subsection{Optimal Controls}
+\begin{proposition}[Optimal Consumption]
+\begin{equation}\label{eq:consumption}
+    c_t^* = \bar{c} + \frac{e^{-\rho t}\,\widehat{W}_t}{A(t)}, \qquad A(t) = \frac{1 - e^{-\rho(T-t)}}{\rho}.
+\end{equation}
+\end{proposition}
+\begin{proposition}[Optimal Equity Position]\label{prop:stocks}
+\begin{equation}\label{eq:stocks}
+    \pi_t^* = \frac{\mu_e}{\sigma_D^2}\,\widehat{W}_t - \delta_D\,H_t.
+\end{equation}
+The first term is the speculative demand: the mean-variance optimum for bearing dividend risk, scaled by surplus wealth and priced at the dividend volatility $\sigma_D$ (not the total stock volatility $\sigma_S$). The second term offsets the implicit equity exposure in human capital.
+\end{proposition}
+\begin{proof}
+The FOC in $\tilde{\pi}$ gives $\tilde{\pi}^* = (\mu_e/\sigma_D^2)\,\widehat{W}$. Since $\tilde{\pi} = \pi + \delta_D H$, the result follows.
+\end{proof}
+\begin{proposition}[Optimal Bond Duration]\label{prop:bonds}
+\begin{equation}\label{eq:bonds}
+    \phi_t^* = -D_H\,H_t + D_{\bar{H}}\,\bar{H}_t + \pi_t^*\,(\beta_{Dr} - D_S).
+\end{equation}
+Using \eqref{eq:calibration}, this can be expressed entirely in observables:
+\begin{equation}\label{eq:bonds_obs}
+    \phi_t^* = -D_H\,H_t + D_{\bar{H}}\,\bar{H}_t - \pi_t^*\,\frac{\rho_{SB}\,\sigma_S}{\sigma_r}.
+\end{equation}
+The first two terms are the standard duration hedge (short to offset human capital, long to match subsistence). The third term corrects for the rate exposure of the stock position. When $\rho_{SB} > 0$ (stocks have positive duration), the stock position already provides some rate hedging, so the bond position is smaller. When $\rho_{SB} < 0$, stocks add rate exposure, and more bonds are needed.
+\end{proposition}
+\begin{proof}
+The FOC in $\tilde{\psi}$ gives $\tilde{\psi}^* = J_{\widehat{W}r}/J_{\widehat{W}\widehat{W}} = 0$ under the separable conjecture. From \eqref{eq:psi}, $\phi - \pi(\beta_{Dr} - D_S) + D_H H - D_{\bar{H}}\bar{H} = 0$, which gives the result.
+\end{proof}
+\subsection{Verification}
+Substituting the optimal controls back into \eqref{eq:HJB}:
+\textbf{Terms in $\log\widehat{W}$:} Collecting yields $A'(t) = -e^{-\rho t}$, $A(T) = 0$, giving $A(t) = (1 - e^{-\rho(T-t)})/\rho$.
+\textbf{Remaining terms:} A linear PDE for $G(r,t)$:
+\[
+    G_t + A(t)\,r + \frac{A(t)\,\mu_e^2}{2\sigma_D^2} + \frac{1}{2}G_{rr}\,\sigma_r^2 - e^{-\rho t}\big(1 + \log A(t)\big) = 0, \qquad G(r,T) = 0.
+\]
+This admits a smooth solution, confirming the conjecture. \hfill$\blacksquare$
+%-------------------------------------------------------------
+\section{Economic Interpretation}
+%-------------------------------------------------------------
+\subsection{The Balance Sheet View}
+The investor's complete balance sheet, expressed in terms of factor exposures:
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Item} & \textbf{$Z^D$ exposure} & \textbf{$Z^r$ exposure} \\
+\midrule
+Stock position $\pi^*$ & $\pi^*\sigma_D$ & $\pi^*(\beta_{Dr}-D_S)\sigma_r$ \\
+Bond position (duration $\phi^*$) & 0 & $-\phi^*\sigma_r$ \\
+Human capital $H$ & $+\delta_D\sigma_D H$ & $-D_H\sigma_r H$ \\
+Subsistence liability $-\bar{H}$ & 0 & $+D_{\bar{H}}\sigma_r\bar{H}$ \\
+\midrule
+\textbf{Net surplus exposure} & $\tilde{\pi}^*\sigma_D$ & $0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Under log utility, the net $Z^r$ exposure is zero (optimal net duration of surplus wealth is zero). The net $Z^D$ exposure is $\tilde{\pi}^* = (\mu_e/\sigma_D^2)\widehat{W}$, the myopic mean-variance optimum for dividend risk.
+\subsection{Stocks vs.\ Human Capital: The Duration Puzzle}
+Both the stock market and human capital are claims on long-duration real cash flow streams. Naively, both should have long duration. But the stock market typically has much less interest rate sensitivity than human capital. This model makes the mechanism precise:
+\begin{itemize}[nosep]
+    \item \textbf{Stocks}: effective rate exposure is $(\beta_{Dr} - D_S)\sigma_r$. If dividends adjust to rate changes ($\beta_{Dr} \approx D_S$), the cash flow and discount rate effects largely cancel, producing near-zero effective duration.
+    \item \textbf{Human capital}: effective rate exposure is $(0 - D_H)\sigma_r = -D_H\sigma_r$. Income does not adjust to rate changes, so the full discount rate effect operates, producing long effective duration.
+\end{itemize}
+The asymmetry is not in the modeling framework---both claims are valued as DCFs---but in the economics of the cash flows. Corporate dividends are flexible; wages are sticky.
+\subsection{Why Stocks and Bonds Decouple at $\rho_{SB} = 0$}
+When $\beta_{Dr} = D_S$ (equivalently $\rho_{SB} = 0$):
+\begin{itemize}[nosep]
+    \item The stock is a pure $Z^D$ asset; the bond is a pure $Z^r$ asset.
+    \item The factor loading matrix is diagonal.
+    \item The equity position hedges only dividend exposure: $\pi^* = (\mu_e/\sigma_S^2)\widehat{W} - \delta_D H$.
+    \item The bond position hedges only duration: $\phi^* = -D_H H + D_{\bar{H}}\bar{H}$.
+    \item Stock and bond demands are determined independently.
+\end{itemize}
+This is the standard textbook result. It requires the knife-edge $\beta_{Dr} = D_S$, not just any parameter values.
+\subsection{Lifecycle Dynamics}
+\textbf{1. Stock share of financial wealth declines with age.} Early in life, $H_t \gg W_t$, so $\widehat{W}/W$ is large and the stock allocation exceeds the myopic share. As $H \to 0$ near retirement, the allocation converges to $(\mu_e/\sigma_D^2)$. The hedge term $-\delta_D H$ also shrinks, further reducing equity exposure.
+\textbf{2. Bond position flips sign at retirement.} Pre-retirement: $\phi^* \approx -D_H H + D_{\bar{H}}\bar{H}$, typically negative (short duration, hedging human capital). Post-retirement: $H = 0$, so $\phi^* = D_{\bar{H}}\bar{H} > 0$ (long duration, matching subsistence liability).
+\textbf{3. Subsistence reduces risk-taking.} Because $\widehat{W} < W + H$, the effective risk aversion $\gamma_{eff} = c/(c - \bar{c}) > 1$.
+%-------------------------------------------------------------
+\section{Relationship to the Standard Model}
+%-------------------------------------------------------------
+The standard lifecycle model makes three implicit parameter choices:
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Assumption} & \textbf{In this model} & \textbf{Consequence} \\
+\midrule
+$\beta_{Dr} = D_S$ & $\rho_{SB} = 0$ & Stocks have zero effective duration \\
+$\delta_D = \delta_H^{old}$ & $\rho_{SB} = 0$ ensures equivalence & Income beta on stocks = beta on dividends \\
+$\sigma_D = \sigma_S$ & follows from $\rho_{SB} = 0$ & All stock vol is dividend vol \\
+\bottomrule
+\end{tabular}
+\end{center}
+Under these restrictions, the optimal policies \eqref{eq:stocks}--\eqref{eq:bonds_obs} reduce to:
+\begin{align*}
+    \pi^* &= \frac{\mu_e}{\sigma_S^2}\,\widehat{W} - \delta_H^{old}\,H, \\
+    \phi^* &= -D_H\,H + D_{\bar{H}}\,\bar{H},
+\end{align*}
+recovering the standard textbook formulas exactly.
+%-------------------------------------------------------------
+\section{Robustness and Extensions}
+%-------------------------------------------------------------
+\begin{corollary}[Mean-Reverting Rates]
+If $dr_t = \kappa(\bar{r} - r_t)\,dt + \sigma_r\,dZ^r$, the structure is unchanged under log utility. Separability ($J_{\widehat{W}r} = 0$) still holds. Durations $D_H$ and $D_{\bar{H}}$ change (the term structure is no longer flat), but the policy forms are identical.
+\end{corollary}
+\begin{corollary}[Income with Direct Rate Sensitivity]
+If income also loads on $Z^r$:
+\[
+    \frac{dY}{Y} = g_Y\,dt + \delta_D\,\sigma_D\,dZ^D + \delta_r\,\sigma_r\,dZ^r,
+\]
+then the effective duration of human capital becomes $D_H - \delta_r$ (cash flow response partially offsets the discount rate effect, exactly as $\beta_{Dr}$ does for stocks). The bond hedging demand adjusts accordingly:
+\[
+    \phi^* = -(D_H - \delta_r)\,H + D_{\bar{H}}\,\bar{H} + \pi^*(\beta_{Dr} - D_S).
+\]
+\end{corollary}
+\begin{corollary}[Departure from Log Utility ($\gamma > 1$)]
+Separability breaks: $J_{\widehat{W}r} \neq 0$. The optimal net duration of surplus wealth is no longer zero---the investor holds positive duration to hedge adverse rate movements (Campbell--Viceira hedging demand). The stock allocation becomes horizon- and state-dependent. Closed-form solutions are generally unavailable.
+\end{corollary}
+%-------------------------------------------------------------
+\section{Extension: Nonzero Term Premium}
+%-------------------------------------------------------------
+The baseline model assumes zero term premium ($\lambda_r = 0$), so bonds are purely a hedging instrument. Empirically, long bonds earn a positive risk premium. Over long samples, nominal bonds have a Sharpe ratio of approximately 0.05, small but nonzero. This section extends the model to incorporate a positive market price of rate risk.
+\subsection{Modified Bond Return}
+The long bond now earns a term premium proportional to its duration:
+\[
+    \frac{dP_t}{P_t} = (r_t + D_B\,\tau)\,dt - D_B\,\sigma_r\,dZ_t^r,
+\]
+where $\tau = \sigma_r\,\lambda_r$ is the \textbf{term premium per year of duration}. With a bond Sharpe ratio of 0.05 and $\sigma_r = 1\%$:
+\[
+    \tau = 0.05 \times 1\% = 0.05\%\;\text{per year of duration.}
+\]
+A 10-year bond earns 50\,bps/year; a 20-year bond earns 100\,bps. These magnitudes are consistent with long-sample estimates that average over both rising-rate and falling-rate regimes.
+\subsection{Equity Premium Decomposition}
+The stock loads on both $Z^D$ and $Z^r$, so its premium decomposes into compensation for two independent risks:
+\begin{equation}\label{eq:ep_decomp}
+    \mu_e = \underbrace{\sigma_D\,\lambda_D}_{\text{dividend risk premium}} + \underbrace{(D_S - \beta_{Dr})\,\tau}_{\text{implicit term premium}}.
+\end{equation}
+The second term compensates for whatever net duration the stock carries. Using $\rho_{SB}$:
+\begin{equation}\label{eq:lambda_D_tp}
+    \lambda_D = \frac{\mu_e - \rho_{SB}\,\sigma_S\,\lambda_r}{\sigma_D} = \frac{\mu_e - \rho_{SB}\,\sigma_S\,\tau/\sigma_r}{\sigma_S\sqrt{1-\rho_{SB}^2}}.
+\end{equation}
+When $\rho_{SB} > 0$ (stocks have positive effective duration), part of the equity premium is term premium, so the pure dividend risk price is lower. When $\rho_{SB} = 0$, the decomposition is $\mu_e = \sigma_D\lambda_D$ as before.
+\begin{remark}[Connection to van Binsbergen (2020)]
+Van Binsbergen constructs duration-matched nominal bond portfolios and finds that stocks have earned little to no excess return over these counterfactuals in the past half century. In the language of this model, his exercise estimates $\sigma_D\,\lambda_D$ directly by stripping out the duration component. A near-zero estimate is consistent with $\mu_e \approx (D_S - \beta_{Dr})\tau$---most of the equity premium is implicit term premium. However, the comparison uses \emph{nominal} bonds, while dividends are partially real. If dividends hedge inflation (positive $\beta_{Dr}$ driven by inflation pass-through), stocks sacrifice return for inflation protection, biasing the measured dividend risk premium downward relative to a comparison with real (TIPS) bonds.
+\end{remark}
+\subsection{Human Capital Discount Rate}
+Human capital has loading $-D_H\,\sigma_r$ on $Z^r$---the same direction as a long bond. The market compensates this exposure with a term premium, so the no-arbitrage discount rate includes a duration component:
+\begin{equation}\label{eq:k_tp}
+    \boxed{k = r + \delta_D\!\left(\mu_e - \rho_{SB}\,\sigma_S\,\frac{\tau}{\sigma_r}\right) + D_H(k)\cdot\tau.}
+\end{equation}
+The first two terms are the CAPM equity risk premium (adjusted for the stock-bond correlation). The third term is the \textbf{duration premium}: human capital is a long-duration asset, so its yield-to-maturity should include the term premium appropriate for its maturity.
+\textbf{Fixed point.} The equation is implicit: $D_H$ depends on $k$ (higher discount rate shortens duration), and $k$ depends on $D_H$. In practice, iterate from the zero-premium rate $k_0 = r + \delta_D\mu_e$; convergence occurs in 2--3 steps.
+\textbf{Interpretation.} The appropriate yield-to-maturity for valuing human capital is the yield on a portfolio of traded assets that replicates both its cash flow risk and its duration. For a tenured professor ($\delta_D = 0$), this is simply the yield on a government bond portfolio with the same payment profile as the salary---not the short rate $r$, but the term-structure-adjusted rate $r + D_H\tau$. For a worker with equity beta, the dividend risk premium is additive on top.
+\textbf{Numerical example} (age 35, retire 65, flat real income, $r = 2\%$, $\tau = 0.05\%$/yr duration, $\rho_{SB} = 0$):
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& \textbf{$\delta_D = 0$} & \textbf{$\delta_D = 0.5$} & \textbf{$\delta_D = 1.0$} \\
+& (Tenured) & (Corporate) & (Finance) \\
+\midrule
+$k$ without term premium & 2.00\% & 4.50\% & 7.00\% \\
+$D_H(k)$ at old rate & 14.0\,yr & 11.5\,yr & 9.5\,yr \\
+$D_H \cdot \tau$ & 0.70\% & 0.58\% & 0.48\% \\
+$k$ with term premium & 2.68\% & 5.05\% & 7.47\% \\
+$D_H(k)$ at new rate & 13.5\,yr & 11.0\,yr & 9.2\,yr \\
+Fall in $H$ & $\approx 8\%$ & $\approx 5\%$ & $\approx 4\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The term premium correction is largest for safe, long-duration human capital (the tenured professor), precisely because $D_H$ is largest and $\delta_D\mu_e$ is zero. For high-beta workers, the equity risk premium already dominates, and the term premium adjustment is proportionally smaller.
+\subsection{Modified Optimal Policies}
+The surplus wealth dynamics gain an additional drift term from the term premium on net duration:
+\[
+    d\widehat{W} = \big[\widehat{W}\,r + \tilde{\pi}\,\mu_e + \tilde{\psi}\,\sigma_r\,\lambda_r - \hat{c}\big]\,dt + \tilde{\pi}\,\sigma_D\,dZ^D - \tilde{\psi}\,\sigma_r\,dZ^r.
+\]
+The FOC for $\tilde{\psi}$ now picks up the term premium. Under log utility ($J_{\widehat{W}r} = 0$):
+\[
+    \tilde{\psi}^* = \frac{\lambda_r}{\sigma_r}\,\widehat{W}.
+\]
+The optimal net duration of surplus wealth is \textbf{no longer zero}---the investor holds positive duration because that risk is compensated.
+\begin{proposition}[Optimal Policies with Term Premium]\label{prop:tp}
+Under log utility with a positive term premium ($\lambda_r > 0$):
+\begin{equation}\label{eq:stocks_tp}
+    \pi_t^* = \frac{\mu_e - \rho_{SB}\,\sigma_S\,\lambda_r}{\sigma_D^2}\,\widehat{W}_t - \delta_D\,H_t,
+\end{equation}
+\begin{equation}\label{eq:bonds_tp}
+    \phi_t^* = -D_H\,H_t + D_{\bar{H}}\,\bar{H}_t - \pi_t^*\,\frac{\rho_{SB}\,\sigma_S}{\sigma_r} + \frac{\lambda_r}{\sigma_r}\,\widehat{W}_t.
+\end{equation}
+The consumption rule is unchanged.
+\end{proposition}
+\begin{proof}
+The FOC in $\tilde{\pi}$ is $J_{\widehat{W}}\mu_e + J_{\widehat{W}\widehat{W}}\tilde{\pi}\sigma_D^2 = 0$, giving $\tilde{\pi}^* = (\mu_e/\sigma_D^2)\widehat{W}$ as before. However, when we convert from $\tilde{\pi}$ to $\pi$, the speculative stock position must account for the fact that the stock also earns an implicit term premium. The ``pure dividend'' speculative demand uses $\mu_e$ net of the implicit term premium already embedded in the stock: $(\mu_e - \rho_{SB}\sigma_S\lambda_r)/\sigma_D^2$. For the bond, $\tilde{\psi}^* = (\lambda_r/\sigma_r)\widehat{W}$, and unwinding $\tilde{\psi} = \phi - \pi(\beta_{Dr} - D_S) + D_H H - D_{\bar{H}}\bar{H}$ gives the result.
+\end{proof}
+The bond position now has \textbf{four} terms:
+\begin{enumerate}[nosep]
+    \item $-D_H\,H$: short duration to hedge human capital.
+    \item $+D_{\bar{H}}\,\bar{H}$: long duration to match subsistence liability.
+    \item $-\pi^*\rho_{SB}\sigma_S/\sigma_r$: clean up rate contamination from stock position.
+    \item $+(\lambda_r/\sigma_r)\,\widehat{W}$: speculative demand for term premium.
+\end{enumerate}
+Terms 1 and 4 work against each other for a young worker: the hedge demand is short duration, while the speculative demand is long. With $\lambda_r/\sigma_r = 5$ and $D_H H \approx 40$M in dollar-duration, the speculative demand offsets a meaningful fraction of the hedge. For a retiree ($H = 0$), terms 2 and 4 reinforce each other---both long duration.
+\subsection{Separability Still Holds}
+The term premium modifies $\tilde{\psi}^*$ from zero to a quantity proportional to $\widehat{W}$. The drift of $\widehat{W}$ under optimal policies remains linear in $\widehat{W}$, so the conjecture $J = A(t)\log\widehat{W} + G(r,t)$ is still valid. The $A(t)$ ODE is unchanged; only the $G(r,t)$ PDE gains additional terms. Log utility continues to deliver myopia ($J_{\widehat{W}r} = 0$)---but ``myopic'' now means a \emph{positive} speculative duration position, not zero duration.
+%-------------------------------------------------------------
+\section*{Summary of Optimal Policies}
+%-------------------------------------------------------------
+For the dividend-primitive model with log utility, subsistence $\bar{c} \geq 0$, and income spanned by $Z^D$:
+\textbf{Baseline (zero term premium, $\lambda_r = 0$):}
+\begin{equation*}
+\boxed{
+\begin{aligned}
+    c_t^* &= \bar{c} + \frac{e^{-\rho t}}{A(t)}\,\widehat{W}_t, \\[6pt]
+    \pi_t^* &= \frac{\mu_e}{\sigma_D^2}\,\widehat{W}_t - \delta_D\,H_t, \\[6pt]
+    \phi_t^* &= -D_H\,H_t + D_{\bar{H}}\,\bar{H}_t - \pi_t^*\,\frac{\rho_{SB}\,\sigma_S}{\sigma_r}, \\[6pt]
+    k &= r + \delta_D\,\mu_e.
+\end{aligned}
+}
+\end{equation*}
+\textbf{With term premium ($\lambda_r > 0$, bond Sharpe $= \lambda_r$):}
+\begin{equation*}
+\boxed{
+\begin{aligned}
+    c_t^* &= \bar{c} + \frac{e^{-\rho t}}{A(t)}\,\widehat{W}_t, \\[6pt]
+    \pi_t^* &= \frac{\mu_e - \rho_{SB}\,\sigma_S\,\lambda_r}{\sigma_D^2}\,\widehat{W}_t - \delta_D\,H_t, \\[6pt]
+    \phi_t^* &= -D_H\,H_t + D_{\bar{H}}\,\bar{H}_t - \pi_t^*\,\frac{\rho_{SB}\,\sigma_S}{\sigma_r} + \frac{\lambda_r}{\sigma_r}\,\widehat{W}_t, \\[6pt]
+    k &= r + \delta_D\!\left(\mu_e - \rho_{SB}\,\sigma_S\,\frac{\tau}{\sigma_r}\right) + D_H(k)\cdot\tau, \quad \tau \equiv \sigma_r\lambda_r.
+\end{aligned}
+}
+\end{equation*}
+\noindent In both cases, $\widehat{W} = W + H - \bar{H}$, $A(t) = (1 - e^{-\rho(T-t)})/\rho$, $D_H$ is the modified duration of $H$ at rate $k$, and the structural parameters are recovered from observables via \eqref{eq:calibration}--\eqref{eq:beta_correction}. The discount rate $k$ in the term premium case involves a fixed point (iterate from $k_0 = r + \delta_D\mu_e$; convergence in 2--3 steps).
+%-------------------------------------------------------------
+\section*{Calibration Reference}
+%-------------------------------------------------------------
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}lcl@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Typical value} \\
+\midrule
+Risk-free rate & $r$ & 2\% \\
+Equity premium & $\mu_e$ & 5\% \\
+Stock return volatility & $\sigma_S$ & 16\% \\
+Rate volatility & $\sigma_r$ & 1\% \\
+Stock-bond correlation & $\rho_{SB}$ & $+0.3$ (pre-2000), $-0.3$ (post-2000), $0$ (textbook) \\
+Bond Sharpe ratio & $\lambda_r$ & 0.05 (long-sample estimate) \\
+Bond duration (choice) & $D_B$ & 10 years \\
+Income dividend loading & $\delta_D$ & 0 (govt) to 2 (entrepreneur) \\
+\midrule
+\multicolumn{3}{c}{\textit{Derived}} \\
+\midrule
+Dividend volatility & $\sigma_D = \sigma_S\sqrt{1 - \rho_{SB}^2}$ & 15.3\% ($\rho = \pm 0.3$), 16\% ($\rho = 0$) \\
+Net stock rate loading & $(\beta_{Dr} - D_S)\sigma_r = -\rho_{SB}\sigma_S$ & $\pm 4.8\%$ \\
+Term premium per yr duration & $\tau = \sigma_r\lambda_r$ & 0.05\%/yr \\
+Dividend risk price & $\lambda_D = (\mu_e - \rho_{SB}\sigma_S\lambda_r)/\sigma_D$ & 0.31 ($\rho = 0$), 0.31 ($\rho = \pm 0.3$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{document}
