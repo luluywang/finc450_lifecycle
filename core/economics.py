@@ -195,9 +195,6 @@ def compute_present_value(
     """
     Compute present value of cashflow stream.
 
-    Uses timing convention: cashflows[0] is immediate (t=0), cashflows[1] is 1 period away, etc.
-    This represents a "future-only" perspective: current period is excluded, next period onward is included.
-
     If r_bar and phi provided, uses mean-reverting term structure.
     Otherwise uses flat discount rate.
     """
@@ -254,7 +251,6 @@ def compute_duration(
     """
     Compute effective duration of cashflow stream.
 
-    Uses timing convention: cashflows[0] is immediate (t=0), cashflows[1] is 1 period away, etc.
     Under mean reversion, duration is the PV-weighted average of effective durations.
 
     Args:
