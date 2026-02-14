@@ -402,14 +402,17 @@ def simulate_with_strategy(
             actual_earnings_paths[sim, t] = current_earnings
 
             # Compute PV values at current rate (dynamic revaluation)
-            remaining_expenses = expenses[t:]
+            # Future-only perspective: exclude current period (start from t+1)
+            # Cash flows[0] is next period, discounted at t=0 (immediate), then t=1, t=2, etc.
+            remaining_expenses = expenses[t+1:]
             pv_exp = compute_present_value(remaining_expenses, current_rate, phi, r_bar)
             duration_exp = compute_duration(remaining_expenses, current_rate, phi, r_bar, max_duration=econ_params.max_duration)
 
             if is_working:
                 # Scale remaining earnings by current wage level (permanent shock)
                 # Discount at CAPM rate: current_rate + hc_spread
-                remaining_base = base_earnings[t:working_years]
+                # Future-only perspective: exclude current period
+                remaining_base = base_earnings[t+1:working_years]
                 remaining_earnings = remaining_base * wage_multiplier
                 hc = compute_present_value(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread)
                 duration_hc = compute_duration(remaining_earnings, current_rate + hc_spread, phi, r_bar + hc_spread, max_duration=econ_params.max_duration)
