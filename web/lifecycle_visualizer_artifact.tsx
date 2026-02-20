@@ -4552,7 +4552,7 @@ export default function LifecycleVisualizer() {
             label="Initial earnings"
             value={params.initialEarnings}
             onChange={(v) => updateParam('initialEarnings', v)}
-            min={50} max={200} step={25} suffix="$k" decimals={0}
+            min={50} max={1000} step={25} suffix="$k" decimals={0}
           />
           <StepperInput
             label="Earnings growth"
