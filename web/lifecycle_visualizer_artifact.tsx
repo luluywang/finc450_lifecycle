@@ -4573,7 +4573,7 @@ export default function LifecycleVisualizer() {
             label="Working expenses"
             value={params.baseExpenses}
             onChange={(v) => updateParam('baseExpenses', v)}
-            min={30} max={500} step={10} suffix="$k" decimals={0}
+            min={0} max={500} step={10} suffix="$k" decimals={0}
           />
           <StepperInput
             label="Expense growth"
@@ -4585,7 +4585,7 @@ export default function LifecycleVisualizer() {
             label="Retirement expenses"
             value={params.retirementExpenses}
             onChange={(v) => updateParam('retirementExpenses', v)}
-            min={40} max={500} step={10} suffix="$k" decimals={0}
+            min={0} max={500} step={10} suffix="$k" decimals={0}
           />
         </ParamGroup>
 
