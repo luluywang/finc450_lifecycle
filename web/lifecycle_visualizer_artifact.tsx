@@ -4594,7 +4594,7 @@ export default function LifecycleVisualizer() {
             label="Risk aversion (γ)"
             value={params.gamma}
             onChange={(v) => updateParam('gamma', v)}
-            min={1} max={10} step={0.25} suffix="" decimals={2}
+            min={1} max={5} step={0.25} suffix="" decimals={2}
           />
           <StepperInput
             label="HC stock beta"
