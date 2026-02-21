@@ -27,7 +27,8 @@ Thumbs.db
 
 # Claude skills
 .claude/
-web/app/
+web/app/node_modules/
+web/app/dist/
 node_modules/
 current/
 
