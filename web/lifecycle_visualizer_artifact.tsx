@@ -4186,7 +4186,20 @@ export default function LifecycleVisualizer() {
   });
 
   const updateParam = (key: keyof Params, value: number) => {
-    setParams(prev => ({ ...prev, [key]: value }));
+    setParams(prev => {
+      const next = { ...prev, [key]: value };
+      // Cross-parameter constraints: keep ages in valid order
+      if (key === 'startAge') {
+        next.retirementAge = Math.max(next.retirementAge, value + 5);
+        next.endAge = Math.max(next.endAge, next.retirementAge + 5);
+      } else if (key === 'retirementAge') {
+        next.endAge = Math.max(next.endAge, value + 5);
+      } else if (key === 'endAge') {
+        next.retirementAge = Math.min(next.retirementAge, value - 5);
+        next.startAge = Math.min(next.startAge, next.retirementAge - 5);
+      }
+      return next;
+    });
   };
 
   // Compute lifecycle results
@@ -4530,7 +4543,7 @@ export default function LifecycleVisualizer() {
             label="Retirement Age"
             value={params.retirementAge}
             onChange={(v) => updateParam('retirementAge', v)}
-            min={params.startAge + 5} max={80} step={1} suffix="" decimals={0}
+            min={params.startAge + 5} max={Math.min(80, params.endAge - 5)} step={1} suffix="" decimals={0}
           />
           <StepperInput
             label="End Age"
@@ -4614,7 +4627,7 @@ export default function LifecycleVisualizer() {
             label="Initial earnings"
             value={params.initialEarnings}
             onChange={(v) => updateParam('initialEarnings', v)}
-            min={50} max={200} step={25} suffix="$k" decimals={0}
+            min={50} max={1000} step={25} suffix="$k" decimals={0}
           />
           <StepperInput
             label="Earnings growth"
@@ -4635,7 +4648,7 @@ export default function LifecycleVisualizer() {
             label="Working expenses"
             value={params.baseExpenses}
             onChange={(v) => updateParam('baseExpenses', v)}
-            min={30} max={100} step={10} suffix="$k" decimals={0}
+            min={0} max={500} step={10} suffix="$k" decimals={0}
           />
           <StepperInput
             label="Expense growth"
@@ -4647,7 +4660,7 @@ export default function LifecycleVisualizer() {
             label="Retirement expenses"
             value={params.retirementExpenses}
             onChange={(v) => updateParam('retirementExpenses', v)}
-            min={40} max={120} step={10} suffix="$k" decimals={0}
+            min={0} max={500} step={10} suffix="$k" decimals={0}
           />
         </ParamGroup>
 
@@ -4656,7 +4669,7 @@ export default function LifecycleVisualizer() {
             label="Risk aversion (γ)"
             value={params.gamma}
             onChange={(v) => updateParam('gamma', v)}
-            min={1} max={10} step={1} suffix="" decimals={0}
+            min={1} max={5} step={0.25} suffix="" decimals={2}
           />
           <StepperInput
             label="HC stock beta"
